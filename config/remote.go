@@ -1,0 +1,73 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+
+	"github.com/fufuok/utils"
+	"github.com/fufuok/utils/xhash"
+	"github.com/imroc/req/v3"
+)
+
+// 数据源响应结构体
+type respDataSource struct {
+	OK   int              `json:"ok"`
+	Msg  string           `json:"msg"`
+	Data []map[string]any `json:"data"`
+}
+
+type DataSourceArgs struct {
+	Time time.Time
+	Conf FilesConf
+}
+
+// GetDataSource 获取源数据配置
+// 可在应用级重定义该函数, 覆盖 common.Funcs["GetDataSource"]
+func GetDataSource(args any) error {
+	params, ok := args.(DataSourceArgs)
+	if !ok {
+		return fmt.Errorf("invalid data source configuration")
+	}
+
+	// Token: md5(timestamp + auth_key)
+	timestamp := strconv.FormatInt(params.Time.Unix(), 10)
+	token := xhash.MD5Hex(timestamp + params.Conf.SecretValue)
+
+	// 请求数据源: IP 白名单 + Token
+	var res respDataSource
+	resp, err := req.SetSuccessResult(&res).Get(params.Conf.API + token + "&time=" + timestamp)
+	if err != nil {
+		return err
+	}
+
+	if res.OK != 1 || !resp.IsSuccessState() {
+		return fmt.Errorf("data source request failed: [%d] %s", resp.StatusCode, res.Msg)
+	}
+
+	// 获取所有配置项数据
+	body := ""
+	for _, info := range res.Data {
+		if txt, ok := info["ip_info"]; ok {
+			body += utils.MustString(txt) + "\n"
+		}
+	}
+
+	if body == "" {
+		return fmt.Errorf("data source result is empty")
+	}
+
+	// 当前版本信息
+	ver := GetFileVer(params.Conf.Path)
+	md5New := xhash.MD5Hex(body)
+	if md5New != ver.MD5 {
+		// 保存到配置文件
+		if err = os.WriteFile(params.Conf.Path, []byte(body), 0644); err != nil {
+			return err
+		}
+		ver.MD5 = md5New
+		ver.LastUpdate = time.Now()
+	}
+	return nil
+}

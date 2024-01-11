@@ -1,0 +1,65 @@
+package master
+
+import (
+	"context"
+	"time"
+
+	"github.com/fufuok/utils"
+
+	"github.com/fufuok/pkg/common"
+	"github.com/fufuok/pkg/config"
+	"github.com/fufuok/pkg/logger"
+)
+
+// 初始化获取远端配置
+func startRemotePipelines(ctx context.Context) {
+	// 定时获取远程主配置
+	utils.SafeGoWithContext(ctx, getMainRemoteConf, common.RecoverAlarm)
+
+	// 运行应用自定义方法
+	ps := getPipelinesWithContext(RemoteStage)
+	for _, sf := range ps {
+		sf := sf
+		utils.SafeGoWithContext(ctx, sf, common.RecoverAlarm)
+	}
+}
+
+func getMainRemoteConf(ctx context.Context) {
+	cfg := config.Config().MainConf
+	if cfg.GetConfDuration <= 0 {
+		return
+	}
+	GetRemoteConf(ctx, cfg)
+}
+
+// GetRemoteConf 定时获取远程配置, 配合 RemotePipelines 使用, 当主配置变化时, 该函数会退出
+func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
+	fn, ok := common.Funcs.Load(cfg.Method)
+	if !ok {
+		logger.Error().Str("method", cfg.Method).Msg("Config remote extractor initialization failed")
+		return
+	}
+
+	for {
+		wait := utils.FastIntn(cfg.RandomWait)
+		time.Sleep(time.Duration(wait) * time.Second)
+		select {
+		case <-ctx.Done():
+			logger.Info().Str("path", cfg.Path).Str("method", cfg.Method).Msg("Config remote extractor exited")
+			return
+		default:
+			// 是否跳过更新远端配置
+			if !config.IsSkipRemoteConfig() {
+				args := config.DataSourceArgs{
+					Time: common.GTimeNow(),
+					Conf: cfg,
+				}
+				if err := fn(args); err != nil {
+					logger.Error().Err(err).Str("path", cfg.Path).Str("method", cfg.Method).
+						Msg("Failed to get remote configuration")
+				}
+			}
+		}
+		time.Sleep(cfg.GetConfDuration)
+	}
+}
