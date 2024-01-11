@@ -11,15 +11,7 @@
 
 这个环境变量存放经过加密的基础密钥.
 
-程序运行时, 由程序固化的密钥解密环境变量得到您设定的原始密钥, 其他加密变量都使用解密后的原始密钥再加密.
-
-如: 
-
-```go
-BASE_SECRET_KEY = xcrypto.Decrypt("您的任意字符作为基础密钥", config.BaseSecretSalt+appName)
-```
-
-将得到的 `BASE_SECRET_KEY` 和值写到服务器环境变量, 让程序运行时解密出您设定的原始基础密钥.
+程序运行时, 由程序固化的密钥解密环境变量得到您设定的原始密钥, 其他加密变量都使用解密后的原始密钥再加密. 如: 
 
 ```go
 # go run main.go -base="FF~~666" -appname="FF.YourAPP"
@@ -32,9 +24,13 @@ BASE_SECRET_KEY=TQeKrAAFJ5godyTxtDw2o1
 FF~~666
 ```
 
+将得到的 `BASE_SECRET_KEY` 和值写到服务器环境变量, 让程序运行时解密出您设定的原始基础密钥.
+
 ------
 
-另外, `BASE_SECRET_KEY` 这个变量的名称可以通过环境变量指定: `BASE_SECRET_KEY_NAME=REAL_BASE_KEY`
+另外, `BASE_SECRET_KEY` 这个变量的名称可以通过环境变量指定: `BASE_SECRET_KEY_NAME=REAL_BASE_KEY`, 此时程序运行时会读取 `REAL_BASE_KEY` 来解密原始基础密钥.
+
+------
 
 ### `BASE_SECRET_SALT`
 
@@ -57,7 +53,9 @@ func init() {
 
 然后您的程序就可以基于上面 2 个变量来加密基础密钥.
 
-另外, 这个盐除了使用默认和通过程序修改外, 还可以放在 `.env` 文件里被加载, 需要先将盐的原始值做 `base58` 再放到变量: `BASE_SECRET_SALT`.
+------
+
+另外, 这个盐除了使用默认和通过程序修改外, 还可以放在 `.env` 文件里被加载. 需要先将盐的原始值做 `base58` 再放到变量: `BASE_SECRET_SALT`.
 
 ```shell
 # go run main.go -b58="SAlt~~666"
@@ -69,6 +67,8 @@ BASE_SECRET_SALT=24TwueXvpmsUZ
 程序解码测试:
 SAlt~~666
 ```
+
+此时, 程序会在启动时加载 `BASE_SECRET_SALT` 变量值, 解码出盐来替换程序里固化的值, 再参与解密基础密钥.
 
 ------
 

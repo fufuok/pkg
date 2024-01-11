@@ -20,6 +20,7 @@ func Runtime() error {
 	return nil
 }
 
+// Stop 程序退出时运行
 func Stop() error {
 	return nil
 }

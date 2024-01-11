@@ -14,12 +14,9 @@ import (
 	"github.com/fufuok/pkg/logger/alarm"
 )
 
-const (
-	blockedLimit = 2 * time.Second
-)
-
 var (
 	ErrJobBlocked = errors.New("job is blocked")
+	BlockedLimit  = 2 * time.Second
 
 	// 工作中的任务列表
 	jobs *xsync.MapOf[string, *Job]
@@ -137,7 +134,7 @@ func StopJob(name string) bool {
 // 任务设置了立即执行, 00:59.999 刚开始执行,
 // 下次执行时间 01:00 跟着就到了, 再次启动了任务, 但没抢到锁, 忽略该次 Blocked
 func IsRealBlocked() error {
-	if time.Since(common.StartTime) > blockedLimit {
+	if time.Since(common.StartTime) > BlockedLimit {
 		return ErrJobBlocked
 	}
 	return nil

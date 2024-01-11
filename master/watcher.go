@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	// watchers 应用自助添加的文件变化监控器
+	// watchers 自助添加的文件变化监控器
 	watchers = xsync.NewMapOf[string, Watcher]()
 
 	// 存放监控器标识和对应的 MD5

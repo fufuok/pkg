@@ -43,7 +43,7 @@ func Run() {
 	// 手动设置 > 1, 避免 CPU 隔离时协程池调度可能的阻塞
 	runtime.GOMAXPROCS(config.DefaultGOMAXPROCS)
 
-	registerContextFuncs()
+	registerCommonFuncs()
 	registerPipeline()
 	startPipeline()
 	defer stopPipeline()

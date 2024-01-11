@@ -21,7 +21,7 @@ var (
 )
 
 // 注册常用助手函数
-func registerContextFuncs() {
+func registerCommonFuncs() {
 	common.Funcs.Store("GetDataSource", config.GetDataSource)
 }
 

@@ -16,7 +16,7 @@ func startRemotePipelines(ctx context.Context) {
 	// 定时获取远程主配置
 	utils.SafeGoWithContext(ctx, getMainRemoteConf, common.RecoverAlarm)
 
-	// 运行应用自定义方法
+	// 运行应用级自定义的获取远端方法
 	ps := getPipelinesWithContext(RemoteStage)
 	for _, sf := range ps {
 		sf := sf
@@ -32,11 +32,12 @@ func getMainRemoteConf(ctx context.Context) {
 	GetRemoteConf(ctx, cfg)
 }
 
-// GetRemoteConf 定时获取远程配置, 配合 RemotePipelines 使用, 当主配置变化时, 该函数会退出
+// GetRemoteConf 定时获取远端配置, 配合 RemotePipelines 使用
+// 注: 当主配置变化时, 该函数会退出并重新运行
 func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 	fn, ok := common.Funcs.Load(cfg.Method)
 	if !ok {
-		logger.Error().Str("method", cfg.Method).Msg("Config remote extractor initialization failed")
+		logger.Error().Str("method", cfg.Method).Msg("Remote extractor initialization failed")
 		return
 	}
 
@@ -45,7 +46,7 @@ func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 		time.Sleep(time.Duration(wait) * time.Second)
 		select {
 		case <-ctx.Done():
-			logger.Info().Str("path", cfg.Path).Str("method", cfg.Method).Msg("Config remote extractor exited")
+			logger.Warn().Str("path", cfg.Path).Str("method", cfg.Method).Msg("remote extractor exited")
 			return
 		default:
 			// 是否跳过更新远端配置
