@@ -45,6 +45,7 @@ func Run() {
 
 	registerCommonFuncs()
 	registerPipeline()
+	startConfigPipeline()
 	startPipeline()
 	defer stopPipeline()
 

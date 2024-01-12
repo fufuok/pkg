@@ -27,9 +27,18 @@ func registerCommonFuncs() {
 
 // 注册框架级 Pipeline
 func registerPipeline() {
-	initPipelines = append([]StageFunc{config.Start, common.Start, crontab.Start}, initPipelines...)
+	initConfigPipelines = append([]StageFunc{config.Start}, initConfigPipelines...)
+	initPipelines = append([]StageFunc{common.Start, crontab.Start}, initPipelines...)
+	runtimeConfigPipelines = append([]StageFunc{config.Runtime}, runtimeConfigPipelines...)
 	runtimePipelines = append([]StageFunc{common.Runtime, crontab.Runtime}, runtimePipelines...)
 	Register(StopStage, crontab.Stop, common.Stop, config.Stop)
+}
+
+// 程序配置初始化入口
+func startConfigPipeline() {
+	if err := runPipelines(ConfigStage); err != nil {
+		log.Fatalln("Failed to initialize config:", err, "\nbye.")
+	}
 }
 
 // 程序初始化入口
@@ -41,10 +50,17 @@ func startPipeline() {
 	go mainScheduler()
 }
 
+// 配置变化时先加载新配置
+func runtimeConfigPipeline() {
+	if err := runPipelines(RuntimeConfigStage); err != nil {
+		alarm.Error().Err(err).Msg("runtime config pipeline")
+	}
+}
+
 // 配置变化时运行
 func runtimePipeline() {
 	if err := runPipelines(RuntimeStage); err != nil {
-		alarm.Error().Err(err).Msg("runtime pipeline")
+		alarm.Error().Err(err).Msg("runtime main pipeline")
 	}
 }
 

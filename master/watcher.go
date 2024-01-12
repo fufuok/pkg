@@ -134,7 +134,7 @@ func mainWatcher() {
 		}
 
 		// 第一时间加载新配置
-		_ = config.Runtime()
+		runtimeConfigPipeline()
 		cfg = config.Config().SYSConf
 
 		// 安装新版本, 每当配置有变化时才检测
