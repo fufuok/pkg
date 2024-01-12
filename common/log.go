@@ -97,7 +97,7 @@ func loadLogger() error {
 		InfoSampler:  sampler,
 		WarnSampler:  sampler,
 		ErrorSampler: sampler,
-	})
+	}).With().Bool("sampling", true).Logger()
 
 	Log.Warn().Str("version", config.Version).Str("tz", config.DefaultTimeZone).
 		Str("app_name", config.AppName).Str("bin_name", config.BinName).Str("deb_name", config.DebName).
