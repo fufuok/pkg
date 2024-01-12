@@ -16,7 +16,7 @@ import (
 
 var (
 	// AlarmOn 全局报警开关 (区别是否被排除报警, 如测试节点)
-	AlarmOn = true
+	AlarmOn atomic.Bool
 
 	// 全局配置项
 	mainConf atomic.Pointer[MainConf]
@@ -186,7 +186,7 @@ func readConf() (*MainConf, error) {
 		}
 	}
 
-	AlarmOn = cfg.LogConf.PostAlarmAPI != "" && cfg.LogConf.AlarmCode != ""
+	AlarmOn.Store(cfg.LogConf.PostAlarmAPI != "" && cfg.LogConf.AlarmCode != "")
 
 	// 每次获取远程主配置的时间间隔, < 30 秒则禁用该功能
 	if cfg.MainConf.Interval >= 30 {

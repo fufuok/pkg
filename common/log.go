@@ -38,12 +38,12 @@ var (
 	LogAlarm zerolog.Logger
 
 	logCurrentConf config.LogConf
-	alarmOnConf    bool
+	logAlarmOnConf bool
 )
 
 func initLogger() {
 	initZerolog()
-	alarmOnConf = config.AlarmOn
+	logAlarmOnConf = config.AlarmOn.Load()
 	if err := loadLogger(); err != nil {
 		log.Fatalln("Failed to initialize logger:", err, "\nbye.")
 	}
@@ -71,9 +71,10 @@ func initZerolog() {
 }
 
 func loadLogger() error {
-	if alarmOnConf != config.AlarmOn {
-		alarmOnConf = config.AlarmOn
-		Log.Warn().Bool("alarm_on", alarmOnConf).Msg("Alarm switch")
+	alarmOn := config.AlarmOn.Load()
+	if logAlarmOnConf != alarmOn {
+		logAlarmOnConf = alarmOn
+		Log.Warn().Bool("alarm_on", logAlarmOnConf).Msg("Alarm switch")
 	}
 	cfg := config.Config().LogConf
 	if logCurrentConf == cfg {
@@ -100,7 +101,7 @@ func loadLogger() error {
 
 	Log.Warn().Str("version", config.Version).Str("tz", config.DefaultTimeZone).
 		Str("app_name", config.AppName).Str("bin_name", config.BinName).Str("deb_name", config.DebName).
-		Int("cpus", runtime.NumCPU()).Int("procs", runtime.GOMAXPROCS(0)).Bool("alarm_on", alarmOnConf).
+		Int("cpus", runtime.NumCPU()).Int("procs", runtime.GOMAXPROCS(0)).Bool("alarm_on", logAlarmOnConf).
 		Msg("Logger initialized successfully")
 	return nil
 }
@@ -155,7 +156,7 @@ func newAlarmWriter(lv zerolog.Level) *alarmWriter {
 
 // Write 发送报警消息到接口
 func (w *alarmWriter) Write(p []byte) (n int, err error) {
-	if alarmOnConf {
+	if logAlarmOnConf {
 		bs := utils.CopyBytes(p)
 		_ = ants.Submit(func() {
 			sendAlarm(bs)
