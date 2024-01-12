@@ -63,8 +63,13 @@ var (
 
 	// BaseSecretKeyName 项目基础密钥 (环境变量名)
 	BaseSecretKeyName = "BASE_SECRET_KEY"
-	// BaseSecretSalt 用于解密基础密钥值的密钥 (编译在程序中)
+	// BaseSecretKeyNameKeyName 用于在环境变量中指定上一行设置的值的键名, 而不是使用默认的: BASE_SECRET_KEY
+	BaseSecretKeyNameKeyName = "BASE_SECRET_KEY_NAME"
+
+	// BaseSecretSalt 用于解密基础密钥值的密钥的前半部分, 盐 (编译在程序中), 后半部分为 AppName 值
 	BaseSecretSalt = "Fufu↑777發彡 "
+	// BaseSecretSaltKeyName 环境变量中读取上一行设置的值的键名, 而不是使用上一行中设置的固定值
+	BaseSecretSaltKeyName = "BASE_SECRET_SALT"
 
 	// WatcherIntervalDuration 文件变化监控时间间隔(分)
 	WatcherIntervalDuration = 2 * time.Minute

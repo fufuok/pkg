@@ -169,16 +169,19 @@ func readConf() (*MainConf, error) {
 	cfg.LogConf.AlarmCode = strings.TrimSpace(cfg.LogConf.AlarmCode)
 	if key := strings.TrimSpace(cfg.LogConf.PostAPIEnv); key != "" {
 		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			_ = os.Setenv(key, "")
 			cfg.LogConf.PostAPI = v
 		}
 	}
 	if key := strings.TrimSpace(cfg.LogConf.PostAlarmAPIEnv); key != "" {
 		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			_ = os.Setenv(key, "")
 			cfg.LogConf.PostAlarmAPI = v
 		}
 	}
 	if key := strings.TrimSpace(cfg.LogConf.AlarmCodeEnv); key != "" {
 		if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+			_ = os.Setenv(key, "")
 			cfg.LogConf.AlarmCode = v
 		}
 	}
