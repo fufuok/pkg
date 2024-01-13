@@ -93,6 +93,29 @@ var (
 	ServiceNameSuffix = ".service"
 )
 
+var (
+	// WebServerAddr 缺省的 HTTP 接口端口
+	WebServerAddr = ":12366"
+	// WebServerHttpsAddr 缺省的 HTTPS 接口端口
+	WebServerHttpsAddr = ":12377"
+
+	// WebCertFileEnv 默认证书路径环境变量
+	WebCertFileEnv = "WEB_CERT_FILE"
+	WebKeyFileEnv  = "WEB_KEY_FILE"
+
+	// WebLogInfoKey 接口日志附带请求信息, 上下文键名
+	WebLogInfoKey = "_WLIK_"
+
+	// WebLogSlowResponse 慢日志条件
+	WebLogSlowResponse = 5 * time.Second
+
+	// WebLogMinStatusCode Web 日志响应码条件值
+	WebLogMinStatusCode = 500
+
+	// WebTimeout Web 请求超时
+	WebTimeout = 30 * time.Second
+)
+
 // 初始化缺省变量
 // .
 // ├── bin

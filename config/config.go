@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"regexp"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fufuok/utils/xcrypto"
+	"github.com/fufuok/utils/xfile"
 	"github.com/fufuok/utils/xhash"
 
 	"github.com/fufuok/pkg/json"
@@ -18,16 +20,25 @@ var (
 	// AlarmOn 全局报警开关 (区别是否被排除报警, 如测试节点)
 	AlarmOn atomic.Bool
 
+	// Whitelist 接口 IP 白名单配置
+	Whitelist map[*net.IPNet]struct{}
+
+	// Blacklist 接口 IP 白名单配置
+	Blacklist map[*net.IPNet]struct{}
+
 	// 全局配置项
 	mainConf atomic.Pointer[MainConf]
 )
 
 // MainConf 接口配置
 type MainConf struct {
-	SYSConf  SYSConf   `json:"sys_conf"`
-	MainConf FilesConf `json:"main_conf"`
-	LogConf  LogConf   `json:"log_conf"`
-	NodeConf NodeConf  `json:"node_conf"`
+	SYSConf   SYSConf   `json:"sys_conf"`
+	MainConf  FilesConf `json:"main_conf"`
+	LogConf   LogConf   `json:"log_conf"`
+	NodeConf  NodeConf  `json:"node_conf"`
+	WebConf   WebConf   `json:"web_conf"`
+	Whitelist []string  `json:"whitelist"`
+	Blacklist []string  `json:"blacklist"`
 }
 
 // SYSConf 主配置, 变量意义见配置文件中的描述及 default.go 中的默认值
@@ -66,6 +77,27 @@ type LogConf struct {
 	PeriodDur            time.Duration
 	PostIntervalDuration time.Duration
 	PostBatchBytes       int
+}
+
+type WebConf struct {
+	PProfAddr       string   `json:"pprof_addr"`
+	ServerAddr      string   `json:"server_addr"`
+	ServerHttpsAddr string   `json:"server_https_addr"`
+	StatsPath       string   `json:"stats_path"`
+	TrustedProxies  []string `json:"trusted_proxies"`
+
+	// Gin
+	TrustedPlatform string `json:"trusted_platform"`
+
+	// Fiber
+	EnableTrustedProxyCheck bool   `json:"enable_trusted_proxy_check"`
+	ProxyHeader             string `json:"proxy_header"`
+
+	// Fiber 默认不减少内存占用, 这里改为默认减少内存占用(可能增加 CPU 占用)
+	DisableReduceMemoryUsage bool `json:"disable_reduce_memory_usage"`
+
+	CertFile string `json:"-"`
+	KeyFile  string `json:"-"`
 }
 
 type FilesConf struct {
@@ -224,11 +256,73 @@ func readConf() (*MainConf, error) {
 		return nil, err
 	}
 
+	// 优先使用配置中的绑定参数(HTTP), 英文逗号分隔多个端口
+	if cfg.WebConf.ServerAddr == "" {
+		cfg.WebConf.ServerAddr = WebServerAddr
+	}
+
+	// 证书文件存在时开启 HTTPS
+	cfg.WebConf.CertFile = os.Getenv(WebCertFileEnv)
+	cfg.WebConf.KeyFile = os.Getenv(WebKeyFileEnv)
+	if xfile.IsFile(cfg.WebConf.CertFile) && xfile.IsFile(cfg.WebConf.KeyFile) {
+		// 优先使用配置中的绑定参数(HTTPS), 英文逗号分隔多个端口
+		if cfg.WebConf.ServerHttpsAddr == "" {
+			cfg.WebConf.ServerHttpsAddr = WebServerHttpsAddr
+		}
+	} else {
+		cfg.WebConf.ServerHttpsAddr = ""
+	}
+
+	// 接口 IP 白名单
+	whitelist, err := getIPNetList(cfg.Whitelist)
+	if err != nil {
+		return nil, err
+	}
+	Whitelist = whitelist
+
+	// 接口访问 IP 黑名单
+	blacklist, err := getIPNetList(cfg.Blacklist)
+	if err != nil {
+		return nil, err
+	}
+	Blacklist = blacklist
+
 	ver := GetFileVer(ConfigFile)
 	ver.MD5 = xhash.MD5BytesHex(body)
 	ver.LastUpdate = time.Now()
 	if Debug {
 		fmt.Printf("\n\n%s\n\n", json.MustJSONIndent(cfg))
+		fmt.Printf("\nWhitelist:\n%s\n\n", whitelist)
+		fmt.Printf("\nBlacklist:\n%s\n\n", blacklist)
 	}
 	return cfg, nil
+}
+
+// IP 配置转换
+func getIPNetList(ips []string) (map[*net.IPNet]struct{}, error) {
+	ipNets := make(map[*net.IPNet]struct{})
+	for _, ip := range ips {
+		// 去除行间备注信息: 192.168.0.0/16,内网 IP 全放开
+		ip := strings.SplitN(ip, ",", 2)[0]
+		// 排除空白行, __ 或 # 开头的注释行
+		ip = strings.TrimSpace(ip)
+		if ip == "" || strings.HasPrefix(ip, "__") || strings.HasPrefix(ip, "#") {
+			continue
+		}
+		// 补全掩码
+		if !strings.Contains(ip, "/") {
+			if strings.Contains(ip, ":") {
+				ip = ip + "/128"
+			} else {
+				ip = ip + "/32"
+			}
+		}
+		// 转为网段
+		_, ipNet, err := net.ParseCIDR(ip)
+		if err != nil {
+			return nil, err
+		}
+		ipNets[ipNet] = struct{}{}
+	}
+	return ipNets, nil
 }
