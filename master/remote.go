@@ -13,8 +13,10 @@ import (
 
 // 初始化获取远端配置
 func startRemotePipelines(ctx context.Context) {
-	// 定时获取远程主配置
+	// 定时获取远程主配置, 黑白名单配置
 	utils.SafeGoWithContext(ctx, getMainRemoteConf, common.RecoverAlarm)
+	utils.SafeGoWithContext(ctx, getWhitelistRemoteConf, common.RecoverAlarm)
+	utils.SafeGoWithContext(ctx, getBlacklistRemoteConf, common.RecoverAlarm)
 
 	// 运行应用级自定义的获取远端方法
 	ps := getPipelinesWithContext(RemoteStage)
@@ -26,6 +28,22 @@ func startRemotePipelines(ctx context.Context) {
 
 func getMainRemoteConf(ctx context.Context) {
 	cfg := config.Config().MainConf
+	if cfg.GetConfDuration <= 0 {
+		return
+	}
+	GetRemoteConf(ctx, cfg)
+}
+
+func getWhitelistRemoteConf(ctx context.Context) {
+	cfg := config.Config().WhitelistConf
+	if cfg.GetConfDuration <= 0 {
+		return
+	}
+	GetRemoteConf(ctx, cfg)
+}
+
+func getBlacklistRemoteConf(ctx context.Context) {
+	cfg := config.Config().BlacklistConf
 	if cfg.GetConfDuration <= 0 {
 		return
 	}

@@ -32,13 +32,15 @@ var (
 
 // MainConf 接口配置
 type MainConf struct {
-	SYSConf   SYSConf   `json:"sys_conf"`
-	MainConf  FilesConf `json:"main_conf"`
-	LogConf   LogConf   `json:"log_conf"`
-	NodeConf  NodeConf  `json:"node_conf"`
-	WebConf   WebConf   `json:"web_conf"`
-	Whitelist []string  `json:"whitelist"`
-	Blacklist []string  `json:"blacklist"`
+	SYSConf       SYSConf   `json:"sys_conf"`
+	MainConf      FilesConf `json:"main_conf"`
+	LogConf       LogConf   `json:"log_conf"`
+	NodeConf      NodeConf  `json:"node_conf"`
+	WebConf       WebConf   `json:"web_conf"`
+	Whitelist     []string  `json:"whitelist"`
+	Blacklist     []string  `json:"blacklist"`
+	WhitelistConf FilesConf `json:"whitelist_conf"`
+	BlacklistConf FilesConf `json:"blacklist_conf"`
 }
 
 // SYSConf 主配置, 变量意义见配置文件中的描述及 default.go 中的默认值
@@ -273,12 +275,48 @@ func readConf() (*MainConf, error) {
 		cfg.WebConf.ServerHttpsAddr = ""
 	}
 
+	// 每次获取远程白名单 IP 配置的时间间隔, < 30 秒则禁用该功能
+	if cfg.WhitelistConf.Interval >= 30 {
+		if cfg.WhitelistConf.SecretName != "" {
+			cfg.WhitelistConf.SecretValue = xcrypto.GetenvDecrypt(cfg.WhitelistConf.SecretName,
+				cfg.SYSConf.BaseSecretValue)
+			if cfg.WhitelistConf.SecretValue == "" {
+				return nil, fmt.Errorf("%s cannot be empty", cfg.WhitelistConf.SecretName)
+			}
+		}
+		cfg.WhitelistConf.GetConfDuration = time.Duration(cfg.WhitelistConf.Interval) * time.Second
+	}
+	cfg.WhitelistConf.Path = WhitelistConfigFile
+
+	// 读取白名单 IP 文件, 追加到 IP 列表
+	if ips, e := xfile.ReadLines(cfg.WhitelistConf.Path); e == nil && len(ips) > 0 {
+		cfg.Whitelist = append(cfg.Whitelist, ips...)
+	}
+
 	// 接口 IP 白名单
 	whitelist, err := getIPNetList(cfg.Whitelist)
 	if err != nil {
 		return nil, err
 	}
 	Whitelist = whitelist
+
+	// 每次获取远程黑名单 IP 配置的时间间隔, < 30 秒则禁用该功能
+	if cfg.BlacklistConf.Interval >= 30 {
+		if cfg.BlacklistConf.SecretName != "" {
+			cfg.BlacklistConf.SecretValue = xcrypto.GetenvDecrypt(cfg.BlacklistConf.SecretName,
+				cfg.SYSConf.BaseSecretValue)
+			if cfg.BlacklistConf.SecretValue == "" {
+				return nil, fmt.Errorf("%s cannot be empty", cfg.BlacklistConf.SecretName)
+			}
+		}
+		cfg.BlacklistConf.GetConfDuration = time.Duration(cfg.BlacklistConf.Interval) * time.Second
+	}
+	cfg.BlacklistConf.Path = WhitelistConfigFile
+
+	// 读取黑名单 IP 文件, 追加到 IP 列表
+	if ips, e := xfile.ReadLines(cfg.BlacklistConf.Path); e == nil && len(ips) > 0 {
+		cfg.Blacklist = append(cfg.Blacklist, ips...)
+	}
 
 	// 接口访问 IP 黑名单
 	blacklist, err := getIPNetList(cfg.Blacklist)

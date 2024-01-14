@@ -36,6 +36,11 @@ var (
 	EnvFilePath string
 	EnvMainFile string
 
+	// WhitelistConfigFile IP 白名单配置文件路径
+	WhitelistConfigFile string
+	// BlacklistConfigFile IP 黑名单配置文件路径
+	BlacklistConfigFile string
+
 	// ReqUserAgent Request 请求名称
 	ReqUserAgent string
 )
@@ -162,6 +167,14 @@ func initDefaultConfig() {
 
 	if ReqUserAgent == "" {
 		ReqUserAgent = AppName + "/" + Version
+	}
+
+	if WhitelistConfigFile == "" {
+		WhitelistConfigFile = filepath.Join(ConfigPath, BinName+".whitelist.conf")
+	}
+
+	if BlacklistConfigFile == "" {
+		BlacklistConfigFile = filepath.Join(ConfigPath, BinName+".blacklist.conf")
 	}
 
 	makePaths()

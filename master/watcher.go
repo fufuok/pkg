@@ -178,6 +178,7 @@ func mainWatcher() {
 // MD5ConfigFiles 配置文件 MD5, 有变化时重载
 func MD5ConfigFiles() (md5 string, confFiles []string) {
 	confFiles = append(confFiles, config.ConfigFile, config.NodeInfoFile)
+	confFiles = append(confFiles, config.WhitelistConfigFile, config.BlacklistConfigFile)
 	confFiles = append(confFiles, config.ExtraEnvFiles...)
 	md5 = MD5Files(confFiles...)
 	return
