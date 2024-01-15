@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/fufuok/utils"
@@ -49,9 +48,6 @@ var (
 
 var (
 	Debug bool
-
-	// FilesVer 配置文件版本信息
-	FilesVer sync.Map
 
 	// LogLevel 日志级别: -1Trace 0Debug 1Info 2Warn(默认) 3Error 4Fatal 5Panic 6NoLevel 7Off
 	LogLevel = 2

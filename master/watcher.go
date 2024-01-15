@@ -15,6 +15,9 @@ import (
 )
 
 var (
+	// ConfigModTime 公共配置文件集最后修改时间
+	ConfigModTime time.Time
+
 	// watchers 自助添加的文件变化监控器
 	watchers = xsync.NewMapOf[string, Watcher]()
 
@@ -71,6 +74,7 @@ func initWatcher() {
 	isRuntime = true
 	md5Main := MD5Files(mainFile)
 	md5Conf, confFiles := MD5ConfigFiles()
+	ConfigModTime = common.GTimeNow()
 	watcherMD5.Store(mainKey, md5Main)
 	watcherMD5.Store(mainConfKey, md5Conf)
 
@@ -126,6 +130,7 @@ func mainWatcher() {
 		if md5New == md5Conf {
 			continue
 		}
+		ConfigModTime = common.GTimeNow()
 
 		// 任意配置文件变化, 热加载所有配置
 		if err := config.LoadConf(); err != nil {

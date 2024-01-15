@@ -13,33 +13,32 @@ import (
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/json"
+	"github.com/fufuok/pkg/master"
 )
 
 // SYSStats 系统信息
 func SYSStats() map[string]any {
-	ver := config.GetFileVer(config.ConfigFile)
 	return map[string]any{
-		"AppName":      config.AppName,
-		"Version":      config.Version,
-		"GitCommit":    config.GitCommit,
-		"Uptime":       time.Since(common.StartTime).String(),
-		"StartTime":    common.StartTime,
-		"ClockOffset":  common.GetClockOffset().String(),
-		"GlobalTime":   common.GTimeNowString(time.RFC3339Nano),
-		"LocalTime":    time.Now(),
-		"Debug":        config.Debug,
-		"LogLevel":     zerolog.Level(config.Config().LogConf.Level).String(),
-		"ConfigVer":    ver.LastUpdate,
-		"ConfigMD5":    ver.MD5,
-		"GoVersion":    config.GoVersion,
-		"NumCpus":      runtime.NumCPU(),
-		"NumGoroutine": runtime.NumGoroutine(),
-		"NumCgoCall":   utils.Comma(runtime.NumCgoCall()),
-		"InternalIPv4": common.InternalIPv4,
-		"ExternalIPv4": common.ExternalIPv4,
-		"HTTPS":        config.Config().WebConf.ServerHttpsAddr != "",
-		"JSON":         json.Name,
-		"GoPool":       ants.Running(),
+		"AppName":       config.AppName,
+		"Version":       config.Version,
+		"GitCommit":     config.GitCommit,
+		"Uptime":        time.Since(common.StartTime).String(),
+		"StartTime":     common.StartTime,
+		"ClockOffset":   common.GetClockOffset().String(),
+		"GlobalTime":    common.GTimeNowString(time.RFC3339Nano),
+		"LocalTime":     time.Now(),
+		"Debug":         config.Debug,
+		"LogLevel":      zerolog.Level(config.Config().LogConf.Level).String(),
+		"ConfigModTime": master.ConfigModTime,
+		"GoVersion":     config.GoVersion,
+		"NumCpus":       runtime.NumCPU(),
+		"NumGoroutine":  runtime.NumGoroutine(),
+		"NumCgoCall":    utils.Comma(runtime.NumCgoCall()),
+		"InternalIPv4":  common.InternalIPv4,
+		"ExternalIPv4":  common.ExternalIPv4,
+		"HTTPS":         config.Config().WebConf.ServerHttpsAddr != "",
+		"JSON":          json.Name,
+		"GoPool":        ants.Running(),
 	}
 }
 

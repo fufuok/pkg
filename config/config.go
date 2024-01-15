@@ -11,7 +11,6 @@ import (
 
 	"github.com/fufuok/utils/xcrypto"
 	"github.com/fufuok/utils/xfile"
-	"github.com/fufuok/utils/xhash"
 
 	"github.com/fufuok/pkg/json"
 )
@@ -332,9 +331,6 @@ func readConf() (*MainConf, error) {
 	}
 	Blacklist = blacklist
 
-	ver := GetFileVer(ConfigFile)
-	ver.MD5 = xhash.MD5BytesHex(body)
-	ver.LastUpdate = time.Now()
 	if Debug {
 		fmt.Printf("\n\n%s\n\n", json.MustJSONIndent(cfg))
 		fmt.Printf("\nWhitelist:\n%s\n\n", whitelist)

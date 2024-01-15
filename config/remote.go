@@ -58,16 +58,13 @@ func GetDataSource(args any) error {
 		return fmt.Errorf("data source result is empty")
 	}
 
-	// 当前版本信息
-	ver := GetFileVer(params.Conf.Path)
+	// 新旧文件内容不同时重写文件
+	md5Old := xhash.MustMD5Sum(params.Conf.Path)
 	md5New := xhash.MD5Hex(body)
-	if md5New != ver.MD5 {
-		// 保存到配置文件
+	if md5New != md5Old {
 		if err = os.WriteFile(params.Conf.Path, []byte(body), 0644); err != nil {
 			return err
 		}
-		ver.MD5 = md5New
-		ver.LastUpdate = time.Now()
 	}
 	return nil
 }
