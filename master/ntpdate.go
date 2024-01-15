@@ -54,7 +54,7 @@ func ntpdate() {
 
 	// 定时同步
 	ntpCtx, ntpCancel = context.WithCancel(context.Background())
-	ch := ntp.ClockOffsetChan(ntpCtx, common.ClockOffsetFirstInterval)
+	ch := ntp.ClockOffsetChan(ntpCtx, 0)
 	for dur = range ch {
 		common.SetClockOffset(dur)
 	}
