@@ -288,10 +288,9 @@ func readConf() (*MainConf, error) {
 		cfg.WhitelistConf.GetConfDuration = time.Duration(cfg.WhitelistConf.Interval) * time.Second
 	}
 	if cfg.WhitelistConf.Path == "" {
-		cfg.WhitelistConf.Path = WhitelistConfigFile
-	} else {
-		WhitelistConfigFile = cfg.WhitelistConf.Path
+		cfg.WhitelistConf.Path = DefaultWhitelistConfigFile
 	}
+	WhitelistConfigFile = cfg.WhitelistConf.Path
 
 	// 读取白名单 IP 文件, 追加到 IP 列表
 	if ips, e := xfile.ReadLines(WhitelistConfigFile); e == nil && len(ips) > 0 {
@@ -317,10 +316,9 @@ func readConf() (*MainConf, error) {
 		cfg.BlacklistConf.GetConfDuration = time.Duration(cfg.BlacklistConf.Interval) * time.Second
 	}
 	if cfg.BlacklistConf.Path == "" {
-		cfg.BlacklistConf.Path = BlacklistConfigFile
-	} else {
-		BlacklistConfigFile = cfg.BlacklistConf.Path
+		cfg.BlacklistConf.Path = DefaultBlacklistConfigFile
 	}
+	BlacklistConfigFile = cfg.BlacklistConf.Path
 
 	// 读取黑名单 IP 文件, 追加到 IP 列表
 	if ips, e := xfile.ReadLines(BlacklistConfigFile); e == nil && len(ips) > 0 {
