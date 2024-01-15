@@ -22,10 +22,7 @@ func Start() error {
 	// 初始化本机 IP
 	go initServerIP()
 
-	// 更新全局时间差
-	go ntpdate()
-
-	// 同步全局时间值
+	// 同步全局秒级时间值
 	go syncNow()
 
 	// 池相关设置

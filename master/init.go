@@ -28,10 +28,25 @@ func registerCommonFuncs() {
 // 注册框架级 Pipeline
 func registerPipeline() {
 	initConfigPipelines = append([]StageFunc{config.Start}, initConfigPipelines...)
-	initPipelines = append([]StageFunc{common.Start, crontab.Start}, initPipelines...)
+	initPipelines = append([]StageFunc{common.Start, crontab.Start, startAddon}, initPipelines...)
 	runtimeConfigPipelines = append([]StageFunc{config.Runtime}, runtimeConfigPipelines...)
-	runtimePipelines = append([]StageFunc{common.Runtime, crontab.Runtime}, runtimePipelines...)
-	Register(StopStage, crontab.Stop, common.Stop, config.Stop)
+	runtimePipelines = append([]StageFunc{common.Runtime, crontab.Runtime, runtimeAddon}, runtimePipelines...)
+	Register(StopStage, stopAddon, crontab.Stop, common.Stop, config.Stop)
+}
+
+func startAddon() error {
+	err := startTimeSync()
+	return err
+}
+
+func runtimeAddon() error {
+	err := runtimeTimeSync()
+	return err
+}
+
+func stopAddon() error {
+	err := stopTimeSync()
+	return err
 }
 
 // 程序配置初始化入口

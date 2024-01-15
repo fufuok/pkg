@@ -45,6 +45,7 @@ type MainConf struct {
 // SYSConf 主配置, 变量意义见配置文件中的描述及 default.go 中的默认值
 type SYSConf struct {
 	RestartMain             bool     `json:"restart_main"`
+	DisableTimeSync         bool     `json:"disable_time_sync"`
 	WatcherInterval         int      `json:"watcher_interval"`
 	ReqTimeout              int      `json:"req_timeout"`
 	ReqMaxRetries           int      `json:"req_max_retries"`
