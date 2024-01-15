@@ -166,7 +166,9 @@ func mainWatcher() {
 			logger.Warn().Str("interval", interval.String()).Msg("reset ticker")
 		}
 
-		_, confFiles := MD5ConfigFiles()
+		// 最终的配置列表和 MD5
+		md5ok, confFiles := MD5ConfigFiles()
+		watcherMD5.Store(mainConfKey, md5ok)
 		logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> reload config <<<<<<<")
 		logger.Warn().Strs("configs", confFiles).Msg("Watching")
 		logger.Warn().RawJSON("data", json.MustJSON(config.Config().NodeConf.NodeInfo)).Msg("NodeInfo")
