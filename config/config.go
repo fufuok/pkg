@@ -103,7 +103,7 @@ type WebConf struct {
 }
 
 type FilesConf struct {
-	Path            string `json:"-"`
+	Path            string `json:"path"`
 	Method          string `json:"method"`
 	SecretName      string `json:"secret_name"`
 	API             string `json:"api"`
@@ -238,6 +238,7 @@ func readConf() (*MainConf, error) {
 	if cfg.MainConf.RandomWait <= 0 {
 		cfg.MainConf.RandomWait = DefaultRandomWait
 	}
+	// 忽略配置文件中指定的主配置文件路径, 由命令行参数或 BinName 确定, 或由应用端 init 指定
 	cfg.MainConf.Path = ConfigFile
 
 	// 配置文件变化监控时间间隔
@@ -286,10 +287,14 @@ func readConf() (*MainConf, error) {
 		}
 		cfg.WhitelistConf.GetConfDuration = time.Duration(cfg.WhitelistConf.Interval) * time.Second
 	}
-	cfg.WhitelistConf.Path = WhitelistConfigFile
+	if cfg.WhitelistConf.Path == "" {
+		cfg.WhitelistConf.Path = WhitelistConfigFile
+	} else {
+		WhitelistConfigFile = cfg.WhitelistConf.Path
+	}
 
 	// 读取白名单 IP 文件, 追加到 IP 列表
-	if ips, e := xfile.ReadLines(cfg.WhitelistConf.Path); e == nil && len(ips) > 0 {
+	if ips, e := xfile.ReadLines(WhitelistConfigFile); e == nil && len(ips) > 0 {
 		cfg.Whitelist = append(cfg.Whitelist, ips...)
 	}
 
@@ -311,10 +316,14 @@ func readConf() (*MainConf, error) {
 		}
 		cfg.BlacklistConf.GetConfDuration = time.Duration(cfg.BlacklistConf.Interval) * time.Second
 	}
-	cfg.BlacklistConf.Path = WhitelistConfigFile
+	if cfg.BlacklistConf.Path == "" {
+		cfg.BlacklistConf.Path = BlacklistConfigFile
+	} else {
+		BlacklistConfigFile = cfg.BlacklistConf.Path
+	}
 
 	// 读取黑名单 IP 文件, 追加到 IP 列表
-	if ips, e := xfile.ReadLines(cfg.BlacklistConf.Path); e == nil && len(ips) > 0 {
+	if ips, e := xfile.ReadLines(BlacklistConfigFile); e == nil && len(ips) > 0 {
 		cfg.Blacklist = append(cfg.Blacklist, ips...)
 	}
 

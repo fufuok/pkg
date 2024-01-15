@@ -53,7 +53,7 @@ var (
 
 	// LogLevel 日志级别: -1Trace 0Debug 1Info 2Warn(默认) 3Error 4Fatal 5Panic 6NoLevel 7Off
 	LogLevel = 2
-	// LogSamplePeriodDur 抽样日志设置 (每秒最多 3 个日志)
+	// LogSamplePeriodDur 抽样日志设置 (每秒最多 10 个日志)
 	LogSamplePeriodDur = time.Second
 	LogSampleBurst     = 10
 	// LogFileMaxSize 每 100M 自动切割, 保留 30 天内最近 10 个日志文件
@@ -61,7 +61,7 @@ var (
 	LogFileMaxBackups = 10
 	LogFileMaxAge     = 30
 	// LogPostIntervalDuration 日志推送时间间隔(秒)
-	LogPostIntervalDuration = 1 * time.Second
+	LogPostIntervalDuration = 2 * time.Second
 	// LogPostBatchNum 单次批量提交数据最大条数或最大字节数
 	LogPostBatchNum   = 2000
 	LogPostBatchBytes = 2 << 20
