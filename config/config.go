@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/fufuok/utils/conv"
 	"github.com/fufuok/utils/xcrypto"
 	"github.com/fufuok/utils/xfile"
 
@@ -20,10 +21,10 @@ var (
 	AlarmOn atomic.Bool
 
 	// Whitelist 接口 IP 白名单配置
-	Whitelist map[*net.IPNet]struct{}
+	Whitelist map[*net.IPNet]int64
 
-	// Blacklist 接口 IP 白名单配置
-	Blacklist map[*net.IPNet]struct{}
+	// Blacklist 接口 IP 黑名单配置
+	Blacklist map[*net.IPNet]int64
 
 	// 全局配置项
 	mainConf atomic.Pointer[MainConf]
@@ -341,11 +342,16 @@ func readConf() (*MainConf, error) {
 }
 
 // IP 配置转换
-func getIPNetList(ips []string) (map[*net.IPNet]struct{}, error) {
-	ipNets := make(map[*net.IPNet]struct{})
+func getIPNetList(ips []string) (map[*net.IPNet]int64, error) {
+	ipNets := make(map[*net.IPNet]int64)
 	for _, ip := range ips {
-		// 去除行间备注信息: 192.168.0.0/16,内网 IP 全放开
-		ip := strings.SplitN(ip, ",", 2)[0]
+		// IP段,数值(一般用于限制器) 如: 192.168.0.0/16,200
+		ss := strings.SplitN(ip, ",", 2)
+		ip := ss[0]
+		val := int64(0)
+		if len(ss) == 2 {
+			val = conv.Atoi(ss[1])
+		}
 		// 排除空白行, __ 或 # 开头的注释行
 		ip = strings.TrimSpace(ip)
 		if ip == "" || strings.HasPrefix(ip, "__") || strings.HasPrefix(ip, "#") {
@@ -364,7 +370,7 @@ func getIPNetList(ips []string) (map[*net.IPNet]struct{}, error) {
 		if err != nil {
 			return nil, err
 		}
-		ipNets[ipNet] = struct{}{}
+		ipNets[ipNet] = val
 	}
 	return ipNets, nil
 }

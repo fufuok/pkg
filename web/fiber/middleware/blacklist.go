@@ -3,9 +3,9 @@ package middleware
 import (
 	"fmt"
 
-	"github.com/fufuok/utils"
 	"github.com/gofiber/fiber/v2"
 
+	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/logger/sampler"
 	"github.com/fufuok/pkg/web/fiber/proxy"
@@ -18,7 +18,7 @@ func CheckBlacklist(asAPI bool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if len(config.Blacklist) > 0 {
 			clientIP := proxy.GetClientIP(c)
-			if utils.InIPNetString(clientIP, config.Blacklist) {
+			if _, ok := common.LookupIPNets(clientIP, config.Blacklist); ok {
 				msg := errMsg + clientIP
 				sampler.Info().
 					Str("cip", c.IP()).Str("x_forwarded_for", c.Get(fiber.HeaderXForwardedFor)).
