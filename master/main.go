@@ -35,6 +35,7 @@ func Main() {
 	Run()
 }
 
+// Run 守护进程启动程序
 func Run() {
 	if daemon && !config.Debug {
 		xdaemon.NewDaemon(config.LogDaemon).Run()
@@ -43,11 +44,21 @@ func Run() {
 	// 手动设置 > 1, 避免 CPU 隔离时协程池调度可能的阻塞
 	runtime.GOMAXPROCS(config.DefaultGOMAXPROCS)
 
+	Start()
+	defer Stop()
+
+	utils.WaitSignal()
+}
+
+// Start 执行程序初始化
+func Start() {
 	registerCommonFuncs()
 	registerPipeline()
 	startConfigPipeline()
 	startPipeline()
-	defer stopPipeline()
+}
 
-	utils.WaitSignal()
+// Stop 程序退出
+func Stop() {
+	stopPipeline()
 }
