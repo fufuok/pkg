@@ -238,8 +238,8 @@ type RedisLogger struct {
 	log zerolog.Logger
 }
 
-// go-redis 类库日志实现
-func newRedisLogger() *RedisLogger {
+// NewRedisLogger go-redis 类库日志实现
+func NewRedisLogger() *RedisLogger {
 	if config.Debug {
 		return &RedisLogger{
 			log: Log,

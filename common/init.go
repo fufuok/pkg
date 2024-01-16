@@ -12,8 +12,10 @@ var (
 	ExternalIPv4 string
 )
 
+type M struct{}
+
 // Start 程序启动时初始化
-func Start() error {
+func (m *M) Start() error {
 	initNow(StartTime)
 
 	// 初始化日志环境
@@ -38,7 +40,7 @@ func Start() error {
 }
 
 // Runtime 重新加载配置时运行
-func Runtime() error {
+func (m *M) Runtime() error {
 	if err := loadLogger(); err != nil {
 		return fmt.Errorf("unable to reinitialize logger")
 	}
@@ -47,7 +49,7 @@ func Runtime() error {
 }
 
 // Stop 程序退出时运行
-func Stop() error {
+func (m *M) Stop() error {
 	close(LogChan.In)
 	poolRelease()
 	return nil

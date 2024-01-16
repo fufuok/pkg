@@ -6,8 +6,10 @@ import (
 	"github.com/fufuok/utils/xfile"
 )
 
-// Start 程序启动时初始化配置
-func Start() error {
+type M struct{}
+
+// Start 程序启动时初始化
+func (m *M) Start() error {
 	initDefaultConfig()
 	if err := LoadConf(); err != nil {
 		log.Fatalln("Failed to initialize main config:", err, "\nbye.")
@@ -16,12 +18,12 @@ func Start() error {
 }
 
 // Runtime 重新加载配置时运行
-func Runtime() error {
+func (m *M) Runtime() error {
 	return nil
 }
 
 // Stop 程序退出时运行
-func Stop() error {
+func (m *M) Stop() error {
 	return nil
 }
 

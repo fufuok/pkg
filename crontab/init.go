@@ -14,19 +14,21 @@ var (
 	crontab *cron.Cron
 )
 
+type M struct{}
+
 // Start 程序启动时初始化
-func Start() error {
+func (m *M) Start() error {
 	initMain()
 	return nil
 }
 
 // Runtime 重新加载配置时运行
-func Runtime() error {
+func (m *M) Runtime() error {
 	return nil
 }
 
 // Stop 程序退出时运行
-func Stop() error {
+func (m *M) Stop() error {
 	crontab.Stop()
 	logger.Warn().Msg("Crontab exited")
 	return nil

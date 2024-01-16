@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"slices"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
@@ -27,39 +28,28 @@ func registerCommonFuncs() {
 
 // 注册框架级 Pipeline
 func registerPipeline() {
-	initConfigPipelines = append([]StageFunc{config.Start}, initConfigPipelines...)
-	initPipelines = append([]StageFunc{common.Start, crontab.Start, startAddon}, initPipelines...)
-	runtimeConfigPipelines = append([]StageFunc{config.Runtime}, runtimeConfigPipelines...)
-	runtimePipelines = append([]StageFunc{common.Runtime, crontab.Runtime, runtimeAddon}, runtimePipelines...)
-	Register(StopStage, stopAddon, crontab.Stop, common.Stop, config.Stop)
-}
-
-func startAddon() error {
-	err := startTimeSync()
-	return err
-}
-
-func runtimeAddon() error {
-	err := runtimeTimeSync()
-	return err
-}
-
-func stopAddon() error {
-	err := stopTimeSync()
-	return err
+	configPipelines = append([]Pipeline{&config.M{}}, configPipelines...)
+	mainPipelines = append([]Pipeline{&common.M{}, &crontab.M{}}, mainPipelines...)
+	mainPipelines = append(mainPipelines, &addons{})
 }
 
 // 程序配置初始化入口
 func startConfigPipeline() {
-	if err := runPipelines(ConfigStage); err != nil {
-		log.Fatalln("Failed to initialize config:", err, "\nbye.")
+	ps := getPipelines(ConfigStage)
+	for _, p := range ps {
+		if err := p.Start(); err != nil {
+			log.Fatalln("Failed to initialize config:", err, "\nbye.")
+		}
 	}
 }
 
 // 程序初始化入口
 func startPipeline() {
-	if err := runPipelines(InitStage); err != nil {
-		log.Fatalln("Failed to initialize main:", err, "\nbye.")
+	ps := getPipelines(MainStage)
+	for _, p := range ps {
+		if err := p.Start(); err != nil {
+			log.Fatalln("Failed to initialize main:", err, "\nbye.")
+		}
 	}
 	// 程序和配置监控
 	go mainScheduler()
@@ -67,22 +57,32 @@ func startPipeline() {
 
 // 配置变化时先加载新配置
 func runtimeConfigPipeline() {
-	if err := runPipelines(RuntimeConfigStage); err != nil {
-		alarm.Error().Err(err).Msg("runtime config pipeline")
+	ps := getPipelines(ConfigStage)
+	for _, p := range ps {
+		if err := p.Runtime(); err != nil {
+			alarm.Error().Err(err).Msg("runtime config pipeline")
+		}
 	}
 }
 
 // 配置变化时运行
 func runtimePipeline() {
-	if err := runPipelines(RuntimeStage); err != nil {
-		alarm.Error().Err(err).Msg("runtime main pipeline")
+	ps := getPipelines(MainStage)
+	for _, p := range ps {
+		if err := p.Runtime(); err != nil {
+			alarm.Error().Err(err).Msg("runtime main pipeline")
+		}
 	}
 }
 
 // 程序退出时清理
 func stopPipeline() {
-	if err := runPipelines(StopStage); err != nil {
-		logger.Fatal().Err(err).Str("app", config.AppName).Msg("Main exited")
+	ps := append(getPipelines(ConfigStage), getPipelines(MainStage)...)
+	slices.Reverse(ps)
+	for _, p := range ps {
+		if err := p.Stop(); err != nil {
+			logger.Fatal().Err(err).Str("app", config.AppName).Msg("Main exited")
+		}
 	}
 	logger.Warn().Str("app", config.AppName).Msg("Main exited")
 }
