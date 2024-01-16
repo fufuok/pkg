@@ -17,8 +17,9 @@ var (
 	// ClockOffsetLimit 允许的时间偏差, 1 秒内偏差不更新 clockOffset
 	ClockOffsetLimit = float64(1 * time.Second)
 
-	// ClockOffsetFirstInterval 首次同步时间的执行间隔
-	ClockOffsetFirstInterval = 20 * time.Second
+	// ClockOffsetMinInterval 同步时间的单次执行间隔
+	ClockOffsetMinInterval = 20 * time.Second
+	ClockOffsetInterval    = 2 * time.Hour
 
 	// 全局时间差
 	clockOffset atomic.Int64

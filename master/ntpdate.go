@@ -2,6 +2,7 @@ package master
 
 import (
 	"context"
+	"time"
 
 	"github.com/fufuok/utils/ntp"
 
@@ -11,19 +12,23 @@ import (
 )
 
 var (
-	ntpCtx     context.Context
-	ntpCancel  context.CancelFunc
-	ntpRunning bool
+	ntpCtx    context.Context
+	ntpCancel context.CancelFunc
+	ntpName   string
 )
 
 // 根据配置开启或关闭默认的时间同步服务
 func startTimeSync() error {
-	if config.Config().SYSConf.DisableTimeSync {
+	newType := config.Config().SYSConf.TimeSyncType
+	if newType == "" {
 		_ = stopTimeSync()
 		return nil
 	}
-	if ntpRunning {
+	if newType == ntpName {
 		return nil
+	}
+	if ntpName != "" {
+		_ = stopTimeSync()
 	}
 	go ntpdate()
 	return nil
@@ -34,29 +39,46 @@ func runtimeTimeSync() error {
 }
 
 func stopTimeSync() error {
-	if ntpRunning && ntpCancel != nil {
+	if ntpName != "" && ntpCancel != nil {
 		ntpCancel()
 	}
-	ntpRunning = false
+	ntpName = ""
 	return nil
 }
 
 // 时间同步服务
 func ntpdate() {
 	// 首次同步
-	ntpRunning = true
-	logger.Warn().Msg("ntpdate is working")
-	ntpCtx, ntpCancel = context.WithTimeout(context.Background(), common.ClockOffsetFirstInterval*4)
-	dur := <-ntp.ClockOffsetChan(ntpCtx, common.ClockOffsetFirstInterval)
-	logger.Warn().Str("clock_offset", dur.String()).Msg("first ntpdate")
+	ntpCtx, ntpCancel = context.WithTimeout(context.Background(), common.ClockOffsetMinInterval*4)
+	name, ch := getClockOffsetChan(ntpCtx, common.ClockOffsetMinInterval)
+	if ch == nil {
+		return
+	}
+	dur := <-ch
+	logger.Warn().Str("clock_offset", dur.String()).Str("name", name).Msg("first ntpdate")
 	ntpCancel()
 	common.SetClockOffset(dur)
 
 	// 定时同步
 	ntpCtx, ntpCancel = context.WithCancel(context.Background())
-	ch := ntp.ClockOffsetChan(ntpCtx, 0)
+	name, ch = getClockOffsetChan(ntpCtx, common.ClockOffsetInterval)
+	if ch == nil {
+		return
+	}
+	logger.Warn().Str("name", name).Msg("ntpdate is working")
 	for dur = range ch {
 		common.SetClockOffset(dur)
 	}
-	logger.Warn().Str("clock_offet", common.GetClockOffset().String()).Msg("ntpdate exited")
+	logger.Warn().Str("clock_offet", common.GetClockOffset().String()).Str("type", name).Msg("ntpdate exited")
+}
+
+func getClockOffsetChan(ctx context.Context, dur time.Duration) (string, chan time.Duration) {
+	ntpName = config.Config().SYSConf.TimeSyncType
+	if ntpName == "" {
+		return "", nil
+	}
+	if ntpName == "redis" && common.RedisDB != nil {
+		return ntpName, common.ClockOffsetChanRedis(ctx, dur, common.RedisDB)
+	}
+	return ntpName, ntp.ClockOffsetChan(ctx, dur)
 }

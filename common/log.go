@@ -1,6 +1,7 @@
 package common
 
 import (
+	"context"
 	"log"
 	"os"
 	"runtime"
@@ -231,4 +232,24 @@ func (l *CronLogger) Info(msg string, keysAndValues ...any) {
 
 func (l *CronLogger) Error(err error, msg string, keysAndValues ...any) {
 	l.errorLog.Error().Err(err).Any("more", keysAndValues).Msg(msg)
+}
+
+type RedisLogger struct {
+	log zerolog.Logger
+}
+
+// go-redis 类库日志实现
+func newRedisLogger() *RedisLogger {
+	if config.Debug {
+		return &RedisLogger{
+			log: Log,
+		}
+	}
+	return &RedisLogger{
+		log: LogSampled,
+	}
+}
+
+func (l *RedisLogger) Printf(_ context.Context, format string, v ...any) {
+	l.log.Error().Msgf(format, v...)
 }
