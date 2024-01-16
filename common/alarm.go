@@ -3,6 +3,7 @@ package common
 import (
 	"os"
 
+	"github.com/fufuok/ants"
 	"github.com/fufuok/utils/xjson/gjson"
 	"github.com/fufuok/utils/xjson/jsongen"
 	"github.com/imroc/req/v3"
@@ -27,9 +28,11 @@ func SendAlarm(code, info, more string) {
 		return
 	}
 	data := GenAlarmJson(code, info, more)
-	if _, err := req.SetBodyJsonBytes(data).Post(cfg.PostAlarmAPI); err != nil {
-		LogSampled.Warn().Err(err).Str("url", cfg.PostAlarmAPI).Msg("sendAlarm")
-	}
+	_ = ants.Submit(func() {
+		if _, err := req.SetBodyJsonBytes(data).Post(cfg.PostAlarmAPI); err != nil {
+			LogSampled.Warn().Err(err).Str("url", cfg.PostAlarmAPI).Msg("SendAlarm")
+		}
+	})
 }
 
 // GenAlarmData 错误日志转换为报警信息
