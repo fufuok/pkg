@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -70,7 +70,7 @@ func Test_WithTimeoutSkipTimeoutStatus(t *testing.T) {
 		resp, err := app.Test(httptest.NewRequest("GET", traget, nil))
 		assert.Equal(t, nil, err, "app.Test(req)")
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode, "Status code")
-		body, err := ioutil.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		assert.Equal(t, nil, err)
 		assert.Equal(t, "Error: "+context.DeadlineExceeded.Error(), string(body))
 	}
@@ -78,7 +78,7 @@ func Test_WithTimeoutSkipTimeoutStatus(t *testing.T) {
 		resp, err := app.Test(httptest.NewRequest("GET", traget, nil))
 		assert.Equal(t, nil, err, "app.Test(req)")
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode, "Status code")
-		body, err := ioutil.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		assert.Equal(t, nil, err)
 		assert.Equal(t, "OK", string(body))
 	}

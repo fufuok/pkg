@@ -335,8 +335,8 @@ func readConf() (*MainConf, error) {
 
 	if Debug {
 		fmt.Printf("\n\n%s\n\n", json.MustJSONIndent(cfg))
-		fmt.Printf("\nWhitelist:\n%s\n\n", whitelist)
-		fmt.Printf("\nBlacklist:\n%s\n\n", blacklist)
+		fmt.Printf("\nWhitelist:\n%v\n\n", whitelist)
+		fmt.Printf("\nBlacklist:\n%v\n\n", blacklist)
 	}
 	return cfg, nil
 }
