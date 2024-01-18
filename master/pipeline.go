@@ -40,6 +40,7 @@ func Register(stage Stage, sf ...Pipeline) {
 		configPipelines = append(configPipelines, sf...)
 	case MainStage:
 		mainPipelines = append(mainPipelines, sf...)
+	case RemoteStage:
 	}
 }
 
@@ -47,6 +48,8 @@ func RegisterWithContext(stage Stage, sf ...ContextFunc) {
 	mu.Lock()
 	defer mu.Unlock()
 	switch stage {
+	case ConfigStage:
+	case MainStage:
 	case RemoteStage:
 		remotePipelines = append(remotePipelines, sf...)
 	}
@@ -58,6 +61,7 @@ func getPipelines(stage Stage) (ps []Pipeline) {
 		ps = configPipelines
 	case MainStage:
 		ps = mainPipelines
+	case RemoteStage:
 	}
 
 	mu.Lock()
@@ -68,6 +72,8 @@ func getPipelines(stage Stage) (ps []Pipeline) {
 
 func getPipelinesWithContext(stage Stage) (ps []ContextFunc) {
 	switch stage {
+	case ConfigStage:
+	case MainStage:
 	case RemoteStage:
 		ps = remotePipelines
 	}

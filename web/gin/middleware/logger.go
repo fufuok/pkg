@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -80,45 +81,42 @@ func WebLogger(cond LogCondition) gin.HandlerFunc {
 func RecoveryWithLog(stack bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
-			if err := recover(); err != nil {
-				// Check for a broken connection, as it is not really a
-				// condition that warrants a panic stack trace.
-				var brokenPipe bool
-				if ne, ok := err.(*net.OpError); ok {
-					if se, ok := ne.Err.(*os.SyscallError); ok {
-						if strings.Contains(strings.ToLower(se.Error()), "broken pipe") ||
-							strings.Contains(strings.ToLower(se.Error()), "connection reset by peer") {
-							brokenPipe = true
-						}
+			err := recover()
+			if err == nil {
+				return
+			}
+
+			// Check for a broken connection, as it is not really a
+			// condition that warrants a panic stack trace.
+			var brokenPipe bool
+			if ne, ok := err.(*net.OpError); ok {
+				var se *os.SyscallError
+				if errors.As(ne.Err, &se) {
+					if strings.Contains(strings.ToLower(se.Error()), "broken pipe") ||
+						strings.Contains(strings.ToLower(se.Error()), "connection reset by peer") {
+						brokenPipe = true
 					}
 				}
-
-				httpRequest, _ := httputil.DumpRequest(c.Request, false)
-				if brokenPipe {
-					sampler.Error().
-						Bytes("request", httpRequest).
-						Str("path", c.Request.URL.Path).
-						Msgf("Recovery: %s", err)
-					// If the connection is dead, we can't write a status to it.
-					_ = c.Error(err.(error)) // nolint: errcheck
-					c.Abort()
-					return
-				}
-
-				if stack {
-					sampler.Error().
-						Bytes("stack", debug.Stack()).
-						Bytes("request", httpRequest).
-						Str("path", c.Request.URL.Path).
-						Msgf("Recovery: %s", err)
-				} else {
-					sampler.Error().
-						Bytes("request", httpRequest).
-						Str("path", c.Request.URL.Path).
-						Msgf("Recovery: %s", err)
-				}
-				c.AbortWithStatus(http.StatusInternalServerError)
 			}
+
+			httpRequest, _ := httputil.DumpRequest(c.Request, false)
+			if brokenPipe {
+				sampler.Error().Bytes("request", httpRequest).Str("path", c.Request.URL.Path).
+					Msgf("Recovery: %s", err)
+				// If the connection is dead, we can't write a status to it.
+				_ = c.Error(err.(error)) // nolint: errcheck
+				c.Abort()
+				return
+			}
+
+			if stack {
+				sampler.Error().Bytes("stack", debug.Stack()).Bytes("request", httpRequest).
+					Str("path", c.Request.URL.Path).Msgf("Recovery: %s", err)
+			} else {
+				sampler.Error().Bytes("request", httpRequest).Str("path", c.Request.URL.Path).
+					Msgf("Recovery: %s", err)
+			}
+			c.AbortWithStatus(http.StatusInternalServerError)
 		}()
 
 		c.Next()

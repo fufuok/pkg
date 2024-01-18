@@ -50,6 +50,7 @@ func initLogger() {
 	}
 }
 
+//nolint:reassign
 func initZerolog() {
 	// 路径脱敏, 日志格式规范, 避免与自定义字段名冲突: {"E":"is Err(error)","error":"is Str(error)"}
 	zerolog.MessageFieldName = logMessageFieldName

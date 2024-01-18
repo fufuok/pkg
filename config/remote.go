@@ -62,6 +62,7 @@ func GetDataSource(args any) error {
 	md5Old := xhash.MustMD5Sum(params.Conf.Path)
 	md5New := xhash.MD5Hex(body)
 	if md5New != md5Old {
+		// #nosec G306
 		if err = os.WriteFile(params.Conf.Path, []byte(body), 0644); err != nil {
 			return err
 		}

@@ -92,11 +92,11 @@ func initWatcher() {
 		logger.Warn().Strs("keys", keys).Msg("Watching")
 	}
 
-	go mainWatcher()
+	go startWatcher()
 }
 
 // 监听程序二进制变化(重启)和配置文件(热加载)
-func mainWatcher() {
+func startWatcher() {
 	cfg := config.Config().SYSConf
 	interval := cfg.WatcherIntervalDuration
 	logger.Warn().Int("count", watchers.Size()+2).Str("interval", interval.String()).Msg("Watching")
@@ -105,36 +105,13 @@ func mainWatcher() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		// 程序二进制变化时重启
-		md5New := MD5Files(mainFile)
-		md5Main, _ := watcherMD5.LoadAndStore(mainKey, md5New)
-		if md5New != md5Main {
-			logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> restart main <<<<<<<")
-			restartChan <- true
+		if c := mainWatcher(); c {
 			continue
 		}
 
-		// 运行应用自助添加的监控器
-		watchers.Range(func(k string, w Watcher) bool {
-			md5New := MD5Files(w.Files...)
-			md5Old, _ := watcherMD5.LoadAndStore(k, md5New)
-			if md5New != md5Old {
-				utils.SafeGo(w.Func)
-			}
-			return true
-		})
+		appWatcher()
 
-		// 系统配置检查和重载
-		md5New, _ = MD5ConfigFiles()
-		md5Conf, _ := watcherMD5.LoadAndStore(mainConfKey, md5New)
-		if md5New == md5Conf {
-			continue
-		}
-		ConfigModTime = common.GTimeNow()
-
-		// 任意配置文件变化, 热加载所有配置
-		if err := config.LoadConf(); err != nil {
-			logger.Error().Err(err).Msg("reload config")
+		if c := configWatcher(); c {
 			continue
 		}
 
@@ -142,23 +119,7 @@ func mainWatcher() {
 		runtimeConfigPipeline()
 		cfg = config.Config().SYSConf
 
-		// 安装新版本, 每当配置有变化时才检测
-		if cfg.DebVersion != "" && config.DebVersion != cfg.DebVersion {
-			threshold := cfg.CanaryDeployment
-			toInstall := canary(cfg.DebVersion, threshold)
-			logger.Warn().
-				Strs("deb_versions", []string{config.DebVersion, cfg.DebVersion}).
-				Bool("to_install", toInstall).Str("ip", common.ExternalIPv4).Uint64("threshold", threshold).
-				Msg("Canary Deployment")
-			if toInstall {
-				go installDeb(cfg.DebVersion)
-			}
-		}
-
-		// 重启程序指令
-		if cfg.RestartMain {
-			logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> restart main(config) <<<<<<<")
-			restartChan <- true
+		if c := checkUpgradeOrRestart(cfg); c {
 			continue
 		}
 
@@ -182,11 +143,77 @@ func mainWatcher() {
 	}
 }
 
+func mainWatcher() (needContinue bool) {
+	// 程序二进制变化时重启
+	md5New := MD5Files(mainFile)
+	md5Main, _ := watcherMD5.LoadAndStore(mainKey, md5New)
+	if md5New == md5Main {
+		return
+	}
+	logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> restart main <<<<<<<")
+	restartChan <- true
+	return true
+}
+
+// 运行应用自助添加的监控器
+func appWatcher() {
+	watchers.Range(func(k string, w Watcher) bool {
+		md5New := MD5Files(w.Files...)
+		md5Old, _ := watcherMD5.LoadAndStore(k, md5New)
+		if md5New != md5Old {
+			utils.SafeGo(w.Func)
+		}
+		return true
+	})
+}
+
+func configWatcher() (needContinue bool) {
+	// 系统配置检查和重载
+	md5New, _ := MD5ConfigFiles()
+	md5Conf, _ := watcherMD5.LoadAndStore(mainConfKey, md5New)
+	if md5New == md5Conf {
+		return true
+	}
+	ConfigModTime = common.GTimeNow()
+
+	// 任意配置文件变化, 热加载所有配置
+	if err := config.LoadConf(); err != nil {
+		logger.Error().Err(err).Msg("reload config")
+		return true
+	}
+	return false
+}
+
+func checkUpgradeOrRestart(cfg config.SYSConf) (needContinue bool) {
+	// 安装新版本, 每当配置有变化时才检测
+	if cfg.DebVersion != "" && config.DebVersion != cfg.DebVersion {
+		threshold := cfg.CanaryDeployment
+		toInstall := canary(cfg.DebVersion, threshold)
+		logger.Warn().
+			Strs("deb_versions", []string{config.DebVersion, cfg.DebVersion}).
+			Bool("to_install", toInstall).Str("ip", common.ExternalIPv4).Uint64("threshold", threshold).
+			Msg("Canary Deployment")
+		if toInstall {
+			go installDeb(cfg.DebVersion)
+		}
+	}
+
+	// 重启程序指令
+	if cfg.RestartMain {
+		logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> restart main(config) <<<<<<<")
+		restartChan <- true
+		return true
+	}
+	return
+}
+
 // MD5ConfigFiles 配置文件 MD5, 有变化时重载
 func MD5ConfigFiles() (md5 string, confFiles []string) {
-	confFiles = append(confFiles, config.ConfigFile, config.NodeInfoFile)
-	confFiles = append(confFiles, config.WhitelistConfigFile, config.BlacklistConfigFile)
+	confFiles = append(confFiles, config.ConfigFile, config.WhitelistConfigFile, config.BlacklistConfigFile)
 	confFiles = append(confFiles, config.ExtraEnvFiles...)
+	if config.NodeInfoFile != "" {
+		confFiles = append(confFiles, config.NodeInfoFile)
+	}
 	md5 = MD5Files(confFiles...)
 	return
 }

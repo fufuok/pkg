@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"log"
 	"strings"
 
@@ -72,7 +73,8 @@ func Run(setup App) {
 // 请求错误处理
 func errorHandler(c *fiber.Ctx, err error) error {
 	code := fiber.StatusInternalServerError
-	if e, ok := err.(*fiber.Error); ok {
+	var e *fiber.Error
+	if errors.As(err, &e) {
 		code = e.Code
 	}
 	if code != fiber.StatusBadRequest {

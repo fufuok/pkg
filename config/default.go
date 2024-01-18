@@ -70,7 +70,7 @@ var (
 	BaseSecretKeyNameKeyName = "BASE_SECRET_KEY_NAME"
 
 	// BaseSecretSalt 用于解密基础密钥值的密钥的前半部分, 盐 (编译在程序中), 后半部分为 AppName 值
-	BaseSecretSalt = "Fufu↑777發彡 "
+	BaseSecretSalt = "Fufu↑777發彡 " // #nosec G101
 	// BaseSecretSaltKeyName 环境变量中读取上一行设置的值的键名, 而不是使用上一行中设置的固定值
 	BaseSecretSaltKeyName = "BASE_SECRET_SALT"
 
@@ -130,6 +130,8 @@ var (
 // ├── log
 // │   ├── daemon.log
 // │   └── ffapp.log
+//
+//nolint:cyclop
 func initDefaultConfig() {
 	if RootPath == "" {
 		RootPath = DefaultRootPath

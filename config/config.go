@@ -138,18 +138,67 @@ func readConf() (*MainConf, error) {
 		return nil, err
 	}
 
-	_ = loadEnvFiles(cfg.SYSConf.EnvFiles...)
+	loadEnvFiles(cfg.SYSConf.EnvFiles...)
 
+	if err := parseSYSConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	parseLogConfig(cfg)
+	parseAlarmOnConfig(cfg)
+
+	if err := parseMainRemoteConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	parseNodeInfoConfig(cfg)
+	parseWebConfig(cfg)
+
+	if err := parseWhitelistConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	if err := parseBlacklistConfig(cfg); err != nil {
+		return nil, err
+	}
+
+	if Debug {
+		fmt.Printf("\n\n%s\n\n", json.MustJSONIndent(cfg))
+		fmt.Printf("\nWhitelist:\n%v\n\n", Whitelist)
+		fmt.Printf("\nBlacklist:\n%v\n\n", Blacklist)
+	}
+	return cfg, nil
+}
+
+func parseSYSConfig(cfg *MainConf) error {
 	// 基础密钥: 由程序固化的密钥解密环境变量得到, 其他加密变量都使用基础密码加密
 	cfg.SYSConf.BaseSecretValue = xcrypto.GetenvDecrypt(BaseSecretKeyName, BaseSecretSalt+AppName)
 	if cfg.SYSConf.BaseSecretValue == "" {
-		return nil, fmt.Errorf("%s cannot be empty", BaseSecretKeyName)
+		return fmt.Errorf("%s cannot be empty", BaseSecretKeyName)
 	}
 
 	// 包版本格式清理
 	cfg.SYSConf.DebVersion = regexp.MustCompile(`[^\w-.=]`).ReplaceAllString(cfg.SYSConf.DebVersion, "")
 
-	// 日志级别: -1Trace 0Debug 1Info 2Warn(默认) 3Error 4Fatal 5Panic 6NoLevel 7Off
+	// 配置文件变化监控时间间隔
+	if cfg.SYSConf.WatcherInterval < 1 {
+		cfg.SYSConf.WatcherIntervalDuration = WatcherIntervalDuration
+	} else {
+		cfg.SYSConf.WatcherIntervalDuration = time.Duration(cfg.SYSConf.WatcherInterval) * time.Minute
+	}
+
+	// 作为客户端发起请求默认超时时间
+	if cfg.SYSConf.ReqTimeout < 1 {
+		cfg.SYSConf.ReqTimeoutDuration = ReqTimeoutDuration
+	} else {
+		cfg.SYSConf.ReqTimeoutDuration = time.Duration(cfg.SYSConf.ReqTimeout) * time.Second
+	}
+	return nil
+}
+
+//nolint:cyclop
+func parseLogConfig(cfg *MainConf) {
+	// 日志级别: -1Trace 0Debug(0 或未指定该配置项) 1Info 2Warn(默认) 3Error 4Fatal 5Panic 6NoLevel 7Off
 	if cfg.LogConf.Level > 7 || cfg.LogConf.Level < -1 {
 		cfg.LogConf.Level = LogLevel
 	}
@@ -197,7 +246,9 @@ func readConf() (*MainConf, error) {
 	if cfg.LogConf.MaxAge < 1 {
 		cfg.LogConf.MaxAge = LogFileMaxAge
 	}
+}
 
+func parseAlarmOnConfig(cfg *MainConf) {
 	// 优先使用环境变量中设置的报警 API 和 Code
 	cfg.LogConf.PostAPI = strings.TrimSpace(cfg.LogConf.PostAPI)
 	cfg.LogConf.PostAlarmAPI = strings.TrimSpace(cfg.LogConf.PostAlarmAPI)
@@ -222,7 +273,9 @@ func readConf() (*MainConf, error) {
 	}
 
 	AlarmOn.Store(cfg.LogConf.PostAlarmAPI != "" && cfg.LogConf.AlarmCode != "")
+}
 
+func parseMainRemoteConfig(cfg *MainConf) error {
 	// 每次获取远程主配置的时间间隔, < 30 秒则禁用该功能
 	if cfg.MainConf.Interval >= 30 {
 		// 远程获取主配置 API, 解密 SecretName
@@ -230,7 +283,7 @@ func readConf() (*MainConf, error) {
 			cfg.MainConf.SecretValue = xcrypto.GetenvDecrypt(cfg.MainConf.SecretName,
 				cfg.SYSConf.BaseSecretValue)
 			if cfg.MainConf.SecretValue == "" {
-				return nil, fmt.Errorf("%s cannot be empty", cfg.MainConf.SecretName)
+				return fmt.Errorf("%s cannot be empty", cfg.MainConf.SecretName)
 			}
 		}
 		cfg.MainConf.GetConfDuration = time.Duration(cfg.MainConf.Interval) * time.Second
@@ -241,25 +294,10 @@ func readConf() (*MainConf, error) {
 	}
 	// 忽略配置文件中指定的主配置文件路径, 由命令行参数或 BinName 确定, 或由应用端 init 指定
 	cfg.MainConf.Path = ConfigFile
+	return nil
+}
 
-	// 配置文件变化监控时间间隔
-	if cfg.SYSConf.WatcherInterval < 1 {
-		cfg.SYSConf.WatcherIntervalDuration = WatcherIntervalDuration
-	} else {
-		cfg.SYSConf.WatcherIntervalDuration = time.Duration(cfg.SYSConf.WatcherInterval) * time.Minute
-	}
-
-	// 作为客户端发起请求默认超时时间
-	if cfg.SYSConf.ReqTimeout < 1 {
-		cfg.SYSConf.ReqTimeoutDuration = ReqTimeoutDuration
-	} else {
-		cfg.SYSConf.ReqTimeoutDuration = time.Duration(cfg.SYSConf.ReqTimeout) * time.Second
-	}
-
-	if err = setNodeInfo(&cfg.NodeConf); err != nil {
-		return nil, err
-	}
-
+func parseWebConfig(cfg *MainConf) {
 	// 优先使用配置中的绑定参数(HTTP), 英文逗号分隔多个端口
 	if cfg.WebConf.ServerAddr == "" {
 		cfg.WebConf.ServerAddr = WebServerAddr
@@ -276,14 +314,16 @@ func readConf() (*MainConf, error) {
 	} else {
 		cfg.WebConf.ServerHttpsAddr = ""
 	}
+}
 
+func parseWhitelistConfig(cfg *MainConf) error {
 	// 每次获取远程白名单 IP 配置的时间间隔, < 30 秒则禁用该功能
 	if cfg.WhitelistConf.Interval >= 30 {
 		if cfg.WhitelistConf.SecretName != "" {
 			cfg.WhitelistConf.SecretValue = xcrypto.GetenvDecrypt(cfg.WhitelistConf.SecretName,
 				cfg.SYSConf.BaseSecretValue)
 			if cfg.WhitelistConf.SecretValue == "" {
-				return nil, fmt.Errorf("%s cannot be empty", cfg.WhitelistConf.SecretName)
+				return fmt.Errorf("%s cannot be empty", cfg.WhitelistConf.SecretName)
 			}
 		}
 		cfg.WhitelistConf.GetConfDuration = time.Duration(cfg.WhitelistConf.Interval) * time.Second
@@ -301,17 +341,20 @@ func readConf() (*MainConf, error) {
 	// 接口 IP 白名单
 	whitelist, err := getIPNetList(cfg.Whitelist)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	Whitelist = whitelist
+	return nil
+}
 
+func parseBlacklistConfig(cfg *MainConf) error {
 	// 每次获取远程黑名单 IP 配置的时间间隔, < 30 秒则禁用该功能
 	if cfg.BlacklistConf.Interval >= 30 {
 		if cfg.BlacklistConf.SecretName != "" {
 			cfg.BlacklistConf.SecretValue = xcrypto.GetenvDecrypt(cfg.BlacklistConf.SecretName,
 				cfg.SYSConf.BaseSecretValue)
 			if cfg.BlacklistConf.SecretValue == "" {
-				return nil, fmt.Errorf("%s cannot be empty", cfg.BlacklistConf.SecretName)
+				return fmt.Errorf("%s cannot be empty", cfg.BlacklistConf.SecretName)
 			}
 		}
 		cfg.BlacklistConf.GetConfDuration = time.Duration(cfg.BlacklistConf.Interval) * time.Second
@@ -329,16 +372,10 @@ func readConf() (*MainConf, error) {
 	// 接口访问 IP 黑名单
 	blacklist, err := getIPNetList(cfg.Blacklist)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	Blacklist = blacklist
-
-	if Debug {
-		fmt.Printf("\n\n%s\n\n", json.MustJSONIndent(cfg))
-		fmt.Printf("\nWhitelist:\n%v\n\n", whitelist)
-		fmt.Printf("\nBlacklist:\n%v\n\n", blacklist)
-	}
-	return cfg, nil
+	return nil
 }
 
 // IP 配置转换

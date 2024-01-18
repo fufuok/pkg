@@ -26,7 +26,7 @@ var (
 //	程序启动后会得到 FF=666
 //	用户将 env/local.env 中 export FF=666 这一行删除后, 程序中依然存在 FF=666
 //	可以将变量置空而不是删除, 或重启程序
-func loadEnvFiles(envFiles ...string) error {
+func loadEnvFiles(envFiles ...string) {
 	envFiles = append([]string{EnvMainFile}, envFiles...)
 	for _, f := range envFiles {
 		if !filepath.IsAbs(f) {
@@ -35,12 +35,11 @@ func loadEnvFiles(envFiles ...string) error {
 		_ = godotenv.Overload(f)
 	}
 	ExtraEnvFiles = envFiles
-	setDefaultConfig()
-	return nil
+	loadEnvConfig()
 }
 
 // 加载环境变量中设定的应用配置
-func setDefaultConfig() {
+func loadEnvConfig() {
 	if s := os.Getenv(BaseSecretKeyNameKeyName); s != "" {
 		_ = os.Setenv(BaseSecretKeyNameKeyName, "")
 		BaseSecretKeyName = s

@@ -2,7 +2,7 @@ package pprof
 
 import (
 	"net/http"
-	_ "net/http/pprof"
+	_ "net/http/pprof" // #nosec G108
 
 	"github.com/fufuok/pkg/config"
 )
@@ -11,6 +11,6 @@ import (
 func Run() {
 	addr := config.Config().WebConf.PProfAddr
 	if addr != "" {
-		_ = http.ListenAndServe(addr, nil)
+		_ = http.ListenAndServe(addr, nil) // #nosec G114
 	}
 }

@@ -1,3 +1,4 @@
+//nolint:zerologlint
 package sampler
 
 import (

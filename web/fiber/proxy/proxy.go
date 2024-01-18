@@ -14,7 +14,7 @@ import (
 
 const (
 	HeaderXProxyClientIP = "X-Proxy-ClientIP"
-	HeaderXProxyToken    = "X-Proxy-Token"
+	HeaderXProxyToken    = "X-Proxy-Token" // #nosec G101
 	HeaderXProxyTime     = "X-Proxy-Time"
 	HeaderXProxyPass     = "X-Proxy-Pass"
 )

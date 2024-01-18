@@ -22,6 +22,8 @@ func initLogSender() {
 }
 
 // 定时推送日志到日志收集接口
+//
+//nolint:cyclop
 func logSender() {
 	num := 0
 	bb := buffer.Get()
