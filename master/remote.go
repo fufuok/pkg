@@ -24,6 +24,7 @@ func startRemotePipelines(ctx context.Context) {
 		sf := sf
 		utils.SafeGoWithContext(ctx, sf, common.RecoverAlarm)
 	}
+	logger.Warn().Int("count", len(ps)+3).Msg("Remote configuration fetcher")
 }
 
 func getMainRemoteConf(ctx context.Context) {
@@ -55,7 +56,7 @@ func getBlacklistRemoteConf(ctx context.Context) {
 func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 	fn, ok := common.Funcs.Load(cfg.Method)
 	if !ok {
-		logger.Error().Str("method", cfg.Method).Msg("Remote extractor initialization failed")
+		logger.Error().Str("method", cfg.Method).Msg("Remote configuration fetcher initialization failed")
 		return
 	}
 
@@ -64,7 +65,7 @@ func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 		time.Sleep(time.Duration(wait) * time.Second)
 		select {
 		case <-ctx.Done():
-			logger.Warn().Str("path", cfg.Path).Str("method", cfg.Method).Msg("remote extractor exited")
+			logger.Warn().Str("path", cfg.Path).Str("method", cfg.Method).Msg("Remote configuration fetcher exited")
 			return
 		default:
 			// 是否跳过更新远端配置
@@ -73,6 +74,7 @@ func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 					Time: common.GTimeNow(),
 					Conf: cfg,
 				}
+				logger.Info().Str("path", cfg.Path).Str("method", cfg.Method).Msg("Execute remote configuration fetcher")
 				if err := fn(args); err != nil {
 					logger.Error().Err(err).Str("path", cfg.Path).Str("method", cfg.Method).
 						Msg("Failed to get remote configuration")

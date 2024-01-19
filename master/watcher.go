@@ -178,7 +178,7 @@ func configWatcher() (needContinue bool) {
 
 	// 任意配置文件变化, 热加载所有配置
 	if err := config.LoadConf(); err != nil {
-		logger.Error().Err(err).Msg("reload config")
+		logger.Error().Err(err).Msg("Reload config")
 		return true
 	}
 	return false
@@ -192,7 +192,7 @@ func checkUpgradeOrRestart(cfg config.SYSConf) (needContinue bool) {
 		logger.Warn().
 			Strs("deb_versions", []string{config.DebVersion, cfg.DebVersion}).
 			Bool("to_install", toInstall).Str("ip", common.ExternalIPv4).Uint64("threshold", threshold).
-			Msg("Canary Deployment")
+			Msg("Canary deployment")
 		if toInstall {
 			go installDeb(cfg.DebVersion)
 		}
