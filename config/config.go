@@ -99,6 +99,12 @@ type WebConf struct {
 	// Fiber 默认不减少内存占用, 这里改为默认减少内存占用(可能增加 CPU 占用)
 	DisableReduceMemoryUsage bool `json:"disable_reduce_memory_usage"`
 
+	// Fiber 短连接模式
+	DisableKeepalive bool `json:"disable_keepalive"`
+
+	// Fiber 请求体大小限制, 0 为默认: 8 * 1024 * 1024, -1 表示不限制
+	BodyLimit int `json:"body_limit"`
+
 	CertFile string `json:"-"`
 	KeyFile  string `json:"-"`
 }
@@ -301,6 +307,11 @@ func parseWebConfig(cfg *MainConf) {
 	// 优先使用配置中的绑定参数(HTTP), 英文逗号分隔多个端口
 	if cfg.WebConf.ServerAddr == "" {
 		cfg.WebConf.ServerAddr = WebServerAddr
+	}
+
+	// HTTP 请求体限制, -1 表示无限
+	if cfg.WebConf.BodyLimit == 0 {
+		cfg.WebConf.BodyLimit = BodyLimit
 	}
 
 	// 证书文件存在时开启 HTTPS

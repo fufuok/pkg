@@ -117,6 +117,9 @@ var (
 
 	// WebTimeout Web 请求超时
 	WebTimeout = 30 * time.Second
+
+	// BodyLimit POST 最大 8M, 超过该值影响: 413 Request Entity Too Large
+	BodyLimit = 8 << 20
 )
 
 // 初始化缺省变量

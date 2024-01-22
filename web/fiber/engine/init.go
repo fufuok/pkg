@@ -28,6 +28,8 @@ type App func(app *fiber.App) *fiber.App
 func Run(setup App) {
 	cfg := config.Config().WebConf
 	app = fiber.New(fiber.Config{
+		BodyLimit:               cfg.BodyLimit,
+		DisableKeepalive:        cfg.DisableKeepalive,
 		ReduceMemoryUsage:       !cfg.DisableReduceMemoryUsage,
 		ProxyHeader:             cfg.ProxyHeader,
 		EnableTrustedProxyCheck: cfg.EnableTrustedProxyCheck,
