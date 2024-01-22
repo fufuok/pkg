@@ -18,7 +18,7 @@ func CheckWhitelist(asAPI bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if len(config.Whitelist) > 0 {
 			clientIP := c.ClientIP()
-			if _, ok := common.LookupIPNets(clientIP, config.Whitelist); !ok {
+			if _, ok := common.LookupIPNetsString(clientIP, config.Whitelist); !ok {
 				msg := errMsg + clientIP
 				sampler.Info().
 					Str("cip", clientIP).Str("x_forwarded_for", c.GetHeader("X-Forwarded-For")).

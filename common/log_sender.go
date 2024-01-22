@@ -75,6 +75,7 @@ func logSender() {
 
 func postLog(api string, bb *buffer.Buffer) {
 	if api == "" {
+		bb.Put()
 		return
 	}
 

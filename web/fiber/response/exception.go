@@ -1,25 +1,33 @@
 package response
 
 import (
+	"net/http"
+
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/fufuok/pkg/json"
 )
 
-var apiSuccessNil = json.MustJSON(APISuccessNilData())
+const (
+	defaultErrMsg = "错误的请求"
+)
+
+var (
+	apiSuccessNil = json.MustJSON(APISuccessNilData())
+)
 
 // APIException 通用异常处理
 func APIException(c *fiber.Ctx, code int, msg string, data any) error {
 	if msg == "" {
-		msg = "错误的请求"
+		msg = defaultErrMsg
 	}
 	c.Status(code)
 	return JSON(c, APIFailureData(msg, data))
 }
 
-// APIFailure 返回失败, 状态码: 200
+// APIFailure 返回失败, 状态码: 400
 func APIFailure(c *fiber.Ctx, msg string, data any) error {
-	return APIException(c, fiber.StatusOK, msg, data)
+	return APIException(c, http.StatusBadRequest, msg, data)
 }
 
 // APISuccess 返回成功, 状态码: 200
@@ -37,6 +45,15 @@ func APISuccessBytes(c *fiber.Ctx, data []byte, count int) error {
 func APISuccessNil(c *fiber.Ctx) error {
 	c.Set(fiber.HeaderContentType, fiber.MIMEApplicationJSONCharsetUTF8)
 	return c.Send(apiSuccessNil)
+}
+
+// TxtException 异常处理, 文本消息
+func TxtException(c *fiber.Ctx, code int, msg string) error {
+	if msg == "" {
+		msg = defaultErrMsg
+	}
+	c.Status(code)
+	return c.SendString(msg)
 }
 
 // TxtMsg 返回文本消息

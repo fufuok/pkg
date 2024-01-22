@@ -68,17 +68,17 @@ func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 			logger.Warn().Str("path", cfg.Path).Str("method", cfg.Method).Msg("Remote configuration fetcher exited")
 			return
 		default:
-			// 是否跳过更新远端配置
-			if !config.IsSkipRemoteConfig() {
-				args := config.DataSourceArgs{
-					Time: common.GTimeNow(),
-					Conf: cfg,
-				}
-				logger.Info().Str("path", cfg.Path).Str("method", cfg.Method).Msg("Execute remote configuration fetcher")
-				if err := fn(args); err != nil {
-					logger.Error().Err(err).Str("path", cfg.Path).Str("method", cfg.Method).
-						Msg("Failed to get remote configuration")
-				}
+		}
+		// 是否跳过更新远端配置
+		if !config.IsSkipRemoteConfig() {
+			args := config.DataSourceArgs{
+				Time: common.GTimeNow(),
+				Conf: cfg,
+			}
+			logger.Info().Str("path", cfg.Path).Str("method", cfg.Method).Msg("Execute remote configuration fetcher")
+			if err := fn(args); err != nil {
+				logger.Error().Err(err).Str("path", cfg.Path).Str("method", cfg.Method).
+					Msg("Failed to get remote configuration")
 			}
 		}
 		time.Sleep(cfg.GetConfDuration)

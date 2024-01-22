@@ -90,7 +90,7 @@ var (
 	// ChanxInitCap 无限缓冲信道默认初始化缓冲大小
 	ChanxInitCap = 50
 	// ChanxMaxBufCap 无限缓冲信道最大缓冲数量, 0 为无限, 超过限制(ChanxInitCap + ChanxMaxBufCap)丢弃数据
-	ChanxMaxBufCap = 100000
+	ChanxMaxBufCap = 500000
 
 	// ServiceNameSuffix systemctl 服务名后缀 (Ubuntu)
 	ServiceNameSuffix = ".service"

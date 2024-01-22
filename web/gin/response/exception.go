@@ -8,7 +8,9 @@ import (
 	"github.com/fufuok/pkg/json"
 )
 
-const defaultErrMsg = "错误的请求"
+const (
+	defaultErrMsg = "错误的请求"
+)
 
 var apiSuccessNil = json.MustJSON(APISuccessNilData())
 

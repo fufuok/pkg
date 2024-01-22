@@ -11,7 +11,7 @@ type M struct{}
 // Start 程序启动时初始化
 func (m *M) Start() error {
 	initDefaultConfig()
-	if err := LoadConf(); err != nil {
+	if err := LoadConfig(); err != nil {
 		log.Fatalln("Failed to initialize main config:", err, "\nbye.")
 	}
 	return nil

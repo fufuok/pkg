@@ -177,7 +177,7 @@ func configWatcher() (needContinue bool) {
 	ConfigModTime = common.GTimeNow()
 
 	// 任意配置文件变化, 热加载所有配置
-	if err := config.LoadConf(); err != nil {
+	if err := config.LoadConfig(); err != nil {
 		logger.Error().Err(err).Msg("Reload config")
 		return true
 	}

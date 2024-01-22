@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"fmt"
+	"net/http"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -18,7 +19,7 @@ func CheckWhitelist(asAPI bool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		if len(config.Whitelist) > 0 {
 			clientIP := proxy.GetClientIP(c)
-			if _, ok := common.LookupIPNets(clientIP, config.Whitelist); !ok {
+			if _, ok := common.LookupIPNetsString(clientIP, config.Whitelist); !ok {
 				msg := errMsg + clientIP
 				sampler.Info().
 					Str("cip", c.IP()).Str("x_forwarded_for", c.Get(fiber.HeaderXForwardedFor)).
@@ -26,9 +27,9 @@ func CheckWhitelist(asAPI bool) fiber.Handler {
 					Str("method", c.Method()).Str("uri", c.OriginalURL()).Str("client_ip", clientIP).
 					Msg(msg)
 				if asAPI {
-					return response.APIFailure(c, msg, nil)
+					return response.APIException(c, http.StatusForbidden, msg, nil)
 				} else {
-					return response.TxtMsg(c, msg)
+					return response.TxtException(c, http.StatusForbidden, msg)
 				}
 			}
 		}

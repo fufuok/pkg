@@ -80,3 +80,6 @@ func calcQPS(n uint64) (rate float64) {
 	httpTotalTime = now
 	return
 }
+
+// ResetStatistics 重置统计数据
+func ResetStatistics() {}

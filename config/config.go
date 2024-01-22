@@ -114,9 +114,9 @@ type FilesConf struct {
 	GetConfDuration time.Duration
 }
 
-// LoadConf 加载配置
-func LoadConf() error {
-	cfg, err := readConf()
+// LoadConfig 加载配置
+func LoadConfig() error {
+	cfg, err := readConfig()
 	if err != nil {
 		return err
 	}
@@ -126,8 +126,8 @@ func LoadConf() error {
 	return nil
 }
 
-// 读取配置
-func readConf() (*MainConf, error) {
+// 从主配置文件读取配置
+func readConfig() (*MainConf, error) {
 	body, err := os.ReadFile(ConfigFile)
 	if err != nil {
 		return nil, err
