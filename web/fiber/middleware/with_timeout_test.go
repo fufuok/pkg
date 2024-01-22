@@ -36,11 +36,13 @@ func Test_TimeoutUseWithCustomError(t *testing.T) {
 		resp, err := app.Test(httptest.NewRequest("GET", traget, nil))
 		assert.Equal(t, nil, err, "app.Test(req)")
 		assert.Equal(t, fiber.StatusRequestTimeout, resp.StatusCode, "Status code")
+		_ = resp.Body.Close()
 	}
 	testSucces := func(traget string) {
 		resp, err := app.Test(httptest.NewRequest("GET", traget, nil))
 		assert.Equal(t, nil, err, "app.Test(req)")
 		assert.Equal(t, fiber.StatusOK, resp.StatusCode, "Status code")
+		_ = resp.Body.Close()
 	}
 	testTimeout("/300")
 	testTimeout("/group/150")
@@ -73,6 +75,7 @@ func Test_WithTimeoutSkipTimeoutStatus(t *testing.T) {
 		body, err := io.ReadAll(resp.Body)
 		assert.Equal(t, nil, err)
 		assert.Equal(t, "Error: "+context.DeadlineExceeded.Error(), string(body))
+		_ = resp.Body.Close()
 	}
 	testSucces := func(traget string) {
 		resp, err := app.Test(httptest.NewRequest("GET", traget, nil))
@@ -81,6 +84,7 @@ func Test_WithTimeoutSkipTimeoutStatus(t *testing.T) {
 		body, err := io.ReadAll(resp.Body)
 		assert.Equal(t, nil, err)
 		assert.Equal(t, "OK", string(body))
+		_ = resp.Body.Close()
 	}
 	testTimeout("/300")
 	testTimeout("/group/150")
