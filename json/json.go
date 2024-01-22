@@ -1,8 +1,12 @@
 package json
 
 import (
+	"bytes"
 	"errors"
 	"unsafe"
+
+	"github.com/fufuok/bytespool"
+	"github.com/fufuok/utils"
 )
 
 type RawMessage []byte
@@ -26,9 +30,7 @@ func (m *RawMessage) UnmarshalJSON(data []byte) error {
 
 // Copy returns a copy of m.
 func (m RawMessage) Copy() []byte {
-	tmp := make([]byte, len(m))
-	copy(tmp, m)
-	return tmp
+	return bytespool.NewBytes(m)
 }
 
 // MustJSONIndent 转 json 返回 []byte
@@ -53,4 +55,39 @@ func MustJSON(v any) []byte {
 func MustJSONString(v any) string {
 	js := MustJSON(v)
 	return *(*string)(unsafe.Pointer(&js))
+}
+
+// MustJSONUnEscapeIndent 转 json 返回 []byte, 不转义 ( '&', '<', '>' )
+func MustJSONUnEscapeIndent(v any) []byte {
+	buf := bytes.NewBuffer(nil)
+	enc := NewEncoder(buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(v); err != nil {
+		return nil
+	}
+	return buf.Bytes()[:buf.Len()-1]
+}
+
+// MustJSONUnEscapeIndentString 转 json 返回 string, 不转义 ( '&', '<', '>' )
+func MustJSONUnEscapeIndentString(v any) string {
+	js := MustJSONUnEscapeIndent(v)
+	return utils.B2S(js)
+}
+
+// MustJSONUnEscape 转 json 返回 []byte, 不转义 ( '&', '<', '>' )
+func MustJSONUnEscape(v any) []byte {
+	buf := bytes.NewBuffer(nil)
+	enc := NewEncoder(buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil
+	}
+	return buf.Bytes()[:buf.Len()-1]
+}
+
+// MustJSONUnEscapeString 转 json 返回 string, 不转义 ( '&', '<', '>' )
+func MustJSONUnEscapeString(v any) string {
+	js := MustJSONUnEscape(v)
+	return utils.B2S(js)
 }
