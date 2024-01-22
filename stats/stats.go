@@ -90,3 +90,17 @@ func MEMStats() map[string]any {
 		},
 	}
 }
+
+func WebStats() map[string]any {
+	cfg := config.Config()
+	return map[string]any{
+		// HTTP 服务是否关闭了减少内存占用选项
+		"DisableReduceMemoryUsage": cfg.WebConf.DisableReduceMemoryUsage,
+		// HTTP 服务是否关闭了 keep-alive
+		"DisableKeepalive": cfg.WebConf.DisableKeepalive,
+		// 是否启用了 HTTPS
+		"HTTPS": cfg.WebConf.ServerHttpsAddr != "",
+		// 请求体大小限制
+		"BodyLimit": utils.HumanIntIBytes(cfg.WebConf.BodyLimit),
+	}
+}
