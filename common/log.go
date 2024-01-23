@@ -91,7 +91,7 @@ func loadLogger() error {
 	// 抽样的日志记录器
 	sampler := &zerolog.BurstSampler{
 		Burst:  cfg.Burst,
-		Period: cfg.PeriodDur,
+		Period: cfg.PeriodDuration,
 	}
 	LogSampled = Log.Sample(&zerolog.LevelSampler{
 		TraceSampler: sampler,

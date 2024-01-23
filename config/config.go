@@ -63,7 +63,7 @@ type LogConf struct {
 	NoColor              bool   `json:"no_color"`
 	Level                int    `json:"level"`
 	File                 string `json:"file"`
-	Period               int    `json:"period"`
+	Period               uint32 `json:"period"`
 	Burst                uint32 `json:"burst"`
 	MaxSize              int64  `json:"max_size"`
 	MaxBackups           int    `json:"max_backups"`
@@ -77,7 +77,7 @@ type LogConf struct {
 	PostInterval         int    `json:"post_interval"`
 	PostBatchNum         int    `json:"post_batch_num"`
 	PostBatchMB          int    `json:"post_batch_mb"`
-	PeriodDur            time.Duration
+	PeriodDuration       time.Duration
 	PostIntervalDuration time.Duration
 	PostBatchBytes       int
 }
@@ -208,17 +208,18 @@ func parseLogConfig(cfg *MainConf) {
 	if cfg.LogConf.Level > 7 || cfg.LogConf.Level < -1 {
 		cfg.LogConf.Level = LogLevel
 	}
+
 	// 调试模式 Debug 日志
 	if Debug {
 		cfg.LogConf.Level = 0
 	}
 
 	// 抽样日志设置 (x 秒 n 条)
-	if cfg.LogConf.Period < 0 {
-		cfg.LogConf.PeriodDur = LogSamplePeriodDur
+	if cfg.LogConf.Period == 0 && cfg.LogConf.Burst == 0 {
+		cfg.LogConf.PeriodDuration = LogSamplePeriodDur
 		cfg.LogConf.Burst = uint32(LogSampleBurst)
 	} else {
-		cfg.LogConf.PeriodDur = time.Duration(cfg.LogConf.Period) * time.Second
+		cfg.LogConf.PeriodDuration = time.Duration(cfg.LogConf.Period) * time.Second
 	}
 
 	// 日志推送到接口时间间隔
