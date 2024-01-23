@@ -28,9 +28,10 @@ var (
 //	可以将变量置空而不是删除, 或重启程序
 func loadEnvFiles(envFiles ...string) {
 	envFiles = append([]string{EnvMainFile}, envFiles...)
-	for _, f := range envFiles {
+	for i, f := range envFiles {
 		if !filepath.IsAbs(f) {
 			f = filepath.Join(EnvFilePath, f)
+			envFiles[i] = f
 		}
 		_ = godotenv.Overload(f)
 	}
