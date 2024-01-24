@@ -7,7 +7,7 @@ require (
 	github.com/fufuok/ants v1.9.0
 	github.com/fufuok/bytespool v1.3.2
 	github.com/fufuok/chanx v1.2.1
-	github.com/fufuok/cron v0.3.1
+	github.com/fufuok/cron v0.3.2
 	github.com/fufuok/utils v1.0.1
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-cmd/cmd v1.4.2
@@ -37,7 +37,7 @@ require (
 	github.com/go-redis/redis/v8 v8.11.5 // indirect
 	github.com/go-task/slim-sprig v0.0.0-20230315185526-52ccab3ef572 // indirect
 	github.com/google/pprof v0.0.0-20240117000934-35fc243c5815 // indirect
-	github.com/google/uuid v1.5.0 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/jellydator/ttlcache/v2 v2.11.1 // indirect
@@ -64,7 +64,7 @@ require (
 	go.uber.org/mock v0.4.0 // indirect
 	golang.org/x/arch v0.7.0 // indirect
 	golang.org/x/crypto v0.18.0 // indirect
-	golang.org/x/exp v0.0.0-20240112132812-db7319d0e0e3 // indirect
+	golang.org/x/exp v0.0.0-20240119083558-1b970713d09a // indirect
 	golang.org/x/mod v0.14.0 // indirect
 	golang.org/x/net v0.20.0 // indirect
 	golang.org/x/sys v0.16.0 // indirect

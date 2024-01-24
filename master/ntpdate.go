@@ -41,6 +41,7 @@ func runtimeTimeSync() error {
 func stopTimeSync() error {
 	if ntpName != "" && ntpCancel != nil {
 		ntpCancel()
+		common.SetClockOffset(0)
 	}
 	ntpName = ""
 	return nil

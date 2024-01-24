@@ -37,13 +37,18 @@ func (m *M) Stop() error {
 // 初始化定时任务环境
 func initMain() {
 	jobs = xsync.NewMapOf[string, *Job]()
-	crontab = cron.New(
+	opts := []cron.Option{
 		cron.WithLocation(config.DefaultTimeLocation),
 		cron.WithSecondOptional(),
 		cron.WithChain(
 			cron.Recover(common.NewCronLogger()),
 		),
-	)
+		cron.WithCustomTime(common.GTimeNow),
+	}
+	if config.Debug {
+		opts = append(opts, cron.WithLogger(common.NewCronLogger()))
+	}
+	crontab = cron.New(opts...)
 	crontab.Start()
 	logger.Info().Msg("crontab is working")
 }
