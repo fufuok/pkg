@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/fufuok/utils/myip"
 	"github.com/imroc/req/v3"
@@ -17,7 +18,8 @@ const (
 )
 
 var (
-	NodeInfoFile = ""
+	NodeInfoFile         = ""
+	nodeIPFetcherRunning bool
 )
 
 type NodeConf struct {
@@ -70,15 +72,16 @@ func parseNodeInfoConfig(cfg *MainConf) {
 	parseNodeInfoJson(cfg)
 
 	// 节点 IP 为空时, 以出口 IP 作为节点 IP
-	if cfg.NodeConf.NodeInfo.NodeIP == "" && cfg.NodeConf.IPAPI != "" {
-		resp, err := req.DefaultClient().Clone().SetTimeout(ReqTimeoutShortDuration).R().Get(cfg.NodeConf.IPAPI)
-		if err == nil && resp.IsSuccessState() {
-			cfg.NodeConf.NodeInfo.NodeIP = strings.TrimSpace(resp.String())
+	ip := cfg.NodeConf.NodeInfo.NodeIP
+	if ip == "" && cfg.NodeConf.IPAPI != "" {
+		ip = GetNodeIPFromAPI(cfg.NodeConf.IPAPI)
+		if ip == "" {
+			go nodeIPFetcher(cfg.NodeConf.IPAPI)
 		}
 	}
 
 	// 确保节点 IP 格式正确
-	nodeIP := net.ParseIP(cfg.NodeConf.NodeInfo.NodeIP)
+	nodeIP := net.ParseIP(ip)
 	if nodeIP == nil {
 		nodeIP = net.IPv4zero
 	}
@@ -115,5 +118,49 @@ func parseNodeInfoJson(cfg *MainConf) {
 		case "海外版_海外用户接入":
 			cfg.NodeConf.NodeInfo.NodeType = 4
 		}
+	}
+}
+
+// GetNodeIPFromAPI 请求 API, 返回 IP 结果
+func GetNodeIPFromAPI(api string) string {
+	resp, err := req.DefaultClient().Clone().SetTimeout(ReqTimeoutShortDuration).R().Get(api)
+	if err == nil && resp.IsSuccessState() {
+		return strings.TrimSpace(resp.String())
+	}
+	return ""
+}
+
+// 尝试多次获取出口 IP, 填充到 NodeIP
+func nodeIPFetcher(api string) {
+	if nodeIPFetcherRunning {
+		return
+	}
+
+	nodeIPFetcherRunning = true
+	defer func() {
+		nodeIPFetcherRunning = false
+	}()
+
+	for i := 1; i <= 10; i++ {
+		time.Sleep(time.Duration(i*10) * time.Second)
+
+		if Config().NodeConf.NodeInfo.NodeIP != net.IPv4zero.String() {
+			return
+		}
+
+		ip := GetNodeIPFromAPI(api)
+		if ip == "" {
+			continue
+		}
+
+		nodeIP := net.ParseIP(ip)
+		if nodeIP == nil {
+			continue
+		}
+
+		cfg := mainConf.Load()
+		cfg.NodeConf.NodeInfo.NodeIP = nodeIP.String()
+		mainConf.Store(cfg)
+		return
 	}
 }
