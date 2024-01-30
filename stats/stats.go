@@ -31,6 +31,7 @@ func SYSStats() map[string]any {
 		"LogLevel":      zerolog.Level(config.Config().LogConf.Level).String(),
 		"ConfigModTime": master.ConfigModTime,
 		"GoVersion":     config.GoVersion,
+		"DebVersion":    config.DebVersion,
 		"NumCpus":       runtime.NumCPU(),
 		"NumGoroutine":  runtime.NumGoroutine(),
 		"NumCgoCall":    utils.Comma(runtime.NumCgoCall()),
