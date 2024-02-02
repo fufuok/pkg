@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/fufuok/utils"
@@ -11,8 +12,8 @@ import (
 	"github.com/imroc/req/v3"
 )
 
-// 数据源响应结构体
-type respDataSource struct {
+// RespDataSource 数据源响应结构体
+type RespDataSource struct {
 	OK   int              `json:"ok"`
 	Msg  string           `json:"msg"`
 	Data []map[string]any `json:"data"`
@@ -31,31 +32,9 @@ func GetDataSource(args any) error {
 		return fmt.Errorf("invalid data source configuration")
 	}
 
-	// Token: md5(timestamp + auth_key)
-	timestamp := strconv.FormatInt(params.Time.Unix(), 10)
-	token := xhash.MD5Hex(timestamp + params.Conf.SecretValue)
-
-	// 请求数据源: IP 白名单 + Token
-	var res respDataSource
-	resp, err := req.SetSuccessResult(&res).Get(params.Conf.API + token + "&time=" + timestamp)
+	body, err := GetDataSourceBody(params)
 	if err != nil {
 		return err
-	}
-
-	if res.OK != 1 || !resp.IsSuccessState() {
-		return fmt.Errorf("data source request failed: [%d] %s", resp.StatusCode, res.Msg)
-	}
-
-	// 获取所有配置项数据
-	body := ""
-	for _, info := range res.Data {
-		if txt, ok := info["ip_info"]; ok {
-			body += utils.MustString(txt) + "\n"
-		}
-	}
-
-	if body == "" {
-		return fmt.Errorf("data source result is empty")
 	}
 
 	// 新旧文件内容不同时重写文件
@@ -68,4 +47,35 @@ func GetDataSource(args any) error {
 		}
 	}
 	return nil
+}
+
+func GetDataSourceBody(params DataSourceArgs) (string, error) {
+	// Token: md5(timestamp + auth_key)
+	timestamp := strconv.FormatInt(params.Time.Unix(), 10)
+	token := xhash.MD5Hex(timestamp + params.Conf.SecretValue)
+
+	// 请求数据源: IP 白名单 + Token
+	var res RespDataSource
+	resp, err := req.SetSuccessResult(&res).Get(params.Conf.API + token + "&time=" + timestamp)
+	if err != nil {
+		return "", err
+	}
+
+	if res.OK != 1 || !resp.IsSuccessState() {
+		return "", fmt.Errorf("data source request failed: [%d] %s", resp.StatusCode, res.Msg)
+	}
+
+	// 获取所有配置项数据
+	body := ""
+	for _, info := range res.Data {
+		if txt, ok := info["ip_info"]; ok {
+			body += utils.MustString(txt) + "\n"
+		}
+	}
+
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return "", fmt.Errorf("data source result is empty")
+	}
+	return body, nil
 }
