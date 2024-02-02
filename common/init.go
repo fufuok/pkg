@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/fufuok/utils/myip"
+
+	"github.com/fufuok/pkg/config"
 )
 
 var (
@@ -58,5 +60,8 @@ func (m *M) Stop() error {
 //go:norace
 func initServerIP() {
 	InternalIPv4 = myip.InternalIPv4()
-	ExternalIPv4 = myip.ExternalIPAny(10)
+	ExternalIPv4 = myip.ExternalIPv4()
+	if ExternalIPv4 == "" {
+		ExternalIPv4 = config.Config().NodeConf.NodeInfo.NodeIP
+	}
 }

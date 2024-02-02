@@ -82,9 +82,9 @@ func installDeb(ver string) {
 
 // 判断是否满足安装条件
 // 配置: [0-100]
-// 算法: Hash(外网 IP + dev_version) % 100 < canary_deployment
+// 算法: Hash(内网 IP + 外网 IP + dev_version) % 100 < canary_deployment
 func canary(ver string, threshold uint64) bool {
-	h := xhash.HashString64(common.ExternalIPv4, ver)
+	h := xhash.HashString64(common.InternalIPv4, common.ExternalIPv4, ver)
 	v := h % 100
 	return v < threshold
 }
