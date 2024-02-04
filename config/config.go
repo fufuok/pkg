@@ -47,8 +47,8 @@ type MainConf struct {
 type SYSConf struct {
 	RestartMain             bool     `json:"restart_main"`
 	TimeSyncType            string   `json:"time_sync_type"`
-	WatcherInterval         int      `json:"watcher_interval"`
-	ReqTimeout              int      `json:"req_timeout"`
+	WatcherInterval         string   `json:"watcher_interval"`
+	ReqTimeout              string   `json:"req_timeout"`
 	ReqMaxRetries           int      `json:"req_max_retries"`
 	DebVersion              string   `json:"deb_version"`
 	CanaryDeployment        uint64   `json:"canary_deployment"`
@@ -186,19 +186,21 @@ func parseSYSConfig(cfg *MainConf) error {
 	// 包版本格式清理
 	cfg.SYSConf.DebVersion = regexp.MustCompile(`[^\w-.=]`).ReplaceAllString(cfg.SYSConf.DebVersion, "")
 
-	// 配置文件变化监控时间间隔
-	if cfg.SYSConf.WatcherInterval < 1 {
-		cfg.SYSConf.WatcherIntervalDuration = WatcherIntervalDuration
-	} else {
-		cfg.SYSConf.WatcherIntervalDuration = time.Duration(cfg.SYSConf.WatcherInterval) * time.Minute
+	// 配置文件变化监控时间间隔, 空为默认值
+	dur, err := ParseDuration(cfg.SYSConf.WatcherInterval, WatcherIntervalDuration, 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("parse watcher_interval err: %w", err)
 	}
+	cfg.SYSConf.WatcherIntervalDuration = dur
+	cfg.SYSConf.WatcherInterval = dur.String()
 
-	// 作为客户端发起请求默认超时时间
-	if cfg.SYSConf.ReqTimeout < 1 {
-		cfg.SYSConf.ReqTimeoutDuration = ReqTimeoutDuration
-	} else {
-		cfg.SYSConf.ReqTimeoutDuration = time.Duration(cfg.SYSConf.ReqTimeout) * time.Second
+	// 作为客户端发起请求默认超时时间, 空为默认值
+	dur, err = ParseDuration(cfg.SYSConf.ReqTimeout, ReqTimeoutDuration, 1*time.Second)
+	if err != nil {
+		return fmt.Errorf("parse req_timeout err: %w", err)
 	}
+	cfg.SYSConf.ReqTimeoutDuration = dur
+	cfg.SYSConf.ReqTimeout = dur.String()
 	return nil
 }
 
@@ -222,7 +224,7 @@ func parseLogConfig(cfg *MainConf) {
 		cfg.LogConf.PeriodDuration = time.Duration(cfg.LogConf.Period) * time.Second
 	}
 
-	// 日志推送到接口时间间隔
+	// 日志推送到接口时间间隔 (秒)
 	if cfg.LogConf.PostInterval > 0 {
 		cfg.LogConf.PostIntervalDuration = time.Duration(cfg.LogConf.PostInterval) * time.Second
 	} else {
@@ -283,21 +285,8 @@ func parseAlarmOnConfig(cfg *MainConf) {
 }
 
 func parseMainRemoteConfig(cfg *MainConf) error {
-	// 每次获取远程主配置的时间间隔, < 30 秒则禁用该功能
-	if cfg.MainConf.Interval >= 30 {
-		// 远程获取主配置 API, 解密 SecretName
-		if cfg.MainConf.SecretName != "" {
-			cfg.MainConf.SecretValue = xcrypto.GetenvDecrypt(cfg.MainConf.SecretName,
-				cfg.SYSConf.BaseSecretValue)
-			if cfg.MainConf.SecretValue == "" {
-				return fmt.Errorf("%s cannot be empty", cfg.MainConf.SecretName)
-			}
-		}
-		cfg.MainConf.GetConfDuration = time.Duration(cfg.MainConf.Interval) * time.Second
-	}
-	// 配置拉取执行前最大随机秒数
-	if cfg.MainConf.RandomWait <= 0 {
-		cfg.MainConf.RandomWait = DefaultRandomWait
+	if err := ParseRemoteFileConfig(&cfg.MainConf, cfg.SYSConf.BaseSecretValue); err != nil {
+		return err
 	}
 	// 忽略配置文件中指定的主配置文件路径, 由命令行参数或 BinName 确定, 或由应用端 init 指定
 	cfg.MainConf.Path = ConfigFile
@@ -329,16 +318,8 @@ func parseWebConfig(cfg *MainConf) {
 }
 
 func parseWhitelistConfig(cfg *MainConf) error {
-	// 每次获取远程白名单 IP 配置的时间间隔, < 30 秒则禁用该功能
-	if cfg.WhitelistConf.Interval >= 30 {
-		if cfg.WhitelistConf.SecretName != "" {
-			cfg.WhitelistConf.SecretValue = xcrypto.GetenvDecrypt(cfg.WhitelistConf.SecretName,
-				cfg.SYSConf.BaseSecretValue)
-			if cfg.WhitelistConf.SecretValue == "" {
-				return fmt.Errorf("%s cannot be empty", cfg.WhitelistConf.SecretName)
-			}
-		}
-		cfg.WhitelistConf.GetConfDuration = time.Duration(cfg.WhitelistConf.Interval) * time.Second
+	if err := ParseRemoteFileConfig(&cfg.WhitelistConf, cfg.SYSConf.BaseSecretValue); err != nil {
+		return err
 	}
 	if cfg.WhitelistConf.Path == "" {
 		cfg.WhitelistConf.Path = DefaultWhitelistConfigFile
@@ -360,16 +341,8 @@ func parseWhitelistConfig(cfg *MainConf) error {
 }
 
 func parseBlacklistConfig(cfg *MainConf) error {
-	// 每次获取远程黑名单 IP 配置的时间间隔, < 30 秒则禁用该功能
-	if cfg.BlacklistConf.Interval >= 30 {
-		if cfg.BlacklistConf.SecretName != "" {
-			cfg.BlacklistConf.SecretValue = xcrypto.GetenvDecrypt(cfg.BlacklistConf.SecretName,
-				cfg.SYSConf.BaseSecretValue)
-			if cfg.BlacklistConf.SecretValue == "" {
-				return fmt.Errorf("%s cannot be empty", cfg.BlacklistConf.SecretName)
-			}
-		}
-		cfg.BlacklistConf.GetConfDuration = time.Duration(cfg.BlacklistConf.Interval) * time.Second
+	if err := ParseRemoteFileConfig(&cfg.BlacklistConf, cfg.SYSConf.BaseSecretValue); err != nil {
+		return err
 	}
 	if cfg.BlacklistConf.Path == "" {
 		cfg.BlacklistConf.Path = DefaultBlacklistConfigFile

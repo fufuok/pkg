@@ -1,8 +1,12 @@
 package config
 
 import (
+	"fmt"
 	"log"
+	"strings"
+	"time"
 
+	"github.com/fufuok/utils/xcrypto"
 	"github.com/fufuok/utils/xfile"
 )
 
@@ -36,4 +40,42 @@ func Config() *MainConf {
 func IsSkipRemoteConfig() bool {
 	f := Config().SYSConf.SkipRemoteConfig
 	return f != "" && xfile.IsFile(f)
+}
+
+// ParseDuration 解析时间间隔字符串
+func ParseDuration(s string, defDur time.Duration, minDur ...time.Duration) (time.Duration, error) {
+	if s == "" {
+		return defDur, nil
+	}
+
+	dur, err := time.ParseDuration(s)
+	if err != nil {
+		return defDur, err
+	}
+
+	if len(minDur) > 0 && dur < minDur[0] {
+		return defDur, nil
+	}
+	return dur, nil
+}
+
+// ParseRemoteFileConfig 解析远端配置获取配置项
+func ParseRemoteFileConfig(cfg *FilesConf, secret string) error {
+	// 每次获取远程配置的时间间隔, < 30 秒则禁用该功能
+	if cfg.Interval >= 30 {
+		// 远程获取配置 API, 解密 SecretName
+		if cfg.SecretName != "" {
+			cfg.SecretValue = xcrypto.GetenvDecrypt(cfg.SecretName, secret)
+			if cfg.SecretValue == "" {
+				return fmt.Errorf("%s cannot be empty", cfg.SecretName)
+			}
+		}
+		cfg.GetConfDuration = time.Duration(cfg.Interval) * time.Second
+	}
+	// 配置拉取执行前最大随机等待秒数
+	if cfg.RandomWait <= 0 {
+		cfg.RandomWait = DefaultRandomWait
+	}
+	cfg.Path = strings.TrimSpace(cfg.Path)
+	return nil
 }

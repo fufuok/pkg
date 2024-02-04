@@ -76,7 +76,7 @@ var (
 	// BaseSecretSaltKeyName 环境变量中读取上一行设置的值的键名, 而不是使用上一行中设置的固定值
 	BaseSecretSaltKeyName = "BASE_SECRET_SALT"
 
-	// WatcherIntervalDuration 文件变化监控时间间隔(分)
+	// WatcherIntervalDuration 文件变化监控时间间隔
 	WatcherIntervalDuration = 2 * time.Minute
 
 	// DefaultLoadConfigInterval 通用配置定时加载时间, 各类 Sender 运行中加载最新配置
@@ -85,7 +85,7 @@ var (
 	// DefaultRandomWait 执行前随机等待最大秒数
 	DefaultRandomWait = 120
 
-	// ReqTimeoutDuration 作为客户端发起请求默认超时时间(秒)
+	// ReqTimeoutDuration 作为客户端发起请求默认超时时间
 	ReqTimeoutDuration      = 30 * time.Second
 	ReqTimeoutShortDuration = 3 * time.Second
 
