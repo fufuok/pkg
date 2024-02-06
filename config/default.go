@@ -23,9 +23,10 @@ var (
 	// RootPath 程序运行绝对路径 !!! 决定加载的默认配置目录, 环境文件目录, 日志目录
 	RootPath        string
 	DefaultRootPath = utils.ExecutableDir(true)
+	DefaultLogPath  = filepath.Join(DefaultRootPath, "..", "log")
 
 	// LogDaemon 守护进程日志, 路径为空时不记录日志
-	LogDaemon = filepath.Join(DefaultRootPath, "daemon.log")
+	LogDaemon = filepath.Join(DefaultLogPath, "daemon.log")
 
 	// LogPath 日志路径
 	LogPath string
@@ -143,7 +144,7 @@ func initDefaultConfig() {
 	}
 
 	if LogPath == "" {
-		LogPath = filepath.Join(RootPath, "..", "log")
+		LogPath = DefaultLogPath
 	}
 
 	if LogFile == "" {

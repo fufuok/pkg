@@ -104,7 +104,7 @@ func DebVersion(debName string) string {
 	if debName == "" {
 		return ""
 	}
-	// dpkg -l xunyou-nodeagent
+	// dpkg -l ff-app
 	status := cmder.RunCmd(append(cmdDebVersion, debName))
 	n := len(status.Stdout)
 	if n == 0 || status.Exit != 0 {
@@ -125,7 +125,7 @@ func DebVersion(debName string) string {
 	return ""
 }
 
-// DebVersionByService xunyou-nodeagent.service
+// DebVersionByService ff-app.service
 func DebVersionByService(name string) string {
 	return DebVersion(config.GetDevName(name))
 }
