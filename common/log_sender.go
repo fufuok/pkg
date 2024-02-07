@@ -14,6 +14,9 @@ import (
 var (
 	// LogChan 日志缓存队列
 	LogChan *chanx.UnboundedChanOf[[]byte]
+
+	// 日志发送接口地址
+	postAPI string
 )
 
 func initLogSender() {
@@ -28,6 +31,7 @@ func logSender() {
 	num := 0
 	bb := buffer.Get()
 	cfg := config.Config().LogConf
+	postAPI = cfg.PostAPI
 	lastLoadTime := time.Now()
 	interval := cfg.PostIntervalDuration
 	ticker := time.NewTicker(interval)
@@ -39,20 +43,21 @@ func logSender() {
 			if t.Sub(lastLoadTime) > config.DefaultLoadConfigInterval {
 				lastLoadTime = t
 				cfg = config.Config().LogConf
+				postAPI = cfg.PostAPI
 				if interval != cfg.PostIntervalDuration {
 					interval = cfg.PostIntervalDuration
 					ticker.Reset(interval)
 				}
 			}
 			if bb.Len() > 0 {
-				postLog(cfg.PostAPI, bb)
+				postLog(bb)
 				bb = buffer.Get()
 				num = 0
 			}
 		case bs, ok := <-LogChan.Out:
 			if !ok {
 				if bb.Len() > 0 {
-					postLog(cfg.PostAPI, bb)
+					postLog(bb)
 				}
 				Log.Warn().Msg("logSender exited")
 				return
@@ -65,7 +70,7 @@ func logSender() {
 			// 按条数或内容大小分批发送
 			num++
 			if num%cfg.PostBatchNum == 0 || bb.Len() > cfg.PostBatchBytes {
-				postLog(cfg.PostAPI, bb)
+				postLog(bb)
 				bb = buffer.Get()
 				num = 0
 			}
@@ -73,8 +78,8 @@ func logSender() {
 	}
 }
 
-func postLog(api string, bb *buffer.Buffer) {
-	if api == "" {
+func postLog(bb *buffer.Buffer) {
+	if postAPI == "" {
 		bb.Put()
 		return
 	}
@@ -86,8 +91,22 @@ func postLog(api string, bb *buffer.Buffer) {
 	// 推送日志数据到接口 POST JSON
 	_ = ants.Submit(func() {
 		defer bb.Put()
-		if _, err := req.SetBodyJsonBytes(bb.B).Post(api); err != nil {
-			LogSampled.Warn().Err(err).Str("url", api).Msg("postLog")
+		if _, err := req.SetBodyJsonBytes(bb.B).Post(postAPI); err != nil {
+			LogSampled.Warn().Err(err).Str("api", postAPI).Msg("postLog")
+		}
+	})
+}
+
+// PostLog 立即推送日志到 ES
+func PostLog(bs []byte) {
+	if postAPI == "" {
+		return
+	}
+
+	// 推送日志数据到接口 POST JSON
+	_ = ants.Submit(func() {
+		if _, err := req.SetBodyJsonBytes(bs).Post(postAPI); err != nil {
+			LogSampled.Warn().Err(err).Str("api", postAPI).Msg("postLog")
 		}
 	})
 }
