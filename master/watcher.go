@@ -119,6 +119,8 @@ func startWatcher() {
 		runtimeConfigPipeline()
 		cfg = config.Config().SYSConf
 
+		// 同步更新机器上现在的包版本
+		config.DebVersion = getCurrentDebVersion()
 		if c := checkUpgradeOrRestart(cfg); c {
 			continue
 		}
@@ -186,7 +188,7 @@ func configWatcher() (needContinue bool) {
 
 func checkUpgradeOrRestart(cfg config.SYSConf) (needContinue bool) {
 	// 安装新版本, 每当配置有变化时才检测
-	if cfg.DebVersion != "" && config.DebVersion != cfg.DebVersion {
+	if cfg.DebVersion != "" && config.DebVersion != "" && config.DebVersion != cfg.DebVersion {
 		threshold := cfg.CanaryDeployment
 		toInstall := canary(cfg.DebVersion, threshold)
 		logger.Warn().

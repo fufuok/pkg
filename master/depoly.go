@@ -90,12 +90,7 @@ func canary(ver string, threshold uint64) bool {
 }
 
 // 获取当前安装的包版本
-// 配置中的 dev_version 为空时, 从机器上查询
 func getCurrentDebVersion() string {
-	ver := config.Config().SYSConf.DebVersion
-	if ver != "" {
-		return ver
-	}
 	return DebVersion(config.DebName)
 }
 
