@@ -17,6 +17,9 @@ var (
 	// ClockOffsetLimit 允许的时间偏差, 1 秒内偏差不更新 clockOffset
 	ClockOffsetLimit = float64(1 * time.Second)
 
+	// ClockOffsetAdjust 当时间偏差需要修正时, 默认拨快 10ms
+	ClockOffsetAdjust = int64(10 * time.Millisecond)
+
 	// ClockOffsetMinInterval 同步时间的单次执行间隔
 	ClockOffsetMinInterval = 20 * time.Second
 	ClockOffsetInterval    = 2 * time.Hour
@@ -98,7 +101,7 @@ func GetClockOffset() time.Duration {
 func SetClockOffset(dur time.Duration) {
 	offset := int64(dur)
 	if math.Abs(float64(offset-clockOffset.Load())) >= ClockOffsetLimit {
-		clockOffset.Store(offset)
+		clockOffset.Store(offset + ClockOffsetAdjust)
 		Log.Warn().Str("clock_offset", GetClockOffset().String()).Msg("ntpdate")
 	}
 }
