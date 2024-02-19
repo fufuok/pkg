@@ -9,6 +9,7 @@ import (
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/logger"
+	"github.com/fufuok/pkg/logger/alarm"
 )
 
 // 初始化获取远端配置
@@ -56,7 +57,7 @@ func getBlacklistRemoteConf(ctx context.Context) {
 func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 	fn, ok := common.Funcs.Load(cfg.Method)
 	if !ok {
-		logger.Error().Str("method", cfg.Method).Msg("Remote configuration fetcher initialization failed")
+		alarm.Error().Str("method", cfg.Method).Msg("Remote configuration fetcher initialization failed")
 		return
 	}
 
