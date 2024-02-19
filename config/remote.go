@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -29,7 +30,7 @@ type DataSourceArgs struct {
 func GetDataSource(args any) error {
 	params, ok := args.(DataSourceArgs)
 	if !ok {
-		return fmt.Errorf("invalid data source configuration")
+		return errors.New("invalid data source configuration")
 	}
 
 	body, err := GetDataSourceBody(params)
@@ -41,8 +42,7 @@ func GetDataSource(args any) error {
 	md5Old := xhash.MustMD5Sum(params.Conf.Path)
 	md5New := xhash.MD5Hex(body)
 	if md5New != md5Old {
-		// #nosec G306
-		if err = os.WriteFile(params.Conf.Path, []byte(body), 0644); err != nil {
+		if err = os.WriteFile(params.Conf.Path, []byte(body), 0600); err != nil {
 			return err
 		}
 	}
@@ -75,7 +75,7 @@ func GetDataSourceBody(params DataSourceArgs) (string, error) {
 
 	body = strings.TrimSpace(body)
 	if body == "" {
-		return "", fmt.Errorf("data source result is empty")
+		return "", errors.New("data source result is empty")
 	}
 	return body, nil
 }

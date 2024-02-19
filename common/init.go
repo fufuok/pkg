@@ -1,7 +1,7 @@
 package common
 
 import (
-	"fmt"
+	"errors"
 
 	"github.com/fufuok/utils/myip"
 
@@ -44,7 +44,7 @@ func (m *M) Start() error {
 // Runtime 重新加载配置时运行
 func (m *M) Runtime() error {
 	if err := loadLogger(); err != nil {
-		return fmt.Errorf("unable to reinitialize logger")
+		return errors.New("unable to reinitialize logger")
 	}
 	loadReq()
 	return nil

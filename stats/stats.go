@@ -37,7 +37,6 @@ func SYSStats() map[string]any {
 		"NumCgoCall":    utils.Comma(runtime.NumCgoCall()),
 		"InternalIPv4":  common.InternalIPv4,
 		"ExternalIPv4":  common.ExternalIPv4,
-		"HTTPS":         config.Config().WebConf.ServerHttpsAddr != "",
 		"JSON":          json.Name,
 		"GoPool":        ants.Running(),
 	}
