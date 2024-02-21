@@ -2,6 +2,7 @@ package common
 
 import (
 	"os"
+	"time"
 
 	"github.com/fufuok/ants"
 	"github.com/fufuok/utils/xjson/gjson"
@@ -51,15 +52,13 @@ func GenAlarmData(code string, bs []byte) []byte {
 
 // GenAlarmJson 整合报警消息
 func GenAlarmJson(code, info, more string) []byte {
-	now := Now()
 	hostname, _ := os.Hostname()
 	js := jsongen.NewMap()
 	js.PutString("code", code)
-	js.PutString("time", now.Str3339)
+	js.PutString("time", GTimeNowString(time.RFC3339))
 	js.PutString("info", info)
 	js.PutString("more", more)
 	js.PutString("hostname", hostname)
-	js.PutInt("timestamp", now.Unix)
 	return js.Serialize(nil)
 }
 
@@ -89,7 +88,6 @@ func genAlarmJson(code string, bs []byte) []byte {
 	}
 
 	cfg := config.Config().NodeConf.NodeInfo
-	now := Now()
 	js := jsongen.NewMap()
 	js.PutString("code", code)
 	js.PutString("node_ip", cfg.NodeIP)
@@ -97,10 +95,9 @@ func genAlarmJson(code string, bs []byte) []byte {
 	js.PutString("node_desc", cfg.NodeDesc)
 	js.PutString("hostname", cfg.Hostname)
 	js.PutString("host_ip", cfg.HostIP)
-	js.PutString("time", now.Str3339)
+	js.PutString("time", GTimeNowString(time.RFC3339))
 	js.PutString("info", info)
 	js.PutString("more", more)
 	js.PutString("job", job)
-	js.PutInt("timestamp", now.Unix)
 	return js.Serialize(nil)
 }

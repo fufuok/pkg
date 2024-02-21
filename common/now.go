@@ -5,8 +5,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/fufuok/utils"
-
 	"github.com/fufuok/pkg/config"
 )
 
@@ -26,53 +24,7 @@ var (
 
 	// 全局时间差
 	clockOffset atomic.Int64
-	currentTime atomic.Pointer[CurrentTime]
 )
-
-// CurrentTime 当前时间, 预格式化的字符串形式 (秒级)
-type CurrentTime struct {
-	// 强制 0 时区的 8 时区时间 (仅特定场景展示使用)
-	Str3339Z string
-	// 带时区的正确时间值
-	Str3339 string
-	// 年月日, 注: 带前缀下划线: _220720
-	StrYmd string
-	// 时间戳
-	Unix int64
-	// 当前时间
-	Time time.Time
-}
-
-func Now() *CurrentTime {
-	return currentTime.Load()
-}
-
-func SetupNow() {
-	initNow(StartTime)
-}
-
-func initNow(t time.Time) {
-	if t.Equal(StartTime) {
-		StartTime = StartTime.In(config.DefaultTimeLocation)
-		t = StartTime
-	}
-	currentTime.Store(&CurrentTime{
-		t.Format("2006-01-02T15:04:05Z"),
-		t.Format(time.RFC3339),
-		t.Format("_060102"),
-		t.Unix(),
-		t,
-	})
-}
-
-// 周期性更新全局时间字段
-func syncNow() {
-	for {
-		t := GTimeNow()
-		t = utils.WaitNextSecondWithTime(t)
-		initNow(t)
-	}
-}
 
 // GTimeNow 全局统一时间
 func GTimeNow() time.Time {

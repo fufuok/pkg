@@ -52,7 +52,7 @@ func SetClientIP(c *fiber.Ctx) {
 	if xip == "" {
 		xip = c.IP()
 		if !utils.IsInternalIPv4String(xip) {
-			xtime := common.Now().Str3339
+			xtime := common.GTimeNowString(time.RFC3339)
 			xtoken := xhash.HashString(xip, xtime, config.Config().SYSConf.BaseSecretValue)
 			c.Request().Header.Set(HeaderXProxyClientIP, xip)
 			c.Request().Header.Set(HeaderXProxyToken, xtoken)

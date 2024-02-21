@@ -18,16 +18,11 @@ type M struct{}
 
 // Start 程序启动时初始化
 func (m *M) Start() error {
-	initNow(StartTime)
-
 	// 初始化日志环境
 	initLogger()
 
 	// 初始化本机 IP
 	go initServerIP()
-
-	// 同步全局秒级时间值
-	go syncNow()
 
 	// 池相关设置
 	initPool()
