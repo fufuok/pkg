@@ -16,7 +16,7 @@ require (
 	github.com/imroc/req/v3 v3.42.3
 	github.com/joho/godotenv v1.5.1
 	github.com/natefinch/lumberjack/v3 v3.0.0-alpha
-	github.com/redis/go-redis/v9 v9.5.0
+	github.com/redis/go-redis/v9 v9.5.1
 	github.com/rs/zerolog v1.32.0
 	golang.org/x/sync v0.6.0
 )
