@@ -36,7 +36,7 @@ func HTTPCounter(name string) fiber.Handler {
 
 		err = c.Next()
 
-		if err != nil || c.Response().StatusCode() >= fiber.StatusBadRequest {
+		if err != nil || c.Response().StatusCode() >= fiber.StatusInternalServerError {
 			counter.Err.Add(1)
 		} else {
 			counter.OK.Add(1)

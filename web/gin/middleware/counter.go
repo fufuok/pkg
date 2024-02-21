@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"fmt"
+	"net/http"
 	"sync/atomic"
 	"time"
 
@@ -36,7 +37,7 @@ func HTTPCounter(name string) gin.HandlerFunc {
 
 		c.Next()
 
-		if len(c.Errors) > 0 || c.Writer.Status() >= 400 {
+		if len(c.Errors) > 0 || c.Writer.Status() >= http.StatusInternalServerError {
 			counter.Err.Add(1)
 		} else {
 			counter.OK.Add(1)
