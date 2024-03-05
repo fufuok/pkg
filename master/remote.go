@@ -55,18 +55,23 @@ func getBlacklistRemoteConf(ctx context.Context) {
 // GetRemoteConf 定时获取远端配置, 配合 RemotePipelines 使用
 // 注: 当主配置变化时, 该函数会退出并重新运行
 func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
+	id := common.GTimeNowString("060102150405.999999999")
 	fn, ok := common.Funcs.Load(cfg.Method)
 	if !ok {
-		alarm.Error().Str("method", cfg.Method).Msg("Remote configuration fetcher initialization failed")
+		alarm.Error().Str("id", id).Str("method", cfg.Method).Msg("Remote configuration fetcher initialization failed")
 		return
 	}
+
+	logger.Warn().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
+		Msg("Remote configuration fetcher is working")
 
 	for {
 		wait := utils.FastIntn(cfg.RandomWait)
 		time.Sleep(time.Duration(wait) * time.Second)
 		select {
 		case <-ctx.Done():
-			logger.Warn().Str("path", cfg.Path).Str("method", cfg.Method).Msg("Remote configuration fetcher exited")
+			logger.Warn().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
+				Msg("Remote configuration fetcher exited")
 			return
 		default:
 		}
@@ -76,9 +81,10 @@ func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 				Time: common.GTimeNow(),
 				Conf: cfg,
 			}
-			logger.Info().Str("path", cfg.Path).Str("method", cfg.Method).Msg("Execute remote configuration fetcher")
+			logger.Info().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
+				Msg("Execute remote configuration fetcher")
 			if err := fn(args); err != nil {
-				logger.Error().Err(err).Str("path", cfg.Path).Str("method", cfg.Method).
+				logger.Error().Err(err).Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
 					Msg("Failed to get remote configuration")
 			}
 		}
