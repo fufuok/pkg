@@ -2,37 +2,31 @@ package middleware
 
 import (
 	"fmt"
-	"net/http"
 
 	"github.com/gofiber/fiber/v2"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
-	"github.com/fufuok/pkg/logger/sampler"
 	"github.com/fufuok/pkg/web/fiber/proxy"
-	"github.com/fufuok/pkg/web/fiber/response"
 )
 
 // CheckBlacklist 接口黑名单检查
 func CheckBlacklist(asAPI bool) fiber.Handler {
 	errMsg := fmt.Sprintf("[ERROR] 非法访问(%s): ", config.AppName)
 	return func(c *fiber.Ctx) error {
-		if len(config.Blacklist) > 0 {
-			clientIP := proxy.GetClientIP(c)
-			if _, ok := common.LookupIPNetsString(clientIP, config.Blacklist); ok {
-				msg := errMsg + clientIP
-				sampler.Info().
-					Str("cip", c.IP()).Str("x_forwarded_for", c.Get(fiber.HeaderXForwardedFor)).
-					Str(proxy.HeaderXProxyClientIP, c.Get(proxy.HeaderXProxyClientIP)).
-					Str("method", c.Method()).Str("uri", c.OriginalURL()).Str("client_ip", clientIP).
-					Msg(msg)
-				if asAPI {
-					return response.APIException(c, http.StatusForbidden, msg, nil)
-				} else {
-					return response.TxtException(c, http.StatusForbidden, msg)
-				}
-			}
+		if BlacklistChecker(c) {
+			return responseForbidden(c, errMsg, asAPI)
 		}
 		return c.Next()
 	}
+}
+
+// BlacklistChecker 是否存在于黑名单, true 是黑名单 (黑名单为空时: 放过, false)
+func BlacklistChecker(c *fiber.Ctx) bool {
+	clientIP := proxy.GetClientIP(c)
+	if len(config.Blacklist) > 0 {
+		_, ok := common.LookupIPNetsString(clientIP, config.Blacklist)
+		return ok
+	}
+	return false
 }
