@@ -12,9 +12,7 @@ import (
 	"github.com/fufuok/pkg/web/gin/middleware"
 )
 
-var (
-	app *gin.Engine
-)
+var app *gin.Engine
 
 type App func(app *gin.Engine) *gin.Engine
 

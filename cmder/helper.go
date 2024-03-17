@@ -15,9 +15,7 @@ const (
 	cmdTimeout = 3 * time.Second
 )
 
-var (
-	ErrCMDTimeout = errors.New("command execution timed out")
-)
+var ErrCMDTimeout = errors.New("command execution timed out")
 
 // RunCmd 运行命令, 返回结果和状态
 func RunCmd(cmdArgs []string, timeout ...time.Duration) cmd.Status {

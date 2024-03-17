@@ -8,9 +8,7 @@ import (
 	"github.com/joho/godotenv"
 )
 
-var (
-	ExtraEnvFiles []string
-)
+var ExtraEnvFiles []string
 
 // 读取 .env 配置
 // 后加载的优先, 已存在的环境变量值会被覆盖

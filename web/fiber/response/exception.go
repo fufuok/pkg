@@ -12,9 +12,7 @@ const (
 	defaultErrMsg = "错误的请求"
 )
 
-var (
-	apiSuccessNil = json.MustJSON(APISuccessNilData())
-)
+var apiSuccessNil = json.MustJSON(APISuccessNilData())
 
 // APIException 通用异常处理
 func APIException(c *fiber.Ctx, code int, msg string, data any) error {

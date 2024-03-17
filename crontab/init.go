@@ -9,10 +9,8 @@ import (
 	"github.com/fufuok/pkg/logger"
 )
 
-var (
-	// 定时任务调度器
-	crontab *cron.Cron
-)
+// 定时任务调度器
+var crontab *cron.Cron
 
 type M struct{}
 

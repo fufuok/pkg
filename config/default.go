@@ -183,6 +183,6 @@ func initDefaultConfig() {
 }
 
 func makePaths() {
-	_ = os.MkdirAll(LogPath, 0755)
-	_ = os.MkdirAll(ConfigPath, 0755)
+	_ = os.MkdirAll(LogPath, 0o755)
+	_ = os.MkdirAll(ConfigPath, 0o755)
 }

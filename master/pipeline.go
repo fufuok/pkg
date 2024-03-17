@@ -24,13 +24,15 @@ var (
 	remotePipelines []ContextFunc
 )
 
-type Stage int
-type ContextFunc func(ctx context.Context)
-type Pipeline interface {
-	Start() error
-	Runtime() error
-	Stop() error
-}
+type (
+	Stage       int
+	ContextFunc func(ctx context.Context)
+	Pipeline    interface {
+		Start() error
+		Runtime() error
+		Stop() error
+	}
+)
 
 func Register(stage Stage, sf ...Pipeline) {
 	mu.Lock()

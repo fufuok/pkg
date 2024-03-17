@@ -18,9 +18,7 @@ import (
 	"github.com/fufuok/pkg/web/fiber/response"
 )
 
-var (
-	app *fiber.App
-)
+var app *fiber.App
 
 type App func(app *fiber.App) *fiber.App
 

@@ -10,10 +10,8 @@ import (
 
 // !!! 注意: 先执行 InitRedisDB(...) 初始化后再使用下面的方法
 
-var (
-	// RedisDB Redis 连接
-	RedisDB redis.UniversalClient
-)
+// RedisDB Redis 连接
+var RedisDB redis.UniversalClient
 
 // InitRedisDB 指定已初始化的 *redis.Client
 func InitRedisDB(rdb redis.UniversalClient) {
