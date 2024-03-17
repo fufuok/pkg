@@ -367,18 +367,21 @@ func parseBlacklistConfig(cfg *MainConf) error {
 func getIPNetList(ips []string) (map[*net.IPNet]int64, error) {
 	ipNets := make(map[*net.IPNet]int64)
 	for _, ip := range ips {
-		// IP段,数值(一般用于限制器) 如: 192.168.0.0/16,200
-		ss := strings.SplitN(ip, ",", 2)
-		ip := ss[0]
-		val := int64(0)
-		if len(ss) == 2 {
-			val = conv.Atoi(ss[1])
-		}
 		// 排除空白行, __ 或 # 开头的注释行
 		ip = strings.TrimSpace(ip)
 		if ip == "" || strings.HasPrefix(ip, "__") || strings.HasPrefix(ip, "#") {
 			continue
 		}
+
+		// IP段,数值(一般用于限制器),可选的行内注释 如: 192.168.0.0/16,200,注释(可选)
+		ss := strings.SplitN(ip, ",", 3)
+		ip = strings.TrimSpace(ss[0])
+		val := int64(0)
+		if len(ss) >= 2 {
+			n := strings.TrimSpace(ss[1])
+			val = conv.Atoi(n)
+		}
+
 		// 补全掩码
 		if !strings.Contains(ip, "/") {
 			if strings.Contains(ip, ":") {
