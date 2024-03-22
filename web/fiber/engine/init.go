@@ -41,6 +41,14 @@ func Run(setup App) {
 
 	app = setup(app)
 
+	// 黑白名单中间件缓存初始化, 主配置无定义时可由应用方重新初始化
+	if err := middleware.UseWhitelistCache(cfg.WhitelistLRUCapacity, cfg.WhitelistLRULifetime); err != nil {
+		log.Fatalln("Failed to initialize whitelist config:", err, "\nbye.")
+	}
+	if err := middleware.UseBlacklistCache(cfg.BlacklistLRUCapacity, cfg.BlacklistLRULifetime); err != nil {
+		log.Fatalln("Failed to initialize blacklist config:", err, "\nbye.")
+	}
+
 	app.Use(
 		middleware.RecoverLogger(),
 		compress.New(),

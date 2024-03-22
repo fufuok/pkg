@@ -13,7 +13,6 @@ func LookupIPNetsString(s string, ipNets map[*net.IPNet]int64) (int64, bool) {
 	if ip == nil {
 		return 0, false
 	}
-
 	return LookupIPNets(ip, ipNets)
 }
 

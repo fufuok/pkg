@@ -105,6 +105,12 @@ type WebConf struct {
 	// Fiber 请求体大小限制, 0 为默认: 8 * 1024 * 1024, -1 表示不限制
 	BodyLimit int `json:"body_limit"`
 
+	// 黑白名单中间件缓存容量配置, 键生命周期秒数
+	WhitelistLRUCapacity uint64 `json:"whitelist_lru_capacity"`
+	WhitelistLRULifetime uint64 `json:"whitelist_lru_lifetime"`
+	BlacklistLRUCapacity uint64 `json:"blacklist_lru_capacity"`
+	BlacklistLRULifetime uint64 `json:"blacklist_lru_lifetime"`
+
 	CertFile string `json:"-"`
 	KeyFile  string `json:"-"`
 }
