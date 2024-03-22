@@ -21,6 +21,7 @@ var (
 
 // UseBlacklistCache 重新设置黑名单检查时缓存, 配置变化时可选再次调用, 由应用端 Start() Runtime() 调用
 func UseBlacklistCache(capacity, lifetime uint64) (err error) {
+	useBlacklistLRU.Store(false)
 	if capacity == 0 {
 		return nil
 	}
@@ -30,7 +31,6 @@ func UseBlacklistCache(capacity, lifetime uint64) (err error) {
 		return err
 	}
 
-	useBlacklistLRU.Store(false)
 	blacklistLRU = lru
 	useBlacklistLRU.Store(blacklistLRU != nil)
 	return nil
