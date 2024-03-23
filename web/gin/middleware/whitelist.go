@@ -26,6 +26,8 @@ var (
 // UseWhitelistCache 重新设置白名单检查时缓存, 配置变化时可选再次调用, 由应用端 Start() Runtime() 调用
 func UseWhitelistCache(capacity, lifetime uint32) error {
 	useWhitelistLRU.Store(false)
+	PurgeWhitelistCache()
+
 	if capacity == 0 {
 		return nil
 	}
