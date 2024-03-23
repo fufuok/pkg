@@ -8,7 +8,7 @@ require (
 	github.com/fufuok/bytespool v1.3.2
 	github.com/fufuok/chanx v1.2.1
 	github.com/fufuok/cron v0.3.2
-	github.com/fufuok/freelru v0.13.1
+	github.com/fufuok/freelru v0.13.2
 	github.com/fufuok/utils v1.0.9
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-cmd/cmd v1.4.2
