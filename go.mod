@@ -8,7 +8,7 @@ require (
 	github.com/fufuok/bytespool v1.3.2
 	github.com/fufuok/chanx v1.2.1
 	github.com/fufuok/cron v0.3.2
-	github.com/fufuok/freelru v0.13.2
+	github.com/fufuok/freelru v0.13.3
 	github.com/fufuok/utils v1.0.9
 	github.com/gin-gonic/gin v1.9.1
 	github.com/go-cmd/cmd v1.4.2
@@ -51,7 +51,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.15 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/onsi/ginkgo/v2 v2.17.0 // indirect
+	github.com/onsi/ginkgo/v2 v2.17.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.0 // indirect
 	github.com/quic-go/qpack v0.4.0 // indirect
 	github.com/quic-go/quic-go v0.42.0 // indirect
