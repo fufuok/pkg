@@ -49,10 +49,10 @@ func main() {
 	// 程序解码测试:
 	// FF~~666
 	if appName != "" && baseSecretValue != "" {
-		result, _ := xcrypto.SetenvEncrypt(config.BaseSecretKeyName, baseSecretValue, baseSecretSalt+appName)
-		testResult := xcrypto.GetenvDecrypt(config.BaseSecretKeyName, baseSecretSalt+appName)
+		result, _ := xcrypto.SetenvEncrypt(config.BaseSecretEnvName, baseSecretValue, baseSecretSalt+appName)
+		testResult := xcrypto.GetenvDecrypt(config.BaseSecretEnvName, baseSecretSalt+appName)
 		fmt.Printf("\n基础密钥原始值: \n%s\n待写入环境变量: \n%s=%s\n程序解码测试: \n%s\n\n",
-			baseSecretValue, config.BaseSecretKeyName, result, testResult)
+			baseSecretValue, config.BaseSecretEnvName, result, testResult)
 		return
 	}
 
@@ -99,7 +99,7 @@ func main() {
 	// testGetenv: REDIS_AUTH = redis12345
 	if data != "" {
 		// 获取基础密钥
-		baseSecretValue = xcrypto.GetenvDecrypt(config.BaseSecretKeyName, baseSecretSalt+appName)
+		baseSecretValue = xcrypto.GetenvDecrypt(config.BaseSecretEnvName, baseSecretSalt+appName)
 		if baseSecretValue == "" {
 			fmt.Println("错误: 请设置 BASE_SECRET_KEY 加密的基础密钥环境变量")
 			fmt.Println("示例: ")

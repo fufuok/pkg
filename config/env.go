@@ -39,13 +39,13 @@ func loadEnvFiles(envFiles ...string) {
 
 // 加载环境变量中设定的应用配置
 func loadEnvConfig() {
-	if s := os.Getenv(BaseSecretKeyNameKeyName); s != "" {
-		_ = os.Setenv(BaseSecretKeyNameKeyName, "")
-		BaseSecretKeyName = s
+	if s := os.Getenv(BaseSecretKeyNameEnvName); s != "" {
+		_ = os.Setenv(BaseSecretKeyNameEnvName, "")
+		BaseSecretEnvName = s
 	}
 	// 盐是 Base58 编码后存入 env, 缺省为固定值 (BaseSecretSalt 变量)
-	if s := string(base58.Decode(os.Getenv(BaseSecretSaltKeyName))); s != "" {
-		_ = os.Setenv(BaseSecretSaltKeyName, "")
+	if s := string(base58.Decode(os.Getenv(BaseSecretSaltEnvName))); s != "" {
+		_ = os.Setenv(BaseSecretSaltEnvName, "")
 		BaseSecretSalt = s
 	}
 }

@@ -67,15 +67,15 @@ var (
 	LogPostBatchNum   = 2000
 	LogPostBatchBytes = 2 << 20
 
-	// BaseSecretKeyName 项目基础密钥 (环境变量名)
-	BaseSecretKeyName = "BASE_SECRET_KEY"
-	// BaseSecretKeyNameKeyName 用于在环境变量中指定上一行设置的值的键名, 而不是使用默认的: BASE_SECRET_KEY
-	BaseSecretKeyNameKeyName = "BASE_SECRET_KEY_NAME"
+	// BaseSecretEnvName 项目基础密钥 (环境变量名)
+	BaseSecretEnvName = "BASE_SECRET_KEY"
+	// BaseSecretKeyNameEnvName 用于在环境变量中指定上一行设置的值的键名, 而不是使用默认的: BASE_SECRET_KEY
+	BaseSecretKeyNameEnvName = "BASE_SECRET_KEY_NAME"
 
 	// BaseSecretSalt 用于解密基础密钥值的密钥的前半部分, 盐 (编译在程序中), 后半部分为 AppName 值
 	BaseSecretSalt = "Fufu↑777發彡 " // #nosec G101
-	// BaseSecretSaltKeyName 环境变量中读取上一行设置的值的键名, 而不是使用上一行中设置的固定值
-	BaseSecretSaltKeyName = "BASE_SECRET_SALT"
+	// BaseSecretSaltEnvName 环境变量中读取上一行设置的值的键名, 而不是使用上一行中设置的固定值
+	BaseSecretSaltEnvName = "BASE_SECRET_SALT"
 
 	// WatcherIntervalDuration 文件变化监控时间间隔
 	WatcherIntervalDuration = 2 * time.Minute
@@ -105,9 +105,9 @@ var (
 	// WebServerHttpsAddr 缺省的 HTTPS 接口端口
 	WebServerHttpsAddr = ":12377"
 
-	// WebCertFileEnv 默认证书路径环境变量
-	WebCertFileEnv = "WEB_CERT_FILE"
-	WebKeyFileEnv  = "WEB_KEY_FILE"
+	// WebCertFileEnvName 默认证书路径环境变量名
+	WebCertFileEnvName = "WEB_CERT_FILE"
+	WebKeyFileEnvName  = "WEB_KEY_FILE"
 
 	// WebLogInfoKey 接口日志附带请求信息, 上下文键名
 	WebLogInfoKey = "_WLIK_"

@@ -184,9 +184,9 @@ func readConfig() (*MainConf, error) {
 
 func parseSYSConfig(cfg *MainConf) error {
 	// 基础密钥: 由程序固化的密钥解密环境变量得到, 其他加密变量都使用基础密码加密
-	cfg.SYSConf.BaseSecretValue = xcrypto.GetenvDecrypt(BaseSecretKeyName, BaseSecretSalt+AppName)
+	cfg.SYSConf.BaseSecretValue = xcrypto.GetenvDecrypt(BaseSecretEnvName, BaseSecretSalt+AppName)
 	if cfg.SYSConf.BaseSecretValue == "" {
-		return fmt.Errorf("%s cannot be empty", BaseSecretKeyName)
+		return fmt.Errorf("%s cannot be empty", BaseSecretEnvName)
 	}
 
 	// 包版本格式清理
@@ -311,8 +311,8 @@ func parseWebConfig(cfg *MainConf) {
 	}
 
 	// 证书文件存在时开启 HTTPS
-	cfg.WebConf.CertFile = os.Getenv(WebCertFileEnv)
-	cfg.WebConf.KeyFile = os.Getenv(WebKeyFileEnv)
+	cfg.WebConf.CertFile = os.Getenv(WebCertFileEnvName)
+	cfg.WebConf.KeyFile = os.Getenv(WebKeyFileEnvName)
 	if xfile.IsFile(cfg.WebConf.CertFile) && xfile.IsFile(cfg.WebConf.KeyFile) {
 		// 优先使用配置中的绑定参数(HTTPS), 英文逗号分隔多个端口
 		if cfg.WebConf.ServerHttpsAddr == "" {
