@@ -109,6 +109,12 @@ var (
 	WebCertFileEnvName = "WEB_CERT_FILE"
 	WebKeyFileEnvName  = "WEB_KEY_FILE"
 
+	// WebSignKeyEnvName 接口签名密钥加密串环境变量名
+	WebSignKeyEnvName = "WEB_SIGN_KEY"
+	// WebSignTTLDefault 接口签名有效生命周期(秒数, 默认: 60, 最小 5)
+	WebSignTTLDefault = 60
+	WebSignTTLMin     = 5
+
 	// WebLogInfoKey 接口日志附带请求信息, 上下文键名
 	WebLogInfoKey = "_WLIK_"
 

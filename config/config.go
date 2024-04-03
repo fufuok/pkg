@@ -111,6 +111,10 @@ type WebConf struct {
 	BlacklistLRUCapacity uint32 `json:"blacklist_lru_capacity"`
 	BlacklistLRULifetime uint32 `json:"blacklist_lru_lifetime"`
 
+	// 接口签名密钥生命周期和签名密钥值
+	SignTTL int64  `json:"sign_ttl"`
+	SignKey string `json:"-"`
+
 	CertFile string `json:"-"`
 	KeyFile  string `json:"-"`
 }
@@ -308,6 +312,12 @@ func parseWebConfig(cfg *MainConf) {
 	// HTTP 请求体限制, -1 表示无限
 	if cfg.WebConf.BodyLimit == 0 {
 		cfg.WebConf.BodyLimit = BodyLimit
+	}
+
+	// 接口签名密钥和生命周期
+	cfg.WebConf.SignKey = xcrypto.GetenvDecrypt(WebSignKeyEnvName, cfg.SYSConf.BaseSecretValue)
+	if cfg.WebConf.SignTTL < int64(WebSignTTLMin) {
+		cfg.WebConf.SignTTL = int64(WebSignTTLDefault)
 	}
 
 	// 证书文件存在时开启 HTTPS
