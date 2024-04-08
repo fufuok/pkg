@@ -97,17 +97,18 @@ func main() {
 	//
 	//
 	// testGetenv: REDIS_AUTH = redis12345
+	//
+	// 获取基础密钥
+	baseSecretValue = xcrypto.GetenvDecrypt(config.BaseSecretEnvName, baseSecretSalt+appName)
+	if baseSecretValue == "" {
+		fmt.Println("错误: 请设置 BASE_SECRET_KEY 加密的基础密钥环境变量")
+		fmt.Println("示例: ")
+		fmt.Println("export BASE_SECRET_KEY=TQeKrAAFJ5godyTxtDw2o1")
+		fmt.Println(`go run main.go -key="REDIS_AUTH" -data="redis12345" -appname="FF.YourAPP"`)
+		return
+	}
+	fmt.Println("APP_NAME:", appName, "基础密钥:", baseSecretValue)
 	if data != "" {
-		// 获取基础密钥
-		baseSecretValue = xcrypto.GetenvDecrypt(config.BaseSecretEnvName, baseSecretSalt+appName)
-		if baseSecretValue == "" {
-			fmt.Println("错误: 请设置 BASE_SECRET_KEY 加密的基础密钥环境变量")
-			fmt.Println("示例: ")
-			fmt.Println("export BASE_SECRET_KEY=TQeKrAAFJ5godyTxtDw2o1")
-			fmt.Println(`go run main.go -key="REDIS_AUTH" -data="redis12345" -appname="FF.YourAPP"`)
-			return
-		}
-		fmt.Println("APP_NAME:", appName, "基础密钥:", baseSecretValue)
 		// 使用基础密钥加密
 		result, err := xcrypto.SetenvEncrypt(key, data, baseSecretValue)
 		if err != nil {
@@ -118,6 +119,12 @@ func main() {
 	}
 
 	// 测试解密
+	// # export BASE_SECRET_KEY=TQeKrAAFJ5godyTxtDw2o1
+	// # go run main.go -key="REDIS_AUTH" -appname="FF.YourAPP"
+	// APP_NAME: FF.YourAPP 基础密钥: FF~~666
+	//
+	// testGetenv: REDIS_AUTH = redis12345
+	//
 	result := xcrypto.GetenvDecrypt(key, baseSecretValue)
 	fmt.Printf("\ntestGetenv: %s = %s\n\n", key, result)
 
