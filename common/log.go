@@ -103,7 +103,8 @@ func loadLogger() error {
 
 	Log.Warn().Str("version", config.Version).Str("tz", config.DefaultTimeZone).
 		Str("app_name", config.AppName).Str("bin_name", config.BinName).Str("deb_name", config.DebName).
-		Int("cpus", runtime.NumCPU()).Int("procs", runtime.GOMAXPROCS(0)).Bool("alarm_on", logAlarmOnConf).
+		Int("cpus", runtime.NumCPU()).Int("procs", runtime.GOMAXPROCS(0)).
+		Bool("alarm_on", logAlarmOnConf).Str("alarm_code", cfg.AlarmCode).
 		Msg("Logger initialized successfully")
 	return nil
 }
