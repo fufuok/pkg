@@ -14,8 +14,8 @@ import (
 	"github.com/fufuok/pkg/logger"
 	"github.com/fufuok/pkg/logger/sampler"
 	"github.com/fufuok/pkg/web/fiber/middleware"
-	"github.com/fufuok/pkg/web/fiber/proxy"
 	"github.com/fufuok/pkg/web/fiber/response"
+	"github.com/fufuok/pkg/web/fiber/tproxy"
 )
 
 var app *fiber.App
@@ -87,7 +87,7 @@ func errorHandler(c *fiber.Ctx, err error) error {
 	}
 	if code != fiber.StatusBadRequest {
 		sampler.Info().Err(err).
-			Str("client_ip", proxy.GetClientIP(c)).Str("method", c.Method()).Int("status_code", code).
+			Str("client_ip", tproxy.GetClientIP(c)).Str("method", c.Method()).Int("status_code", code).
 			Msg(c.OriginalURL())
 	}
 	return response.APIException(c, code, "", nil)

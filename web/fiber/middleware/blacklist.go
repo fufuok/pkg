@@ -10,7 +10,7 @@ import (
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
-	"github.com/fufuok/pkg/web/fiber/proxy"
+	"github.com/fufuok/pkg/web/fiber/tproxy"
 )
 
 var (
@@ -58,7 +58,7 @@ func CheckBlacklist(asAPI bool) fiber.Handler {
 
 // BlacklistChecker 是否存在于黑名单, true 是黑名单 (黑名单为空时: 放过, false)
 func BlacklistChecker(c *fiber.Ctx) bool {
-	clientIP := proxy.GetClientIP(c)
+	clientIP := tproxy.GetClientIP(c)
 	if len(config.Blacklist) > 0 {
 		if useBlacklistLRU.Load() {
 			if ok, loaded := blacklistLRU.Get(clientIP); loaded {

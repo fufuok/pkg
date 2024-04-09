@@ -12,8 +12,8 @@ import (
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/logger/sampler"
-	"github.com/fufuok/pkg/web/fiber/proxy"
 	"github.com/fufuok/pkg/web/fiber/response"
+	"github.com/fufuok/pkg/web/fiber/tproxy"
 )
 
 type ForbiddenChecker = func(*fiber.Ctx) bool
@@ -85,7 +85,7 @@ func CheckWhitelistAnd(checker ForbiddenChecker, asAPI bool) fiber.Handler {
 
 // WhitelistChecker 是否通过了白名单检查, true 是白名单 (白名单为空时: 通过, true)
 func WhitelistChecker(c *fiber.Ctx) bool {
-	clientIP := proxy.GetClientIP(c)
+	clientIP := tproxy.GetClientIP(c)
 	if len(config.Whitelist) > 0 {
 		if useWhitelistLRU.Load() {
 			if ok, loaded := whitelistLRU.Get(clientIP); loaded {
@@ -102,11 +102,11 @@ func WhitelistChecker(c *fiber.Ctx) bool {
 }
 
 func responseForbidden(c *fiber.Ctx, msg string, asAPI bool) error {
-	clientIP := proxy.GetClientIP(c)
+	clientIP := tproxy.GetClientIP(c)
 	msg += clientIP
 	sampler.Info().
 		Str("cip", c.IP()).Str("x_forwarded_for", c.Get(fiber.HeaderXForwardedFor)).
-		Str(proxy.HeaderXProxyClientIP, c.Get(proxy.HeaderXProxyClientIP)).
+		Str(tproxy.HeaderXProxyClientIP, c.Get(tproxy.HeaderXProxyClientIP)).
 		Str("method", c.Method()).Str("uri", c.OriginalURL()).Str("client_ip", clientIP).
 		Msg(msg)
 

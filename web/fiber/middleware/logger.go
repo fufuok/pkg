@@ -8,7 +8,7 @@ import (
 
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/logger/sampler"
-	"github.com/fufuok/pkg/web/fiber/proxy"
+	"github.com/fufuok/pkg/web/fiber/tproxy"
 )
 
 // LogCondition 日志记录条件计算器
@@ -34,7 +34,7 @@ func WebLogger(cond LogCondition) fiber.Handler {
 		if chainErr != nil {
 			sampler.Error().Err(chainErr).
 				Bytes("body", c.Body()).Str("elapsed", elapsed.String()).
-				Str("client_ip", proxy.GetClientIP(c)).Str("method", c.Method()).
+				Str("client_ip", tproxy.GetClientIP(c)).Str("method", c.Method()).
 				Msg(c.OriginalURL())
 			return c.SendStatus(fiber.StatusInternalServerError)
 		}
@@ -42,7 +42,7 @@ func WebLogger(cond LogCondition) fiber.Handler {
 		if cond(c, elapsed) {
 			sampler.Warn().
 				Bytes("body", c.Body()).
-				Str("client_ip", proxy.GetClientIP(c)).Str("elapsed", elapsed.String()).
+				Str("client_ip", tproxy.GetClientIP(c)).Str("elapsed", elapsed.String()).
 				Str("method", c.Method()).Int("http_code", c.Response().StatusCode()).
 				Msg(c.OriginalURL())
 		}
