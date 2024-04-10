@@ -192,6 +192,9 @@ func parseSYSConfig(cfg *MainConf) error {
 	if cfg.SYSConf.BaseSecretValue == "" {
 		return fmt.Errorf("%s cannot be empty", BaseSecretEnvName)
 	}
+	// 赋值到全局变量
+	BaseSecretValue = cfg.SYSConf.BaseSecretValue
+	WebTokenSalt = cfg.SYSConf.BaseSecretValue
 
 	// 包版本格式清理
 	cfg.SYSConf.DebVersion = regexp.MustCompile(`[^\w-.=]`).ReplaceAllString(cfg.SYSConf.DebVersion, "")
@@ -311,7 +314,7 @@ func parseWebConfig(cfg *MainConf) {
 
 	// HTTP 请求体限制, -1 表示无限
 	if cfg.WebConf.BodyLimit == 0 {
-		cfg.WebConf.BodyLimit = BodyLimit
+		cfg.WebConf.BodyLimit = WebBodyLimit
 	}
 
 	// 接口签名密钥和生命周期

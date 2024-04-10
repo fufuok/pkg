@@ -67,6 +67,8 @@ var (
 	LogPostBatchNum   = 2000
 	LogPostBatchBytes = 2 << 20
 
+	// BaseSecretValue 项目基础密钥值, 与 config.Config().SYSConf.BaseSecretValue 相同
+	BaseSecretValue string
 	// BaseSecretEnvName 项目基础密钥 (环境变量名)
 	BaseSecretEnvName = "BASE_SECRET_KEY"
 	// BaseSecretKeyNameEnvName 用于在环境变量中指定上一行设置的值的键名, 而不是使用默认的: BASE_SECRET_KEY
@@ -127,8 +129,11 @@ var (
 	// WebTimeout Web 请求超时
 	WebTimeout = 30 * time.Second
 
-	// BodyLimit POST 最大 8M, 超过该值影响: 413 Request Entity Too Large
-	BodyLimit = 8 << 20
+	// WebBodyLimit POST 最大 8M, 超过该值影响: 413 Request Entity Too Large
+	WebBodyLimit = 8 << 20
+
+	// WebTokenSalt 用于加密代理客户端请求 IP 的盐, 默认为 BaseSecretValue 项目基础密钥值
+	WebTokenSalt string
 )
 
 // 初始化缺省变量
