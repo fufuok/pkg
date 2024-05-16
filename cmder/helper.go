@@ -3,6 +3,7 @@ package cmder
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/fufuok/utils"
@@ -67,4 +68,14 @@ func RunCmdWithContext(ctx context.Context, cmdArgs []string) cmd.Status {
 			Runtime:  utils.Round(end.Sub(start).Seconds(), 2),
 		}
 	}
+}
+
+// CheckBadCmd 检查命令是否包含潜在非法字符
+func CheckBadCmd(s string) bool {
+	if strings.Contains(s, "&") || strings.Contains(s, "|") || strings.Contains(s, ";") ||
+		strings.Contains(s, "$") || strings.Contains(s, "'") || strings.Contains(s, "`") ||
+		strings.Contains(s, "(") || strings.Contains(s, ")") || strings.Contains(s, "\"") {
+		return true
+	}
+	return false
 }
