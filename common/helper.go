@@ -43,6 +43,12 @@ func GenSignString(ts, key string) string {
 	return ts + sign
 }
 
+// GenSignNow 以当前时间时间戳生成签名
+func GenSignNow(key string) (int64, string) {
+	ts := GTimestamp()
+	return ts, GenSign(ts, key)
+}
+
 // VerifySign 校验签名
 func VerifySign(key, sign string) bool {
 	if key == "" || len(sign) != 42 {
