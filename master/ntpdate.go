@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/fufuok/utils/ntp"
+	"github.com/fufuok/ntp"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
