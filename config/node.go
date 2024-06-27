@@ -12,10 +12,8 @@ import (
 	"github.com/fufuok/pkg/json"
 )
 
-const (
-	// UnknownNodeType 未知节点类型
-	UnknownNodeType = -1
-)
+// UnknownNodeType 未知节点类型
+const UnknownNodeType = -1
 
 var (
 	NodeInfoFile         = ""

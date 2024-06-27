@@ -10,10 +10,8 @@ import (
 	"github.com/fufuok/pkg/config"
 )
 
-const (
-	// expiryDuration is the interval time to clean up those expired workers.
-	expiryDuration = 10 * time.Second
-)
+// expiryDuration is the interval time to clean up those expired workers.
+const expiryDuration = 10 * time.Second
 
 func initPool() {
 	ants.SetDefaultAntsPool(

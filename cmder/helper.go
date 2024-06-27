@@ -11,10 +11,8 @@ import (
 	"github.com/go-cmd/cmd"
 )
 
-const (
-	// 命令执行超时时间默认值
-	cmdTimeout = 3 * time.Second
-)
+// 命令执行超时时间默认值
+const cmdTimeout = 3 * time.Second
 
 var ErrCMDTimeout = errors.New("command execution timed out")
 
