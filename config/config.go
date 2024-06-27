@@ -111,6 +111,9 @@ type WebConf struct {
 	BlacklistLRUCapacity uint32 `json:"blacklist_lru_capacity"`
 	BlacklistLRULifetime uint32 `json:"blacklist_lru_lifetime"`
 
+	// 同时处理的请求数限制, 调用该中间件时有效 (以 处理中 的请求为依据, -1 表示不限制)
+	RequestsLimit int32 `json:"requests_limit"`
+
 	// 接口签名密钥生命周期和签名密钥值
 	SignTTL int64  `json:"sign_ttl"`
 	SignKey string `json:"-"`
