@@ -58,7 +58,7 @@ func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 	id := common.GTimeNowString("060102150405.999999999")
 	fn, ok := common.Funcs.Load(cfg.Method)
 	if !ok {
-		alarm.Error().Str("id", id).Str("method", cfg.Method).Msg("Remote configuration fetcher initialization failed")
+		alarm.Error().Str("id", id).Str("more", cfg.Method).Msg("Remote configuration fetcher initialization failed")
 		return
 	}
 
