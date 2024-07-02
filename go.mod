@@ -4,7 +4,7 @@ go 1.22
 
 require (
 	github.com/chenyahui/gin-cache v1.9.0
-	github.com/fufuok/ants v1.9.0
+	github.com/fufuok/ants v1.10.0
 	github.com/fufuok/bytespool v1.3.3
 	github.com/fufuok/chanx v1.2.2
 	github.com/fufuok/cron v0.3.2
@@ -14,7 +14,7 @@ require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-cmd/cmd v1.4.3
 	github.com/goccy/go-json v0.10.3
-	github.com/gofiber/fiber/v2 v2.52.4
+	github.com/gofiber/fiber/v2 v2.52.5
 	github.com/imroc/req/v3 v3.43.7
 	github.com/joho/godotenv v1.5.1
 	github.com/natefinch/lumberjack/v3 v3.0.0-alpha
