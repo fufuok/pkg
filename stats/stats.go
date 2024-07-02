@@ -32,6 +32,7 @@ func SYSStats() map[string]any {
 		"ConfigModTime": master.ConfigModTime,
 		"GoVersion":     config.GoVersion,
 		"DebVersion":    config.DebVersion,
+		"GoMaxProcs":    runtime.GOMAXPROCS(0),
 		"NumCpus":       runtime.NumCPU(),
 		"NumGoroutine":  runtime.NumGoroutine(),
 		"NumCgoCall":    utils.Comma(runtime.NumCgoCall()),
