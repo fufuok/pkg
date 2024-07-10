@@ -8,15 +8,41 @@ import (
 	"github.com/fufuok/utils/xjson/gjson"
 	"github.com/fufuok/utils/xjson/jsongen"
 	"github.com/imroc/req/v3"
+	"github.com/rs/zerolog"
 
 	"github.com/fufuok/pkg/config"
 )
 
 const (
-	logMoreFieldName = "more"
-	logJobFieldName  = "job"
-	errMsgMaxLength  = 300
+	LogMoreFieldName = "more"
+	LogJobFieldName  = "job"
 )
+
+// ErrMsgMaxLength 日志中错误消息字段转换为报警消息的最大长度
+var ErrMsgMaxLength = 300
+
+// AlarmJsonGenerator 报警消息 JSON 生成函数, 入参: 报警平台 code, Log 日志
+type AlarmJsonGenerator func(code string, bs []byte) []byte
+
+// SetAlarmLevel 初始化设置警报日志的级别
+func SetAlarmLevel(level zerolog.Level) {
+	logAlarmWriter.lv = level
+}
+
+// SetAlarmFunc 初始化报警消息 Json 生成函数, 不设置时使用系统默认
+func SetAlarmFunc(fn AlarmJsonGenerator) {
+	logAlarmWriter.fn = fn
+}
+
+// SetAlarmOn 开启警报(发出报警消息, 默认开启)
+func SetAlarmOn() {
+	logAlarmWriter.off.Store(false)
+}
+
+// SetAlarmOff 关闭警报, 仅记录日志
+func SetAlarmOff() {
+	logAlarmWriter.off.Store(true)
+}
 
 // SendAlarm 发送自定义报警消息
 func SendAlarm(code, info, more string) {
@@ -38,12 +64,12 @@ func SendAlarm(code, info, more string) {
 
 // GenAlarmData 错误日志转换为报警信息
 func GenAlarmData(code string, bs []byte) []byte {
-	more := gjson.GetBytes(bs, logMoreFieldName).String()
-	info := gjson.GetBytes(bs, logMessageFieldName).String()
-	err := gjson.GetBytes(bs, logErrorFieldName).String()
+	more := gjson.GetBytes(bs, LogMoreFieldName).String()
+	info := gjson.GetBytes(bs, LogMessageFieldName).String()
+	err := gjson.GetBytes(bs, LogErrorFieldName).String()
 	if err != "" {
-		if len(err) > errMsgMaxLength {
-			err = err[:300]
+		if len(err) > ErrMsgMaxLength {
+			err = err[:ErrMsgMaxLength]
 		}
 		info += ": " + err
 	}
@@ -63,12 +89,12 @@ func GenAlarmJson(code, info, more string) []byte {
 }
 
 // 发送报警消息
-func sendAlarm(bs []byte) {
+func sendAlarm(fn AlarmJsonGenerator, bs []byte) {
 	cfg := config.Config().LogConf
 	if cfg.PostAlarmAPI == "" || cfg.AlarmCode == "" {
 		return
 	}
-	data := genAlarmJson(cfg.AlarmCode, bs)
+	data := fn(cfg.AlarmCode, bs)
 	if _, err := req.SetBodyJsonBytes(data).Post(cfg.PostAlarmAPI); err != nil {
 		LogSampled.Warn().Err(err).Str("url", cfg.PostAlarmAPI).Msg("sendAlarm")
 	}
@@ -76,12 +102,12 @@ func sendAlarm(bs []byte) {
 
 // 错误日志转换为报警信息
 func genAlarmJson(code string, bs []byte) []byte {
-	more := gjson.GetBytes(bs, logMoreFieldName).String()
-	info := gjson.GetBytes(bs, logMessageFieldName).String()
-	job := gjson.GetBytes(bs, logJobFieldName).String()
-	err := gjson.GetBytes(bs, logErrorFieldName).String()
+	more := gjson.GetBytes(bs, LogMoreFieldName).String()
+	info := gjson.GetBytes(bs, LogMessageFieldName).String()
+	job := gjson.GetBytes(bs, LogJobFieldName).String()
+	err := gjson.GetBytes(bs, LogErrorFieldName).String()
 	if err != "" {
-		if len(err) > errMsgMaxLength {
+		if len(err) > ErrMsgMaxLength {
 			err = err[:300]
 		}
 		info += ": " + err

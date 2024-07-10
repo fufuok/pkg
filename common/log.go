@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/fufuok/ants"
@@ -19,9 +20,9 @@ import (
 )
 
 const (
-	logMessageFieldName = "M"
-	logErrorFieldName   = "E"
-	logTimeFormat       = "0102 15:04:05"
+	LogMessageFieldName = "M"
+	LogErrorFieldName   = "E"
+	LogTimeFormat       = "0102 15:04:05"
 
 	// 文件滚动单位
 	megabyte = 1024 * 1024
@@ -38,6 +39,7 @@ var (
 	// LogAlarm 报警日志, 写入通用日志并发送报警
 	LogAlarm zerolog.Logger
 
+	logAlarmWriter *alarmWriter
 	logCurrentConf config.LogConf
 	logAlarmOnConf bool
 )
@@ -53,8 +55,8 @@ func initLogger() {
 //nolint:reassign
 func initZerolog() {
 	// 路径脱敏, 日志格式规范, 避免与自定义字段名冲突: {"E":"is Err(error)","error":"is Str(error)"}
-	zerolog.MessageFieldName = logMessageFieldName
-	zerolog.ErrorFieldName = logErrorFieldName
+	zerolog.MessageFieldName = LogMessageFieldName
+	zerolog.ErrorFieldName = LogErrorFieldName
 	zerolog.TimestampFunc = GTimeNow
 	zerolog.TimestampFieldName = "T"
 	zerolog.LevelFieldName = "L"
@@ -117,7 +119,7 @@ func newLogger() error {
 	basicLog := zerolog.ConsoleWriter{
 		Out:        os.Stdout,
 		NoColor:    cfg.NoColor,
-		TimeFormat: logTimeFormat,
+		TimeFormat: LogTimeFormat,
 	}
 	if !config.Debug {
 		fh, err := lumberjack.NewRoller(
@@ -140,7 +142,8 @@ func newLogger() error {
 	Log = zerolog.New(basicLog).With().Timestamp().Caller().Logger()
 	Log = Log.Level(zerolog.Level(cfg.Level))
 
-	mw := zerolog.MultiLevelWriter(basicLog, newAlarmWriter(zerolog.WarnLevel))
+	logAlarmWriter = newAlarmWriter(zerolog.WarnLevel)
+	mw := zerolog.MultiLevelWriter(basicLog, logAlarmWriter)
 	LogAlarm = zerolog.New(mw).With().Timestamp().Caller().Logger()
 	LogAlarm = LogAlarm.Level(zerolog.Level(cfg.Level))
 	return nil
@@ -148,21 +151,27 @@ func newLogger() error {
 
 // 指定级别及以上日志发送到报警接口
 type alarmWriter struct {
-	lv zerolog.Level
+	lv  zerolog.Level
+	fn  AlarmJsonGenerator
+	off atomic.Bool
 }
 
-func newAlarmWriter(lv zerolog.Level) *alarmWriter {
+func newAlarmWriter(level zerolog.Level) *alarmWriter {
 	return &alarmWriter{
-		lv: lv,
+		lv: level,
 	}
 }
 
 // Write 发送报警消息到接口
 func (w *alarmWriter) Write(p []byte) (n int, err error) {
-	if logAlarmOnConf {
+	if logAlarmOnConf && !w.off.Load() {
+		fn := w.fn
+		if fn == nil {
+			fn = genAlarmJson
+		}
 		bs := utils.CopyBytes(p)
 		_ = ants.Submit(func() {
-			sendAlarm(bs)
+			sendAlarm(fn, bs)
 		})
 	}
 	return len(p), nil
