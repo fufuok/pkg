@@ -87,6 +87,10 @@ var (
 	// BaseSecretSaltEnvName 环境变量中读取上一行设置的值的键名, 而不是使用上一行中设置的固定值
 	BaseSecretSaltEnvName = "BASE_SECRET_SALT"
 
+	// BaseSecretKeyValue 用于解密基础密钥的完整密钥, 默认为: 上面的盐 + AppName 值
+	// 可由应用自行指定该值以跳过上面的规则, 如在 main.go 中: config.BaseSecretKeyValue = "我的基础密钥解密KEY值"
+	BaseSecretKeyValue string
+
 	// WatcherIntervalDuration 文件变化监控时间间隔
 	WatcherIntervalDuration = 2 * time.Minute
 

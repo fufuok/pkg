@@ -191,7 +191,7 @@ func readConfig() (*MainConf, error) {
 
 func parseSYSConfig(cfg *MainConf) error {
 	// 基础密钥: 由程序固化的密钥解密环境变量得到, 其他加密变量都使用基础密码加密
-	cfg.SYSConf.BaseSecretValue = xcrypto.GetenvDecrypt(BaseSecretEnvName, BaseSecretSalt+AppName)
+	cfg.SYSConf.BaseSecretValue = xcrypto.GetenvDecrypt(BaseSecretEnvName, BaseSecretKeyValue)
 	if cfg.SYSConf.BaseSecretValue == "" {
 		return fmt.Errorf("%s cannot be empty", BaseSecretEnvName)
 	}

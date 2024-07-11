@@ -61,4 +61,9 @@ func loadEnvConfig() {
 		_ = os.Setenv(DebNameEnvName, "")
 		DebName = s
 	}
+
+	// 应用指定的基础密钥解密 KEY 优先, 默认使用: 盐+AppName
+	if BaseSecretKeyValue == "" {
+		BaseSecretKeyValue = BaseSecretSalt + AppName
+	}
 }
