@@ -39,7 +39,7 @@ var (
 	// LogAlarm 报警日志, 写入通用日志并发送报警
 	LogAlarm zerolog.Logger
 
-	logAlarmWriter *alarmWriter
+	logAlarmWriter = newAlarmWriter(zerolog.WarnLevel)
 	logCurrentConf config.LogConf
 	logAlarmOnConf bool
 )
@@ -142,7 +142,6 @@ func newLogger() error {
 	Log = zerolog.New(basicLog).With().Timestamp().Caller().Logger()
 	Log = Log.Level(zerolog.Level(cfg.Level))
 
-	logAlarmWriter = newAlarmWriter(zerolog.WarnLevel)
 	mw := zerolog.MultiLevelWriter(basicLog, logAlarmWriter)
 	LogAlarm = zerolog.New(mw).With().Timestamp().Caller().Logger()
 	LogAlarm = LogAlarm.Level(zerolog.Level(cfg.Level))
