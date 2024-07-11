@@ -16,7 +16,15 @@ var (
 	BinName = "ffapp"
 
 	AppName = "FF.App"
+
+	// DebName !!! 这个变量决定自升级时安装命令, 以及日志中显示的包名称
+	// 可以在应用程序 func init() { DebName = "your-app" ... }
 	DebName = "ff-app"
+
+	// BinNameEnvName 上面 3 个变量可以在环境变量中设置(优先使用): LOCAL_DEB_NAME=your-web-app
+	BinNameEnvName = "LOCAL_BIN_NAME"
+	AppNameEnvName = "LOCAL_APP_NAME"
+	DebNameEnvName = "LOCAL_DEB_NAME"
 )
 
 var (

@@ -48,4 +48,17 @@ func loadEnvConfig() {
 		_ = os.Setenv(BaseSecretSaltEnvName, "")
 		BaseSecretSalt = s
 	}
+
+	if s := os.Getenv(BinNameEnvName); s != "" {
+		_ = os.Setenv(BinNameEnvName, "")
+		BinName = s
+	}
+	if s := os.Getenv(AppNameEnvName); s != "" {
+		_ = os.Setenv(AppNameEnvName, "")
+		AppName = s
+	}
+	if s := os.Getenv(DebNameEnvName); s != "" {
+		_ = os.Setenv(DebNameEnvName, "")
+		DebName = s
+	}
 }
