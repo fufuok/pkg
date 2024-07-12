@@ -24,10 +24,12 @@ var (
 	// 存放监控器标识和对应的 MD5
 	watcherMD5 = xsync.NewMapOf[string, string]()
 
-	isRuntime   bool
-	mainFile    string
-	mainKey     = "__PKG_MAIN_BIN__"
-	mainConfKey = "__PKG_MAIN_CONFIG__"
+	isRuntime bool
+	mainFile  string
+
+	// MainWatcherKey 主程序二进制和配置文件监控器标识
+	MainWatcherKey     = "__PKG_MAIN_BIN_WATCHER__"
+	MainWatcherConfKey = "__PKG_MAIN_CONFIG_WATCHER__"
 )
 
 // Watcher 文件变化监控器
@@ -40,13 +42,24 @@ type Watcher struct {
 
 	// 文件列表中文件内容变化时执行
 	Func func()
+
+	// 始终执行, 不关注文件内容是否变化
+	Always bool
+
+	// 基于文件内容是否变化的标记生成函数, 默认为: MD5Files
+	HashGenerator func(...string) string
 }
 
 func (w Watcher) Start() {
-	if w.Key == "" || len(w.Files) == 0 || w.Func == nil {
+	if w.Key == "" || w.Func == nil {
 		return
 	}
-	md5 := MD5Files(w.Files...)
+
+	if w.HashGenerator == nil {
+		w.HashGenerator = MD5Files
+	}
+
+	md5 := w.HashGenerator(w.Files...)
 	watcherMD5.Store(w.Key, md5)
 	watchers.Store(w.Key, w)
 	if isRuntime {
@@ -75,8 +88,8 @@ func initWatcher() {
 	md5Main := MD5Files(mainFile)
 	md5Conf, confFiles := MD5ConfigFiles()
 	ConfigModTime = common.GTimeNow()
-	watcherMD5.Store(mainKey, md5Main)
-	watcherMD5.Store(mainConfKey, md5Conf)
+	watcherMD5.Store(MainWatcherKey, md5Main)
+	watcherMD5.Store(MainWatcherConfKey, md5Conf)
 
 	config.DebVersion = getCurrentDebVersion()
 	logger.Warn().Str("main", mainFile).Str(config.DebName, config.DebVersion).Msg("Watching")
@@ -131,12 +144,12 @@ func startWatcher() {
 		if interval != cfg.WatcherIntervalDuration {
 			interval = cfg.WatcherIntervalDuration
 			ticker.Reset(interval)
-			logger.Warn().Str("interval", interval.String()).Msg("reset ticker")
+			logger.Warn().Str("interval", interval.String()).Msg("Main watcher reset ticker")
 		}
 
 		// 最终的配置列表和 MD5
 		md5ok, confFiles := MD5ConfigFiles()
-		watcherMD5.Store(mainConfKey, md5ok)
+		watcherMD5.Store(MainWatcherConfKey, md5ok)
 		logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> reload config <<<<<<<")
 		logger.Warn().Strs("configs", confFiles).Msg("Watching")
 		logger.Warn().RawJSON("data", json.MustJSON(config.Config().NodeConf.NodeInfo)).Msg("NodeInfo")
@@ -148,7 +161,7 @@ func startWatcher() {
 func mainWatcher() (needContinue bool) {
 	// 程序二进制变化时重启
 	md5New := MD5Files(mainFile)
-	md5Main, _ := watcherMD5.LoadAndStore(mainKey, md5New)
+	md5Main, _ := watcherMD5.LoadAndStore(MainWatcherKey, md5New)
 	if md5New == md5Main {
 		return
 	}
@@ -160,9 +173,9 @@ func mainWatcher() (needContinue bool) {
 // 运行应用自助添加的监控器
 func appWatcher() {
 	watchers.Range(func(k string, w Watcher) bool {
-		md5New := MD5Files(w.Files...)
+		md5New := w.HashGenerator(w.Files...)
 		md5Old, _ := watcherMD5.LoadAndStore(k, md5New)
-		if md5New != md5Old {
+		if w.Always || md5New != md5Old {
 			utils.SafeGo(w.Func)
 		}
 		return true
@@ -172,7 +185,7 @@ func appWatcher() {
 func configWatcher() (needContinue bool) {
 	// 系统配置检查和重载
 	md5New, _ := MD5ConfigFiles()
-	md5Conf, _ := watcherMD5.LoadAndStore(mainConfKey, md5New)
+	md5Conf, _ := watcherMD5.LoadAndStore(MainWatcherConfKey, md5New)
 	if md5New == md5Conf {
 		return true
 	}
