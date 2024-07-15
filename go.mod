@@ -10,7 +10,7 @@ require (
 	github.com/fufuok/cron v0.3.2
 	github.com/fufuok/freelru v0.13.3
 	github.com/fufuok/ntp v1.0.0
-	github.com/fufuok/utils v1.2.1
+	github.com/fufuok/utils v1.2.2
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-cmd/cmd v1.4.3
 	github.com/goccy/go-json v0.10.3
@@ -18,7 +18,7 @@ require (
 	github.com/imroc/req/v3 v3.43.7
 	github.com/joho/godotenv v1.5.1
 	github.com/natefinch/lumberjack/v3 v3.0.0-alpha
-	github.com/redis/go-redis/v9 v9.5.3
+	github.com/redis/go-redis/v9 v9.5.4
 	github.com/rs/zerolog v1.33.0
 	golang.org/x/sync v0.7.0
 )
@@ -39,7 +39,7 @@ require (
 	github.com/go-playground/validator/v10 v10.22.0 // indirect
 	github.com/go-redis/redis/v8 v8.11.5 // indirect
 	github.com/go-task/slim-sprig/v3 v3.0.0 // indirect
-	github.com/google/pprof v0.0.0-20240625030939-27f56978b8b0 // indirect
+	github.com/google/pprof v0.0.0-20240711041743-f6c9dda6c6da // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
