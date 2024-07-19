@@ -10,7 +10,7 @@ require (
 	github.com/fufuok/cron v0.3.2
 	github.com/fufuok/freelru v0.13.3
 	github.com/fufuok/ntp v1.0.0
-	github.com/fufuok/utils v1.2.2
+	github.com/fufuok/utils v1.2.3
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-cmd/cmd v1.4.3
 	github.com/goccy/go-json v0.10.3
@@ -18,7 +18,7 @@ require (
 	github.com/imroc/req/v3 v3.43.7
 	github.com/joho/godotenv v1.5.1
 	github.com/natefinch/lumberjack/v3 v3.0.0-alpha
-	github.com/redis/go-redis/v9 v9.5.4
+	github.com/redis/go-redis/v9 v9.6.0
 	github.com/rs/zerolog v1.33.0
 	golang.org/x/sync v0.7.0
 )
@@ -67,7 +67,7 @@ require (
 	go.uber.org/mock v0.4.0 // indirect
 	golang.org/x/arch v0.8.0 // indirect
 	golang.org/x/crypto v0.25.0 // indirect
-	golang.org/x/exp v0.0.0-20240707233637-46b078467d37 // indirect
+	golang.org/x/exp v0.0.0-20240716175740-e3f259677ff7 // indirect
 	golang.org/x/mod v0.19.0 // indirect
 	golang.org/x/net v0.27.0 // indirect
 	golang.org/x/sys v0.22.0 // indirect

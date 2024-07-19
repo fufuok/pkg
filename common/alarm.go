@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/fufuok/ants"
+	"github.com/fufuok/utils"
 	"github.com/fufuok/utils/xjson/gjson"
 	"github.com/fufuok/utils/xjson/jsongen"
 	"github.com/imroc/req/v3"
@@ -68,10 +69,7 @@ func GenAlarmData(code string, bs []byte) []byte {
 	info := gjson.GetBytes(bs, LogMessageFieldName).String()
 	err := gjson.GetBytes(bs, LogErrorFieldName).String()
 	if err != "" {
-		if len(err) > ErrMsgMaxLength {
-			err = err[:ErrMsgMaxLength]
-		}
-		info += ": " + err
+		info += ": " + utils.TruncStr(err, ErrMsgMaxLength, "..")
 	}
 	return GenAlarmJson(code, info, more)
 }
@@ -107,10 +105,7 @@ func genAlarmJson(code string, bs []byte) []byte {
 	job := gjson.GetBytes(bs, LogJobFieldName).String()
 	err := gjson.GetBytes(bs, LogErrorFieldName).String()
 	if err != "" {
-		if len(err) > ErrMsgMaxLength {
-			err = err[:300]
-		}
-		info += ": " + err
+		info += ": " + utils.TruncStr(err, ErrMsgMaxLength, "..")
 	}
 
 	cfg := config.Config().NodeConf.NodeInfo
