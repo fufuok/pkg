@@ -30,6 +30,10 @@ const (
 )
 
 var (
+	// AppLoggerUseSampler 初始化通用的 Req / Ants 等日志采样记录器
+	// Debug 模式下默认为 false
+	AppLoggerUseSampler = true
+
 	// Log 通用日志, Debug 时输出到控制台, 否则写入日志文件
 	Log zerolog.Logger
 
@@ -47,6 +51,7 @@ var (
 func initLogger() {
 	initZerolog()
 	logAlarmOnConf = config.AlarmOn.Load()
+	AppLoggerUseSampler = !config.Debug
 	if err := loadLogger(); err != nil {
 		log.Fatalln("Failed to initialize logger:", err, "\nbye.")
 	}
@@ -106,7 +111,7 @@ func loadLogger() error {
 	Log.Warn().Str("version", config.Version).Str("tz", config.DefaultTimeZone).
 		Str("app_name", config.AppName).Str("bin_name", config.BinName).Str("deb_name", config.DebName).
 		Int("cpus", runtime.NumCPU()).Int("procs", runtime.GOMAXPROCS(0)).
-		Bool("alarm_on", logAlarmOnConf).Str("alarm_code", cfg.AlarmCode).
+		Bool("alarm_on", logAlarmOnConf).Str("alarm_code", cfg.AlarmCode).Bool("app_sampler", AppLoggerUseSampler).
 		Msg("Logger initialized successfully")
 	return nil
 }
@@ -188,21 +193,23 @@ type AppLogger struct {
 	log zerolog.Logger
 }
 
-// NewAppLogger 类库日志实现: Req / Ants
-// 注意: 受抽样日志影响, 日志可能不会被全部输出
-func NewAppLogger() *AppLogger {
-	if config.Debug {
-		return &AppLogger{
-			log: Log,
-		}
+// NewAppLogger 类库通用日志实现: Req / Ants / Gnet
+func NewAppLogger(useSampler ...bool) *AppLogger {
+	l := &AppLogger{
+		log: Log,
 	}
-	return &AppLogger{
-		log: LogSampled,
+	if len(useSampler) == 0 && AppLoggerUseSampler || len(useSampler) > 0 && useSampler[0] {
+		l.log = LogSampled
 	}
+	return l
 }
 
 func (l *AppLogger) Debugf(format string, v ...any) {
 	l.log.Debug().Msgf(format, v...)
+}
+
+func (l *AppLogger) Infof(format string, v ...any) {
+	l.log.Info().Msgf(format, v...)
 }
 
 func (l *AppLogger) Warnf(format string, v ...any) {
@@ -217,23 +224,25 @@ func (l *AppLogger) Errorf(format string, v ...any) {
 	l.log.Error().Msgf(format, v...)
 }
 
+func (l *AppLogger) Fatalf(format string, v ...any) {
+	l.log.Fatal().Msgf(format, v...)
+}
+
 type CronLogger struct {
 	infoLog  zerolog.Logger
 	errorLog zerolog.Logger
 }
 
-// NewCronLogger 注意: 受抽样日志影响, 日志可能不会被全部输出
-func NewCronLogger() *CronLogger {
-	if config.Debug {
-		return &CronLogger{
-			infoLog:  Log,
-			errorLog: LogAlarm,
-		}
-	}
-	return &CronLogger{
-		infoLog:  LogSampled,
+// NewCronLogger 定时任务日志
+func NewCronLogger(useSampler ...bool) *CronLogger {
+	l := &CronLogger{
+		infoLog:  Log,
 		errorLog: LogAlarm,
 	}
+	if len(useSampler) == 0 && AppLoggerUseSampler || len(useSampler) > 0 && useSampler[0] {
+		l.infoLog = LogSampled
+	}
+	return l
 }
 
 func (l *CronLogger) Info(msg string, keysAndValues ...any) {
@@ -249,15 +258,14 @@ type RedisLogger struct {
 }
 
 // NewRedisLogger go-redis 类库日志实现
-func NewRedisLogger() *RedisLogger {
-	if config.Debug {
-		return &RedisLogger{
-			log: Log,
-		}
+func NewRedisLogger(useSampler ...bool) *RedisLogger {
+	l := &RedisLogger{
+		log: Log,
 	}
-	return &RedisLogger{
-		log: LogSampled,
+	if len(useSampler) == 0 && AppLoggerUseSampler || len(useSampler) > 0 && useSampler[0] {
+		l.log = LogSampled
 	}
+	return l
 }
 
 func (l *RedisLogger) Printf(_ context.Context, format string, v ...any) {
