@@ -6,9 +6,6 @@ import (
 
 // SetupSYSRouter 设置系统信息路由
 func SetupSYSRouter(app *fiber.App) {
-	app.Get("/heartbeat", func(c *fiber.Ctx) error {
-		return c.SendString("OK")
-	})
 	app.Get("/ping", func(c *fiber.Ctx) error {
 		return c.SendString("PONG")
 	})

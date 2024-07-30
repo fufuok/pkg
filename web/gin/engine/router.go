@@ -8,9 +8,6 @@ import (
 
 // SetupSYSRouter 设置系统信息路由
 func SetupSYSRouter(app *gin.Engine) {
-	app.GET("/heartbeat", func(c *gin.Context) {
-		c.String(http.StatusOK, "OK")
-	})
 	app.GET("/ping", func(c *gin.Context) {
 		c.String(http.StatusOK, "PONG")
 	})
