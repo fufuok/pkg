@@ -18,6 +18,9 @@ const UnknownNodeType = -1
 var (
 	NodeInfoFile         = ""
 	nodeIPFetcherRunning bool
+
+	// NodeIPFromAPI 已获取成功的节点 IP
+	NodeIPFromAPI = ""
 )
 
 type NodeConf struct {
@@ -74,6 +77,8 @@ func parseNodeInfoConfig(cfg *MainConf) {
 	if ip == "" && cfg.NodeConf.IPAPI != "" {
 		ip = GetNodeIPFromAPI(cfg.NodeConf.IPAPI)
 		if ip == "" {
+			// 节点出口 IP 没有获取成功时, 使用已保存的 NodeIP
+			ip = NodeIPFromAPI
 			go nodeIPFetcher(cfg.NodeConf.IPAPI)
 		}
 	}
@@ -120,8 +125,12 @@ func parseNodeInfoJson(cfg *MainConf) {
 }
 
 // GetNodeIPFromAPI 请求 API, 返回 IP 结果
-func GetNodeIPFromAPI(api string) string {
-	resp, err := req.DefaultClient().Clone().SetTimeout(ReqTimeoutShortDuration).R().Get(api)
+func GetNodeIPFromAPI(api string, timeout ...time.Duration) string {
+	dur := ReqTimeoutShortDuration
+	if len(timeout) > 0 {
+		dur = timeout[0]
+	}
+	resp, err := req.DefaultClient().Clone().SetTimeout(dur).R().Get(api)
 	if err == nil && resp.IsSuccessState() {
 		return strings.TrimSpace(resp.String())
 	}
@@ -143,10 +152,15 @@ func nodeIPFetcher(api string) {
 		time.Sleep(time.Duration(i*10) * time.Second)
 
 		if Config().NodeConf.NodeInfo.NodeIP != net.IPv4zero.String() {
+			NodeIPFromAPI = Config().NodeConf.NodeInfo.NodeIP
 			return
 		}
 
-		ip := GetNodeIPFromAPI(api)
+		// 优先使用新配置的接口地址
+		if Config().NodeConf.IPAPI != "" {
+			api = Config().NodeConf.IPAPI
+		}
+		ip := GetNodeIPFromAPI(api, ReqTimeoutDuration)
 		if ip == "" {
 			continue
 		}
@@ -156,8 +170,10 @@ func nodeIPFetcher(api string) {
 			continue
 		}
 
+		// 从 IPAPI 获取到出口 IP, 更新到全局配置项
+		NodeIPFromAPI = nodeIP.String()
 		cfg := mainConf.Load()
-		cfg.NodeConf.NodeInfo.NodeIP = nodeIP.String()
+		cfg.NodeConf.NodeInfo.NodeIP = NodeIPFromAPI
 		mainConf.Store(cfg)
 		return
 	}
