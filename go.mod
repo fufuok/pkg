@@ -10,7 +10,7 @@ require (
 	github.com/fufuok/cron v0.3.2
 	github.com/fufuok/freelru v0.13.3
 	github.com/fufuok/ntp v1.0.0
-	github.com/fufuok/utils v1.2.3
+	github.com/fufuok/utils v1.2.4
 	github.com/gin-gonic/gin v1.10.0
 	github.com/go-cmd/cmd v1.4.3
 	github.com/goccy/go-json v0.10.3
