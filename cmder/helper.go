@@ -18,12 +18,23 @@ var ErrCMDTimeout = errors.New("command execution timed out")
 
 // RunCmd 运行命令, 返回结果和状态
 func RunCmd(cmdArgs []string, timeout ...time.Duration) cmd.Status {
+	opts := cmd.Options{Buffered: true}
+	return RunCmdWithOptions(cmdArgs, opts, timeout...)
+}
+
+// RunCmdCombinedOutput 运行命令, 合并输出和错误 2>&1
+func RunCmdCombinedOutput(cmdArgs []string, timeout ...time.Duration) cmd.Status {
+	opts := cmd.Options{CombinedOutput: true}
+	return RunCmdWithOptions(cmdArgs, opts, timeout...)
+}
+
+func RunCmdWithOptions(cmdArgs []string, opts cmd.Options, timeout ...time.Duration) cmd.Status {
 	dur := cmdTimeout
 	if len(timeout) > 0 {
 		dur = timeout[0]
 	}
 
-	c := cmd.NewCmd(cmdArgs[0], cmdArgs[1:]...)
+	c := cmd.NewCmdOptions(opts, cmdArgs[0], cmdArgs[1:]...)
 	timer := timerpool.New(dur)
 	defer timerpool.Release(timer)
 
