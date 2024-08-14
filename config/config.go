@@ -297,6 +297,10 @@ func parseAlarmOnConfig(cfg *MainConf) {
 		}
 	}
 
+	if cfg.LogConf.AlarmCode == AlarmDisabledValue {
+		cfg.LogConf.AlarmCode = ""
+	}
+
 	AlarmOn.Store(cfg.LogConf.PostAlarmAPI != "" && cfg.LogConf.AlarmCode != "")
 }
 

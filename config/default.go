@@ -111,6 +111,9 @@ var (
 
 	// ServiceNameSuffix systemctl 服务名后缀 (Ubuntu)
 	ServiceNameSuffix = ".service"
+
+	// AlarmDisabledValue 禁用报警标识
+	AlarmDisabledValue = "--disabled"
 )
 
 var (
