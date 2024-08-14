@@ -1,6 +1,6 @@
 module github.com/fufuok/pkg
 
-go 1.22
+go 1.23
 
 require (
 	github.com/chenyahui/gin-cache v1.9.0
