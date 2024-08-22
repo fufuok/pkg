@@ -1,11 +1,13 @@
 package config
 
 import (
+	"context"
 	"net"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/fufuok/utils"
 	"github.com/fufuok/utils/myip"
 	"github.com/imroc/req/v3"
 
@@ -16,7 +18,12 @@ import (
 const UnknownNodeType = -1
 
 var (
-	NodeInfoFile         = ""
+	// NodeInfoFile 配置中指定的节点基本信息配置文件路径
+	NodeInfoFile string
+
+	// NodeInfoBackupFile 节点基本信息备份文件路径
+	NodeInfoBackupFile string
+
 	nodeIPFetcherRunning bool
 
 	// NodeIPFromAPI 已获取成功的节点 IP
@@ -69,13 +76,18 @@ func parseNodeInfoConfig(cfg *MainConf) {
 		NodeType: UnknownNodeType,
 	}
 
-	// 加载节点本地文件: node_info.json
+	// 首选: 加载节点本地配置文件: node_info.json
 	parseNodeInfoJson(cfg)
+
+	// 次选: 加载上次保存的有效节点配置文件: etc/node_info.backup
+	if cfg.NodeConf.NodeInfo.NodeIP == "" {
+		parseNodeInfoJsonBackup(cfg)
+	}
 
 	// 节点 IP 为空时, 以出口 IP 作为节点 IP
 	ip := cfg.NodeConf.NodeInfo.NodeIP
 	if ip == "" && cfg.NodeConf.IPAPI != "" {
-		ip = GetNodeIPFromAPI(cfg.NodeConf.IPAPI)
+		ip = GetNodeIPFromAPIs(cfg.NodeConf.IPAPI)
 		if ip == "" {
 			// 节点出口 IP 没有获取成功时, 使用已保存的 NodeIP
 			ip = NodeIPFromAPI
@@ -89,6 +101,9 @@ func parseNodeInfoConfig(cfg *MainConf) {
 		nodeIP = net.IPv4zero
 	}
 	cfg.NodeConf.NodeInfo.NodeIP = nodeIP.String()
+
+	// 备份节点配置
+	saveNodeInfoBackup(cfg.NodeConf.NodeInfo)
 }
 
 func parseNodeInfoJson(cfg *MainConf) {
@@ -124,15 +139,50 @@ func parseNodeInfoJson(cfg *MainConf) {
 	}
 }
 
-// GetNodeIPFromAPI 请求 API, 返回 IP 结果
-func GetNodeIPFromAPI(api string, timeout ...time.Duration) string {
+func parseNodeInfoJsonBackup(cfg *MainConf) {
+	body, err := os.ReadFile(NodeInfoBackupFile)
+	if err != nil {
+		return
+	}
+	var nInfo NodeInfo
+	if err := json.Unmarshal(body, &nInfo); err != nil {
+		return
+	}
+	cfg.NodeConf.NodeInfo = nInfo
+}
+
+func saveNodeInfoBackup(info NodeInfo) {
+	if info.NodeIP != net.IPv4zero.String() {
+		_ = os.WriteFile(NodeInfoBackupFile, json.MustJSON(info), 0o600)
+	}
+}
+
+// GetNodeIPFromAPIs 同时请求多个 API, 返回 IP 结果
+func GetNodeIPFromAPIs(ipapi string, timeout ...time.Duration) string {
 	dur := ReqTimeoutShortDuration
 	if len(timeout) > 0 {
 		dur = timeout[0]
 	}
-	resp, err := req.DefaultClient().Clone().SetTimeout(dur).R().Get(api)
-	if err == nil && resp.IsSuccessState() {
-		return strings.TrimSpace(resp.String())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	apis := utils.TrimSlice(strings.Split(ipapi, ","))
+	ipChan := make(chan string, len(apis))
+	for _, api := range apis {
+		api := api
+		go func() {
+			resp, err := req.DefaultClient().Clone().SetTimeout(dur).R().SetContext(ctx).Get(api)
+			if err == nil && resp.IsSuccessState() {
+				ipChan <- strings.TrimSpace(resp.String())
+			}
+		}()
+	}
+
+	select {
+	case ip := <-ipChan:
+		return ip
+	case <-time.After(dur):
 	}
 	return ""
 }
@@ -160,7 +210,7 @@ func nodeIPFetcher(api string) {
 		if Config().NodeConf.IPAPI != "" {
 			api = Config().NodeConf.IPAPI
 		}
-		ip := GetNodeIPFromAPI(api, ReqTimeoutDuration)
+		ip := GetNodeIPFromAPIs(api, ReqTimeoutDuration)
 		if ip == "" {
 			continue
 		}

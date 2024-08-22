@@ -193,6 +193,10 @@ func initDefaultConfig() {
 		EnvMainFile = filepath.Join(EnvFilePath, BinName+".env")
 	}
 
+	if NodeInfoBackupFile == "" {
+		NodeInfoBackupFile = filepath.Join(ConfigPath, "node_info.backup")
+	}
+
 	if ReqUserAgent == "" {
 		ReqUserAgent = AppName + "/" + Version
 	}
