@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fufuok/cron"
+	"github.com/fufuok/utils/xid"
 	"github.com/fufuok/utils/xsync"
 
 	"github.com/fufuok/pkg/common"
@@ -40,14 +41,15 @@ func (j *Job) start(ctx context.Context, r Runner, opts ...cron.EntryOption) (*J
 	j.ctx, j.cancel = context.WithCancel(ctx)
 	cmd := func() {
 		start := time.Now()
-		logger.Info().Str("job", j.name).Msg("Job start")
+		rid := xid.NewString()
+		logger.Info().Str("job", j.name).Str("rid", rid).Msg("Job start")
 
 		err := r.Run(j.ctx)
 		if err != nil {
-			alarm.Error().Err(err).Str("job", j.name).Dur("took", time.Since(start)).Msg("Job run")
+			alarm.Error().Err(err).Str("job", j.name).Str("rid", rid).Dur("took", time.Since(start)).Msg("Job run")
 		}
 
-		logger.Info().Str("job", j.name).Dur("took", time.Since(start)).Msg("Job done")
+		logger.Info().Str("job", j.name).Str("rid", rid).Dur("took", time.Since(start)).Msg("Job done")
 	}
 
 	id, err := crontab.AddFunc(j.spec, cmd, opts...)
