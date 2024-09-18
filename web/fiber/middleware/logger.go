@@ -19,10 +19,11 @@ func DefaultLogCondition(c *fiber.Ctx, elapsed time.Duration) bool {
 }
 
 // WebLogger Web 日志
-func WebLogger(cond LogCondition) fiber.Handler {
+func WebLogger(cond LogCondition, withBody ...bool) fiber.Handler {
 	if cond == nil {
 		cond = DefaultLogCondition
 	}
+	withbody := len(withBody) > 0 && withBody[0]
 	return func(c *fiber.Ctx) error {
 		start := time.Now()
 
@@ -32,19 +33,24 @@ func WebLogger(cond LogCondition) fiber.Handler {
 
 		// Manually call error handler
 		if chainErr != nil {
-			sampler.Error().Err(chainErr).
-				Bytes("body", c.Body()).Str("elapsed", elapsed.String()).
-				Str("client_ip", tproxy.GetClientIP(c)).Str("method", c.Method()).
-				Msg(c.OriginalURL())
+			log := sampler.Error().Err(chainErr).
+				Str("elapsed", elapsed.String()).
+				Str("client_ip", tproxy.GetClientIP(c)).Str("method", c.Method())
+			if withbody {
+				log.Bytes("body", c.Body())
+			}
+			log.Msg(c.OriginalURL())
 			return c.SendStatus(fiber.StatusInternalServerError)
 		}
 
 		if cond(c, elapsed) {
-			sampler.Warn().
-				Bytes("body", c.Body()).
+			log := sampler.Warn().
 				Str("client_ip", tproxy.GetClientIP(c)).Str("elapsed", elapsed.String()).
-				Str("method", c.Method()).Int("http_code", c.Response().StatusCode()).
-				Msg(c.OriginalURL())
+				Str("method", c.Method()).Int("http_code", c.Response().StatusCode())
+			if withbody {
+				log.Bytes("body", c.Body())
+			}
+			log.Msg(c.OriginalURL())
 		}
 		return nil
 	}
