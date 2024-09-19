@@ -48,6 +48,7 @@ type SYSConf struct {
 	RestartMain             bool     `json:"restart_main"`
 	TimeSyncType            string   `json:"time_sync_type"`
 	WatcherInterval         string   `json:"watcher_interval"`
+	ReqDebug                bool     `json:"req_debug"`
 	ReqTimeout              string   `json:"req_timeout"`
 	ReqMaxRetries           int      `json:"req_max_retries"`
 	DebVersion              string   `json:"deb_version"`

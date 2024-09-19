@@ -31,10 +31,11 @@ func loadReq() {
 		SetCommonRetryHook(func(resp *req.Response, err error) {
 			LogSampled.Warn().Err(err).Str("resp", resp.String()).Msg("Retry request")
 		})
-	if reqDebug == config.Debug {
+	if reqDebug == cfg.ReqDebug {
 		return
 	}
-	reqDebug = config.Debug
+	reqDebug = cfg.ReqDebug
+	Log.Warn().Bool("req_debug", reqDebug).Msg("Req debug switch")
 	req.SetLogger(NewAppLogger())
 	ReqUpload.SetLogger(NewAppLogger())
 	ReqDownload.SetLogger(NewAppLogger())
