@@ -56,7 +56,7 @@ func GetDataSourceBody(params DataSourceArgs) (string, error) {
 
 	// 请求数据源: IP 白名单 + Token
 	var res RespDataSource
-	resp, err := req.SetSuccessResult(&res).Get(params.Conf.API + token + "&time=" + timestamp)
+	resp, err := req.SetSuccessResult(&res).SetErrorResult(&res).Get(params.Conf.API + token + "&time=" + timestamp)
 	if err != nil {
 		return "", err
 	}

@@ -61,15 +61,15 @@ func ParseDuration(s string, defDur time.Duration, minDur ...time.Duration) (tim
 
 // ParseRemoteFileConfig 解析远端配置获取配置项
 func ParseRemoteFileConfig(cfg *FilesConf, secret string) error {
+	// 远程获取配置 API, 解密 SecretName
+	if cfg.SecretName != "" {
+		cfg.SecretValue = xcrypto.GetenvDecrypt(cfg.SecretName, secret)
+		if cfg.SecretValue == "" {
+			return fmt.Errorf("%s cannot be empty", cfg.SecretName)
+		}
+	}
 	// 每次获取远程配置的时间间隔, < 30 秒则禁用该功能
 	if cfg.Interval >= 30 {
-		// 远程获取配置 API, 解密 SecretName
-		if cfg.SecretName != "" {
-			cfg.SecretValue = xcrypto.GetenvDecrypt(cfg.SecretName, secret)
-			if cfg.SecretValue == "" {
-				return fmt.Errorf("%s cannot be empty", cfg.SecretName)
-			}
-		}
 		cfg.GetConfDuration = time.Duration(cfg.Interval) * time.Second
 	}
 	// 配置拉取执行前最大随机等待秒数

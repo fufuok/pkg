@@ -9,7 +9,7 @@ import (
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/logger"
-	"github.com/fufuok/pkg/logger/alarm"
+	"github.com/fufuok/pkg/logger/sampler"
 )
 
 // 初始化获取远端配置
@@ -56,12 +56,6 @@ func getBlacklistRemoteConf(ctx context.Context) {
 // 注: 当主配置变化时, 该函数会退出并重新运行
 func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 	id := common.GTimeNowString("060102150405.999999999")
-	fn, ok := common.Funcs.Load(cfg.Method)
-	if !ok {
-		alarm.Error().Str("id", id).Str("more", cfg.Method).Msg("Remote configuration fetcher initialization failed")
-		return
-	}
-
 	logger.Warn().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
 		Msg("Remote configuration fetcher is working")
 
@@ -77,15 +71,12 @@ func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 		}
 		// 是否跳过更新远端配置
 		if !config.IsSkipRemoteConfig() {
-			args := config.DataSourceArgs{
-				Time: common.GTimeNow(),
-				Conf: cfg,
-			}
-			logger.Info().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
-				Msg("Execute remote configuration fetcher")
-			if err := fn(args); err != nil {
-				logger.Error().Err(err).Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
+			if err := common.InvokeConfigMethod(cfg); err != nil {
+				sampler.Error().Err(err).Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
 					Msg("Failed to get remote configuration")
+			} else {
+				logger.Info().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
+					Msg("Execute remote configuration fetcher")
 			}
 		}
 		time.Sleep(cfg.GetConfDuration)
