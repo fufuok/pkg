@@ -18,6 +18,9 @@ var (
 	// ConfigModTime 公共配置文件集最后修改时间
 	ConfigModTime time.Time
 
+	// ConfigLoadTime 配置文件最后加载时间
+	ConfigLoadTime time.Time
+
 	// watchers 自助添加的文件变化监控器
 	watchers = xsync.NewMapOf[string, Watcher]()
 
@@ -114,6 +117,7 @@ func startWatcher() {
 	interval := cfg.WatcherIntervalDuration
 	logger.Warn().Int("count", watchers.Size()+2).Str("interval", interval.String()).Msg("Watching")
 
+	ConfigLoadTime = common.GTimeNow()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -139,6 +143,7 @@ func startWatcher() {
 		}
 
 		runtimePipeline()
+		ConfigLoadTime = common.GTimeNow()
 
 		// 更新配置文件监控周期
 		if interval != cfg.WatcherIntervalDuration {
