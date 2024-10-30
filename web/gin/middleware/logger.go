@@ -53,6 +53,7 @@ func WebLogger(cond LogCondition) gin.HandlerFunc {
 		js.PutString("type", config.BinName)
 		js.PutString("req_time", start.Format(time.RFC3339))
 		js.PutString("req_method", c.Request.Method)
+		js.PutString("req_host", c.Request.Host)
 		js.PutString("req_uri", c.Request.RequestURI)
 		js.PutString("req_proto", c.Request.Proto)
 		js.PutString("req_ua", c.Request.UserAgent())
