@@ -11,10 +11,12 @@ import (
 	"github.com/go-cmd/cmd"
 )
 
-// 命令执行超时时间默认值
-const cmdTimeout = 3 * time.Second
+var (
+	// DefaultCMDTimeout 命令执行超时时间默认值
+	DefaultCMDTimeout = 3 * time.Second
 
-var ErrCMDTimeout = errors.New("command execution timed out")
+	ErrCMDTimeout = errors.New("command execution timed out")
+)
 
 // RunCmd 运行命令, 返回结果和状态
 func RunCmd(cmdArgs []string, timeout ...time.Duration) cmd.Status {
@@ -29,7 +31,7 @@ func RunCmdCombinedOutput(cmdArgs []string, timeout ...time.Duration) cmd.Status
 }
 
 func RunCmdWithOptions(cmdArgs []string, opts cmd.Options, timeout ...time.Duration) cmd.Status {
-	dur := cmdTimeout
+	dur := DefaultCMDTimeout
 	if len(timeout) > 0 {
 		dur = timeout[0]
 	}
