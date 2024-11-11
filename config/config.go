@@ -62,6 +62,7 @@ type SYSConf struct {
 
 type LogConf struct {
 	NoColor              bool   `json:"no_color"`
+	NoPretty             bool   `json:"no_pretty"`
 	Level                int    `json:"level"`
 	File                 string `json:"file"`
 	Period               uint32 `json:"period"`

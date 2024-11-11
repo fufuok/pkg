@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"io"
 	"log"
 	"os"
 	"runtime"
@@ -117,17 +118,14 @@ func loadLogger() error {
 }
 
 // 日志配置
-// 1. 开发环境时, 日志高亮输出到控制台
-// 2. 生产环境时, 日志输出到文件(可选关闭高亮, 保存最近 10 个 30 天内的日志)
-func newLogger() error {
+// 1. Debug 调试时, 日志高亮输出到控制台
+// 2. 非调试模式时, 日志输出到文件(可选关闭高亮, 可选 JSON 输出, 保存最近 10 个 30 天内的日志)
+func newLogger() (err error) {
+	var wr io.Writer
 	cfg := config.Config().LogConf
-	basicLog := zerolog.ConsoleWriter{
-		Out:        os.Stdout,
-		NoColor:    cfg.NoColor,
-		TimeFormat: LogTimeFormat,
-	}
+	wr = zerolog.ConsoleWriter{Out: os.Stdout, NoColor: cfg.NoColor, TimeFormat: LogTimeFormat}
 	if !config.Debug {
-		fh, err := lumberjack.NewRoller(
+		wr, err = lumberjack.NewRoller(
 			cfg.File,
 			// 以 MiB 为单位
 			cfg.MaxSize*megabyte,
@@ -141,13 +139,15 @@ func newLogger() error {
 		if err != nil {
 			return err
 		}
-		basicLog.Out = fh
+		if !cfg.NoPretty {
+			wr = zerolog.ConsoleWriter{Out: wr, NoColor: cfg.NoColor, TimeFormat: LogTimeFormat}
+		}
 	}
 
-	Log = zerolog.New(basicLog).With().Timestamp().Caller().Logger()
+	Log = zerolog.New(wr).With().Timestamp().Caller().Logger()
 	Log = Log.Level(zerolog.Level(cfg.Level))
 
-	mw := zerolog.MultiLevelWriter(basicLog, logAlarmWriter)
+	mw := zerolog.MultiLevelWriter(wr, logAlarmWriter)
 	LogAlarm = zerolog.New(mw).With().Timestamp().Caller().Logger()
 	LogAlarm = LogAlarm.Level(zerolog.Level(cfg.Level))
 	return nil
