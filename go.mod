@@ -8,7 +8,7 @@ require (
 	github.com/fufuok/bytespool v1.4.0
 	github.com/fufuok/chanx v1.2.2
 	github.com/fufuok/cron v0.3.2
-	github.com/fufuok/freelru v0.13.3
+	github.com/fufuok/freelru v0.15.0
 	github.com/fufuok/ntp v1.0.0
 	github.com/fufuok/utils v1.2.10
 	github.com/gin-gonic/gin v1.10.0

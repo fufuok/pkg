@@ -9,7 +9,7 @@ import (
 	"github.com/fufuok/utils"
 )
 
-type RawMessage []byte
+type RawMessage []byte // nolint: recvcheck
 
 // MarshalJSON returns m as the JSON encoding of m.
 func (m RawMessage) MarshalJSON() ([]byte, error) {
