@@ -3,6 +3,7 @@ package crontab
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -28,18 +29,33 @@ type Runner interface {
 }
 
 type Job struct {
-	name    string
-	spec    string
-	id      cron.EntryID
-	ctx     context.Context
-	cancel  context.CancelFunc
+	name string
+	spec string
+
+	id     cron.EntryID
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	// 任务是否被调度运行中
 	running atomic.Bool
+	// 单例执行锁
+	runningMu sync.Mutex
 }
 
 // 添加或更新任务, 返回工作中的任务对象
 func (j *Job) start(ctx context.Context, r Runner, opts ...cron.EntryOption) (*Job, error) {
 	j.ctx, j.cancel = context.WithCancel(ctx)
 	cmd := func() {
+		if skipIfStillRunning.Load() {
+			// 每任务单例执行, 不允许任务重叠
+			if !j.runningMu.TryLock() {
+				logger.Warn().Str("job", j.name).Bool("real_blocked", IsRealBlocked() != nil).
+					Msg("Job overlapped and were skipped")
+				return
+			}
+			defer j.runningMu.Unlock()
+		}
+
 		start := time.Now()
 		rid := xid.NewString()
 		logger.Info().Str("job", j.name).Str("rid", rid).Msg("Job start")

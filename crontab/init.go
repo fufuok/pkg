@@ -1,6 +1,8 @@
 package crontab
 
 import (
+	"sync/atomic"
+
 	"github.com/fufuok/cron"
 	"github.com/fufuok/utils/xsync"
 
@@ -9,8 +11,14 @@ import (
 	"github.com/fufuok/pkg/logger"
 )
 
-// 定时任务调度器
-var crontab *cron.Cron
+var (
+	// 定时任务调度器
+	crontab *cron.Cron
+
+	// 默认 false: 按调度时间执行(允许重叠执行任务)
+	// true: 每任务单例执行, 上一任务未完成时, 跳过此次执行机会
+	skipIfStillRunning atomic.Bool
+)
 
 type M struct{}
 
@@ -30,6 +38,11 @@ func (m *M) Stop() error {
 	crontab.Stop()
 	logger.Warn().Msg("Crontab exited")
 	return nil
+}
+
+// SetSkipIfStillRunning 全局设置任务是否单例执行
+func SetSkipIfStillRunning(v bool) {
+	skipIfStillRunning.Store(v)
 }
 
 // 初始化定时任务环境
