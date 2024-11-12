@@ -13,25 +13,21 @@ import (
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/logger"
+	"github.com/fufuok/pkg/sysenv"
 )
 
-const (
-	// ubuntu apt 命令
-	aptBin = "/usr/bin/apt"
-
-	// apt install 执行超时时间
-	aptTimeout = 30 * time.Minute
-)
+// apt install 执行超时时间
+const aptTimeout = 30 * time.Minute
 
 var (
 	// 包是否已在安装中
 	debInstalling atomic.Bool
 
 	// 修正软件包配置命令
-	cmdDpkgConfigure = []string{"/usr/bin/dpkg", "--configure", "-a"}
+	cmdDpkgConfigure = []string{sysenv.BinDpkg, "--configure", "-a"}
 
 	// 获取系统安装的软件包版本 (Ubuntu 20.04)
-	cmdDebVersion = []string{"/usr/bin/dpkg", "-l"}
+	cmdDebVersion = []string{sysenv.BinDpkg, "-l"}
 
 	// 版本号数据获取正则
 	// ii  ff-app 0.1.5.221117173434 amd64        ff-app
@@ -50,8 +46,8 @@ func installDeb(ver string) {
 	time.Sleep(time.Duration(wait) * time.Second)
 
 	deb := fmt.Sprintf("%s=%s", config.DebName, ver)
-	updateCmd := []string{aptBin, "update"}
-	installCmd := []string{aptBin, "install", deb}
+	updateCmd := []string{sysenv.BinApt, "update"}
+	installCmd := []string{sysenv.BinApt, "install", deb}
 
 	status := cmder.RunCmd(updateCmd, aptTimeout)
 	logger.Warn().Str("deb", deb).Float64("took_s", status.Runtime).
