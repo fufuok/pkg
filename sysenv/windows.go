@@ -1,10 +1,11 @@
-//go:build !unix
+//go:build !linux
+// +build !linux
 
 package sysenv
 
 const (
 	BinApt       = "unknown"
 	BinDpkg      = "unknown"
-	binNSLookup  = "unknown"
+	BinNSLookup  = "unknown"
 	BinSystemctl = "unknown"
 )
