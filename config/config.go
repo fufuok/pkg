@@ -149,9 +149,13 @@ func LoadConfig() error {
 
 // 从主配置文件读取配置
 func readConfig() (*MainConf, error) {
-	body, err := os.ReadFile(ConfigFile)
-	if err != nil {
-		return nil, err
+	body := []byte(AppConfigBody)
+	if len(body) == 0 {
+		var err error
+		body, err = os.ReadFile(ConfigFile)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	cfg := new(MainConf)
@@ -192,10 +196,14 @@ func readConfig() (*MainConf, error) {
 }
 
 func parseSYSConfig(cfg *MainConf) error {
-	// 基础密钥: 由程序固化的密钥解密环境变量得到, 其他加密变量都使用基础密码加密
-	cfg.SYSConf.BaseSecretValue = xcrypto.GetenvDecrypt(BaseSecretEnvName, BaseSecretKeyValue)
-	if cfg.SYSConf.BaseSecretValue == "" {
-		return fmt.Errorf("%s cannot be empty", BaseSecretEnvName)
+	if AppBaseSecretValue != "" {
+		cfg.SYSConf.BaseSecretValue = AppBaseSecretValue
+	} else {
+		// 基础密钥: 由程序固化的密钥解密环境变量得到, 其他加密变量都使用基础密码加密
+		cfg.SYSConf.BaseSecretValue = xcrypto.GetenvDecrypt(BaseSecretEnvName, BaseSecretKeyValue)
+		if cfg.SYSConf.BaseSecretValue == "" {
+			return fmt.Errorf("%s cannot be empty", BaseSecretEnvName)
+		}
 	}
 	// 赋值到全局变量
 	BaseSecretValue = cfg.SYSConf.BaseSecretValue

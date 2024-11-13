@@ -25,6 +25,11 @@ var (
 	BinNameEnvName = "LOCAL_BIN_NAME"
 	AppNameEnvName = "LOCAL_APP_NAME"
 	DebNameEnvName = "LOCAL_DEB_NAME"
+
+	// AppBaseSecretValue APP 设置的基础密钥值(可选, 优先使用)
+	AppBaseSecretValue string
+	// AppConfigBody APP 设置的固定配置 JSON 字符串, 替代配置文件 (可选, 优先使用)
+	AppConfigBody string
 )
 
 var (
@@ -75,7 +80,7 @@ var (
 	LogPostBatchNum   = 2000
 	LogPostBatchBytes = 2 << 20
 
-	// BaseSecretValue 项目基础密钥值, 与 config.Config().SYSConf.BaseSecretValue 相同
+	// BaseSecretValue 项目基础密钥值(从环境变量解码), 与 config.Config().SYSConf.BaseSecretValue 相同
 	BaseSecretValue string
 	// BaseSecretEnvName 项目基础密钥 (环境变量名)
 	BaseSecretEnvName = "BASE_SECRET_KEY"
