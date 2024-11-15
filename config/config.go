@@ -149,7 +149,7 @@ func LoadConfig() error {
 
 // 从主配置文件读取配置
 func readConfig() (*MainConf, error) {
-	body := []byte(AppConfigBody)
+	body := AppConfigBody
 	if len(body) == 0 {
 		var err error
 		body, err = os.ReadFile(ConfigFile)

@@ -29,11 +29,11 @@ var (
 	// AppBaseSecretValue APP 设置的基础密钥值(可选, 优先使用)
 	AppBaseSecretValue string
 	// AppConfigBody APP 设置的固定配置 JSON 字符串, 替代配置文件 (可选, 优先使用)
-	AppConfigBody string
+	AppConfigBody []byte
 )
 
 var (
-	// RootPath 程序运行绝对路径 !!! 决定加载的默认配置目录, 环境文件目录, 日志目录
+	// RootPath 程序运行绝对路径 !!! 决定加载的默认配置目录, 环境文件目录, 日志目录(必须存在)
 	RootPath        string
 	DefaultRootPath = utils.ExecutableDir(true)
 	DefaultLogPath  = filepath.Join(DefaultRootPath, "..", "log")
