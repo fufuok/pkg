@@ -15,7 +15,25 @@ var (
 	ntpCtx    context.Context
 	ntpCancel context.CancelFunc
 	ntpName   string
+
+	ntpFirstDone     = false
+	ntpFirstDoneChan = make(chan struct{}, 1)
 )
+
+// WaitUntilNtpdate 等待, 直到第一次时间同步成功
+func WaitUntilNtpdate(timeout time.Duration) bool {
+	if ntpFirstDone {
+		return true
+	}
+
+	select {
+	case <-time.After(timeout):
+		return false
+	case <-ntpFirstDoneChan:
+		ntpFirstDone = true
+		return true
+	}
+}
 
 // 根据配置开启或关闭默认的时间同步服务
 func startTimeSync() error {
@@ -59,6 +77,8 @@ func ntpdate() {
 	logger.Warn().Str("clock_offset", dur.String()).Str("name", name).Msg("first ntpdate")
 	ntpCancel()
 	common.SetClockOffset(dur)
+
+	ntpFirstDoneChan <- struct{}{}
 
 	// 定时同步
 	ntpCtx, ntpCancel = context.WithCancel(context.Background())
