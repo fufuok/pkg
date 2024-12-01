@@ -16,21 +16,15 @@ var (
 	ntpCancel context.CancelFunc
 	ntpName   string
 
-	ntpFirstDone     = false
-	ntpFirstDoneChan = make(chan struct{}, 1)
+	ntpFirstDoneChan = make(chan struct{})
 )
 
 // WaitUntilNtpdate 等待, 直到第一次时间同步成功
 func WaitUntilNtpdate(timeout time.Duration) bool {
-	if ntpFirstDone {
-		return true
-	}
-
 	select {
 	case <-time.After(timeout):
 		return false
 	case <-ntpFirstDoneChan:
-		ntpFirstDone = true
 		return true
 	}
 }
@@ -78,7 +72,8 @@ func ntpdate() {
 	ntpCancel()
 	common.SetClockOffset(dur)
 
-	ntpFirstDoneChan <- struct{}{}
+	// 首次时间同步完成
+	close(ntpFirstDoneChan)
 
 	// 定时同步
 	ntpCtx, ntpCancel = context.WithCancel(context.Background())
