@@ -174,7 +174,10 @@ func GetNodeIPFromAPIs(ipapi string, timeout ...time.Duration) string {
 		go func() {
 			resp, err := req.DefaultClient().Clone().SetTimeout(dur).R().SetContext(ctx).Get(api)
 			if err == nil && resp.IsSuccessState() {
-				ipChan <- strings.TrimSpace(resp.String())
+				ip := strings.TrimSpace(resp.String())
+				if utils.IsIP(ip) {
+					ipChan <- ip
+				}
 			}
 		}()
 	}
