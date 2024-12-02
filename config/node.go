@@ -9,6 +9,7 @@ import (
 
 	"github.com/fufuok/utils"
 	"github.com/fufuok/utils/myip"
+	"github.com/fufuok/utils/pools/timerpool"
 	"github.com/imroc/req/v3"
 
 	"github.com/fufuok/pkg/json"
@@ -182,10 +183,12 @@ func GetNodeIPFromAPIs(ipapi string, timeout ...time.Duration) string {
 		}()
 	}
 
+	timer := timerpool.New(dur)
+	defer timerpool.Release(timer)
 	select {
 	case ip := <-ipChan:
 		return ip
-	case <-time.After(dur):
+	case <-timer.C:
 	}
 	return ""
 }

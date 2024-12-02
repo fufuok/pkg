@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/fufuok/ntp"
+	"github.com/fufuok/utils/pools/timerpool"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
@@ -21,8 +22,10 @@ var (
 
 // WaitUntilNtpdate 等待, 直到第一次时间同步成功
 func WaitUntilNtpdate(timeout time.Duration) bool {
+	timer := timerpool.New(timeout)
+	defer timerpool.Release(timer)
 	select {
-	case <-time.After(timeout):
+	case <-timer.C:
 		return false
 	case <-ntpFirstDoneChan:
 		return true
