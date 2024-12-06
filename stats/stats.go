@@ -139,6 +139,7 @@ func MainStats() map[string]any {
 		return nil
 	}
 	return map[string]any{
+		"ProcessPid": mainProcess.Pid,
 		"NumThreads": numThreads,
 		"MemPercent": utils.Round(float64(memPercent), 2),
 		"CPUPercent": utils.Round(cpuPercent, 2),
