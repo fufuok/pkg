@@ -1,19 +1,28 @@
 package stats
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/fufuok/ants"
 	"github.com/fufuok/bytespool"
 	"github.com/fufuok/utils"
 	"github.com/rs/zerolog"
+	"github.com/shirou/gopsutil/v3/process"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/json"
 	"github.com/fufuok/pkg/master"
+)
+
+var (
+	mainProcess *process.Process
+	mainOnce    sync.Once
 )
 
 // SYSStats 系统信息
@@ -44,8 +53,16 @@ func SYSStats() map[string]any {
 	}
 }
 
-// MEMStats 内存信息
-func MEMStats() map[string]any {
+// MetricStats 主程序运行指标
+func MetricStats() map[string]any {
+	return map[string]any{
+		"Memory": MemStats(),
+		"Main":   MainStats(),
+	}
+}
+
+// MemStats 内存信息
+func MemStats() map[string]any {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 	bs := bytespool.RuntimeStats()
@@ -90,6 +107,44 @@ func MEMStats() map[string]any {
 			"New":   utils.HumanGBMB(bs["New"]),
 			"Reuse": utils.HumanGBMB(bs["Reuse"]),
 		},
+	}
+}
+
+// MainStats 主程序系统指标
+func MainStats() map[string]any {
+	mainOnce.Do(func() {
+		if p, err := process.NewProcess(int32(os.Getpid())); err == nil {
+			mainProcess = p
+		}
+	})
+	if mainProcess == nil {
+		return nil
+	}
+
+	ctx := context.Background()
+	numThreads, err := mainProcess.NumThreadsWithContext(ctx)
+	if err != nil {
+		return nil
+	}
+	memPercent, err := mainProcess.MemoryPercentWithContext(ctx)
+	if err != nil {
+		return nil
+	}
+	cpuPercent, err := mainProcess.PercentWithContext(ctx, 0)
+	if err != nil {
+		return nil
+	}
+	memInfo, err := mainProcess.MemoryInfoWithContext(ctx)
+	if err != nil {
+		return nil
+	}
+	return map[string]any{
+		"NumThreads": numThreads,
+		"MemPercent": utils.Round(float64(memPercent), 2),
+		"CPUPercent": utils.Round(cpuPercent, 2),
+		"MemRSS":     utils.HumanGBMB(memInfo.RSS),
+		"MemVMS":     utils.HumanGBMB(memInfo.VMS),
+		"MemSwap":    utils.HumanGBMB(memInfo.Swap),
 	}
 }
 
