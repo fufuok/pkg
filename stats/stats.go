@@ -69,28 +69,28 @@ func MemStats() map[string]any {
 	return map[string]any{
 		// 程序启动后累计申请的字节数
 		"TotalAlloc":  ms.TotalAlloc,
-		"TotalAlloc_": utils.HumanGBMB(ms.TotalAlloc),
+		"TotalAlloc_": utils.HumanIBytes(ms.TotalAlloc),
 		// 虚拟占用, 总共向系统申请的字节数
 		"HeapSys":  ms.HeapSys,
-		"HeapSys_": utils.HumanGBMB(ms.HeapSys),
+		"HeapSys_": utils.HumanIBytes(ms.HeapSys),
 		// 使用中或未使用, 但未被 GC 释放的对象的字节数
 		"HeapAlloc":  ms.HeapAlloc,
-		"HeapAlloc_": utils.HumanGBMB(ms.HeapAlloc),
+		"HeapAlloc_": utils.HumanIBytes(ms.HeapAlloc),
 		// 使用中的对象的字节数
 		"HeapInuse":  ms.HeapInuse,
-		"HeapInuse_": utils.HumanGBMB(ms.HeapInuse),
+		"HeapInuse_": utils.HumanIBytes(ms.HeapInuse),
 		// 已释放的内存, 还没被堆再次申请的内存
 		"HeapReleased":  ms.HeapReleased,
-		"HeapReleased_": utils.HumanGBMB(ms.HeapReleased),
+		"HeapReleased_": utils.HumanIBytes(ms.HeapReleased),
 		// 没被使用的内存, 包含了 HeapReleased, 可被再次申请和使用
 		"HeapIdle":  ms.HeapIdle,
-		"HeapIdle_": utils.HumanGBMB(ms.HeapIdle),
+		"HeapIdle_": utils.HumanIBytes(ms.HeapIdle),
 		// 分配的对象数
 		"HeapObjects":  ms.HeapObjects,
 		"HeapObjects_": utils.Commau(ms.HeapObjects),
 		// 下次 GC 的阈值, 当 HeapAlloc 达到该值触发 GC
 		"NextGC":  ms.NextGC,
-		"NextGC_": utils.HumanGBMB(ms.NextGC),
+		"NextGC_": utils.HumanIBytes(ms.NextGC),
 		// 上次 GC 时间
 		"LastGC": time.Unix(0, int64(ms.LastGC)).Format(time.RFC3339Nano),
 		// GC 次数
@@ -103,9 +103,9 @@ func MemStats() map[string]any {
 		"PauseNs": fmt.Sprintf("%.3fms", float64(ms.PauseNs[(ms.NumGC+255)%256])/1000/1000),
 		// 字节池使用信息
 		"BytesPool": map[string]string{
-			"Big":   utils.HumanGBMB(bs["Big"]),
-			"New":   utils.HumanGBMB(bs["New"]),
-			"Reuse": utils.HumanGBMB(bs["Reuse"]),
+			"Big":   utils.HumanIBytes(bs["Big"]),
+			"New":   utils.HumanIBytes(bs["New"]),
+			"Reuse": utils.HumanIBytes(bs["Reuse"]),
 		},
 	}
 }
@@ -143,9 +143,9 @@ func MainStats() map[string]any {
 		"NumThreads": numThreads,
 		"MemPercent": utils.Round(float64(memPercent), 2),
 		"CPUPercent": utils.Round(cpuPercent, 2),
-		"MemRSS":     utils.HumanGBMB(memInfo.RSS),
-		"MemVMS":     utils.HumanGBMB(memInfo.VMS),
-		"MemSwap":    utils.HumanGBMB(memInfo.Swap),
+		"MemRSS":     utils.HumanIBytes(memInfo.RSS),
+		"MemVMS":     utils.HumanIBytes(memInfo.VMS),
+		"MemSwap":    utils.HumanIBytes(memInfo.Swap),
 	}
 }
 
