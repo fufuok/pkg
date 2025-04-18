@@ -33,6 +33,9 @@ var (
 	// MainWatcherKey 主程序二进制和配置文件监控器标识
 	MainWatcherKey     = "__PKG_MAIN_BIN_WATCHER__"
 	MainWatcherConfKey = "__PKG_MAIN_CONFIG_WATCHER__"
+
+	// 待监控内容变化的额外文件列表
+	extraWatcherFiles []string
 )
 
 // Watcher 文件变化监控器
@@ -227,10 +230,16 @@ func checkUpgradeOrRestart(cfg config.SYSConf) (needContinue bool) {
 	return
 }
 
-// MD5ConfigFiles 配置文件 MD5, 有变化时重载
+// SetExtraWatcherFiles 设置额外的文件到内容变化监控列表
+func SetExtraWatcherFiles(confFile ...string) {
+	extraWatcherFiles = confFile
+}
+
+// MD5ConfigFiles 配置文件 MD5, 有变化时重载系统配置项
 func MD5ConfigFiles() (md5 string, confFiles []string) {
 	confFiles = append(confFiles, config.ConfigFile, config.WhitelistConfigFile, config.BlacklistConfigFile)
-	confFiles = append(confFiles, config.ExtraEnvFiles...)
+	confFiles = append(confFiles, config.GetEnvFiles()...)
+	confFiles = append(confFiles, extraWatcherFiles...)
 	if config.NodeInfoFile != "" {
 		confFiles = append(confFiles, config.NodeInfoFile)
 	}

@@ -3,12 +3,18 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/fufuok/utils/base58"
 	"github.com/joho/godotenv"
 )
 
-var ExtraEnvFiles []string
+var extraEnvFiles []string
+
+// GetEnvFiles 获取已加载的 .env 文件列表
+func GetEnvFiles() []string {
+	return slices.Clone(extraEnvFiles)
+}
 
 // 读取 .env 配置
 // 后加载的优先, 已存在的环境变量值会被覆盖
@@ -33,7 +39,7 @@ func loadEnvFiles(envFiles ...string) {
 		}
 		_ = godotenv.Overload(f)
 	}
-	ExtraEnvFiles = envFiles
+	extraEnvFiles = envFiles
 	loadEnvConfig()
 }
 
