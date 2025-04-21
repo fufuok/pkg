@@ -14,7 +14,5 @@ func TestZeroTimeCST(t *testing.T) {
 	assert.Equal(t, "0001-01-01T00:00:00+08:00", ZeroTimeCST.Format(time.RFC3339))
 	assert.Equal(t, "0001-01-01T00:00:00Z", ZeroTimeUTC.Format(time.RFC3339))
 
-	now := time.Now()
-	t.Log(now.In(DefaultTimeLocation).Format(time.RFC3339))
-	t.Log(now.In(CSTTimeLocation).Format(time.RFC3339))
+	t.Log(time.Now().In(DefaultTimeLocation).Format(time.RFC3339))
 }

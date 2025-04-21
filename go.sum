@@ -43,8 +43,8 @@ github.com/fufuok/freelru v0.15.0 h1:MnXaL/51hI3W89egbl190GmeUWf5R6fnVgk3VTqEsA4
 github.com/fufuok/freelru v0.15.0/go.mod h1:6B/BCmtS+iIJmAFmCDfSUaLsuQtPio0BpBkPuAOgQ0k=
 github.com/fufuok/ntp v1.0.0 h1:xGm9RBUrHGt1RDbzSoZtLsglRjwjzrxaKetHBZG9UGI=
 github.com/fufuok/ntp v1.0.0/go.mod h1:K+adSFG6KYUvHRKPZEFP1jj3GFSvEU31AvuCbt7u92Q=
-github.com/fufuok/utils v1.3.1 h1:0VMQ1D5xj3qQlOAj8M4K2IhCnxEuSbgP2qAOa0vQ89U=
-github.com/fufuok/utils v1.3.1/go.mod h1:iQlt8HkIAZirhKsN8Ktjka4XW3U3RA0QpOQl4xTDA0I=
+github.com/fufuok/utils v1.3.4 h1:11UXPERr2MVc/IgII1Gs4wk9q9DWaA29r7pZNBf0mkA=
+github.com/fufuok/utils v1.3.4/go.mod h1:iQlt8HkIAZirhKsN8Ktjka4XW3U3RA0QpOQl4xTDA0I=
 github.com/gabriel-vasile/mimetype v1.4.9 h1:5k+WDwEsD9eTLL8Tz3L0VnmVh9QxGjRmjBvAG7U/oYY=
 github.com/gabriel-vasile/mimetype v1.4.9/go.mod h1:WnSQhFKJuBlRyLiKohA/2DtIlPFAbguNaG7QCHcyGok=
 github.com/gin-contrib/sse v0.1.0/go.mod h1:RHrZQHXnP2xjPF+u1gW/2HnVO7nvIa9PG3Gm+fLHvGI=
