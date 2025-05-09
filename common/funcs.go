@@ -3,14 +3,14 @@ package common
 import (
 	"errors"
 
-	"github.com/fufuok/utils/xsync"
+	"github.com/fufuok/cache/xsync"
 
 	"github.com/fufuok/pkg/config"
 )
 
 var (
 	// Funcs 通用函数集合, 用于远程配置获取等场景
-	Funcs = xsync.NewMapOf[string, Func]()
+	Funcs = xsync.NewMap[string, Func]()
 
 	ErrInvalidGetter = errors.New("invalid getter method")
 )

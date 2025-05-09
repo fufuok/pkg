@@ -3,8 +3,8 @@ package crontab
 import (
 	"sync/atomic"
 
+	"github.com/fufuok/cache/xsync"
 	"github.com/fufuok/cron"
-	"github.com/fufuok/utils/xsync"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
@@ -47,7 +47,7 @@ func SetSkipIfStillRunning(v bool) {
 
 // 初始化定时任务环境
 func initMain() {
-	jobs = xsync.NewMapOf[string, *Job]()
+	jobs = xsync.NewMap[string, *Job]()
 	opts := []cron.Option{
 		cron.WithLocation(config.DefaultTimeLocation),
 		cron.WithSecondOptional(),

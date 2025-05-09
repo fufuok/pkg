@@ -13,10 +13,8 @@ import (
 )
 
 var (
-	ntpCtx    context.Context
-	ntpCancel context.CancelFunc
-	ntpName   string
-
+	ntpName          string
+	ntpCancel        context.CancelFunc
 	ntpFirstDoneChan = make(chan struct{})
 )
 
@@ -65,8 +63,9 @@ func stopTimeSync() error {
 // 时间同步服务
 func ntpdate() {
 	// 首次同步
-	ntpCtx, ntpCancel = context.WithTimeout(context.Background(), common.ClockOffsetMinInterval*4)
-	name, ch := getClockOffsetChan(ntpCtx, common.ClockOffsetMinInterval)
+	var ctx context.Context
+	ctx, ntpCancel = context.WithTimeout(context.Background(), common.ClockOffsetMinInterval*4)
+	name, ch := getClockOffsetChan(ctx, common.ClockOffsetMinInterval)
 	if ch == nil {
 		return
 	}
@@ -79,8 +78,8 @@ func ntpdate() {
 	close(ntpFirstDoneChan)
 
 	// 定时同步
-	ntpCtx, ntpCancel = context.WithCancel(context.Background())
-	name, ch = getClockOffsetChan(ntpCtx, common.ClockOffsetInterval)
+	ctx, ntpCancel = context.WithCancel(context.Background())
+	name, ch = getClockOffsetChan(ctx, common.ClockOffsetInterval)
 	if ch == nil {
 		return
 	}

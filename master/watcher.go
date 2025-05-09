@@ -4,9 +4,9 @@ import (
 	"log"
 	"time"
 
+	"github.com/fufuok/cache/xsync"
 	"github.com/fufuok/utils"
 	"github.com/fufuok/utils/xhash"
-	"github.com/fufuok/utils/xsync"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
@@ -22,10 +22,10 @@ var (
 	ConfigLoadTime time.Time
 
 	// watchers 自助添加的文件变化监控器
-	watchers = xsync.NewMapOf[string, Watcher]()
+	watchers = xsync.NewMap[string, Watcher]()
 
 	// 存放监控器标识和对应的 MD5
-	watcherMD5 = xsync.NewMapOf[string, string]()
+	watcherMD5 = xsync.NewMap[string, string]()
 
 	isRuntime bool
 	mainFile  string

@@ -7,9 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/fufuok/cache/xsync"
 	"github.com/fufuok/cron"
 	"github.com/fufuok/utils/xid"
-	"github.com/fufuok/utils/xsync"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/logger"
@@ -21,7 +21,7 @@ var (
 	BlockedLimit  = 2 * time.Second
 
 	// 工作中的任务列表
-	jobs *xsync.MapOf[string, *Job]
+	jobs *xsync.Map[string, *Job]
 )
 
 type Runner interface {
