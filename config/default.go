@@ -30,6 +30,9 @@ var (
 	AppBaseSecretValue string
 	// AppConfigBody APP 设置的固定配置 JSON 字符串, 替代配置文件 (可选, 优先使用)
 	AppConfigBody []byte
+
+	// ConfigInitialized 全局配置是否已初始化
+	ConfigInitialized bool
 )
 
 var (

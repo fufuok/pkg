@@ -18,6 +18,7 @@ func (m *M) Start() error {
 	if err := LoadConfig(); err != nil {
 		log.Fatalln("Failed to initialize main config:", err, "\nbye.")
 	}
+	ConfigInitialized = true
 	return nil
 }
 
