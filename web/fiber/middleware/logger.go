@@ -74,7 +74,7 @@ func RecoverLogger() fiber.Handler {
 					Bytes("body", c.Body()).
 					Str("client_ip", c.IP()).
 					Str("method", c.Method()).Str("uri", c.OriginalURL()).
-					Msgf("Recovery: %s", r)
+					Msgf("Recovered from panic: %s", r)
 			}
 		}()
 		return c.Next()

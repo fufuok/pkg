@@ -36,7 +36,7 @@ var (
 
 func installDeb(ver string) {
 	if !debInstalling.CompareAndSwap(false, true) {
-		logger.Warn().Str("ver", ver).Msg("skip installing deb")
+		logger.Warn().Str("ver", ver).Msg("Deb installation skipped")
 		return
 	}
 	defer debInstalling.Store(false)
@@ -53,26 +53,26 @@ func installDeb(ver string) {
 	logger.Warn().Str("deb", deb).Float64("took_s", status.Runtime).
 		Strs("stdout", status.Stdout).Strs("stderr", status.Stderr).
 		Strs("cmd", updateCmd).
-		Msg("install deb")
+		Msg("Install deb")
 
 	status = cmder.RunCmd(cmdDpkgConfigure)
 	logger.Warn().Str("deb", deb).Float64("took_s", status.Runtime).
 		Strs("stdout", status.Stdout).Strs("stderr", status.Stderr).
 		Strs("cmd", cmdDpkgConfigure).
-		Msg("install deb")
+		Msg("Install deb")
 
 	status = cmder.RunCmd(installCmd, aptTimeout)
 	if status.Exit != 0 {
 		logger.Error().Err(status.Error).Int("exit_code", status.Exit).Float64("took_s", status.Runtime).
 			Str("deb", deb).Strs("stdout", status.Stdout).Strs("stderr", status.Stderr).
 			Strs("cmd", installCmd).
-			Msg("install deb")
+			Msg("Deb package installation failed")
 	} else {
 		config.DebVersion = ver
 		logger.Warn().Str("deb", deb).Float64("took_s", status.Runtime).
 			Strs("stdout", status.Stdout).Strs("stderr", status.Stderr).
 			Strs("cmd", installCmd).
-			Msg("install deb")
+			Msg("Deb package installed")
 	}
 }
 
@@ -101,7 +101,7 @@ func DebVersion(debName string) string {
 	if n == 0 || status.Exit != 0 {
 		logger.Error().Err(status.Error).Int("exit_code", status.Exit).Float64("took_s", status.Runtime).
 			Strs("stdout", status.Stdout).Strs("stderr", status.Stderr).
-			Msg("dpkg -l")
+			Msg("Dpkg command failed")
 		return ""
 	}
 

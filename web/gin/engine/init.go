@@ -47,7 +47,7 @@ func Run(setup App) {
 		for _, addr := range strings.Split(cfg.ServerHttpsAddr, ",") {
 			addr := addr
 			eg.Go(func() (err error) {
-				logger.Info().Str("addr", addr).Msg("Listening and serving HTTPS")
+				logger.Warn().Str("addr", addr).Msg("HTTPS server started")
 				err = app.RunTLS(addr, cfg.CertFile, cfg.KeyFile)
 				return
 			})
@@ -56,7 +56,7 @@ func Run(setup App) {
 	for _, addr := range strings.Split(cfg.ServerAddr, ",") {
 		addr := addr
 		eg.Go(func() (err error) {
-			logger.Info().Str("addr", addr).Msg("Listening and serving HTTP")
+			logger.Warn().Str("addr", addr).Msg("HTTP server started")
 			err = app.Run(addr)
 			return
 		})

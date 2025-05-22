@@ -58,14 +58,14 @@ func (j *Job) start(ctx context.Context, r Runner, opts ...cron.EntryOption) (*J
 
 		start := time.Now()
 		rid := xid.NewString()
-		logger.Info().Str("job", j.name).Str("rid", rid).Msg("Job start")
+		logger.Info().Str("job", j.name).Str("rid", rid).Msg("starting job")
 
 		err := r.Run(j.ctx)
 		if err != nil {
-			alarm.Error().Err(err).Str("job", j.name).Str("rid", rid).Dur("took", time.Since(start)).Msg("Job run")
+			alarm.Error().Err(err).Str("job", j.name).Str("rid", rid).Dur("took", time.Since(start)).Msg("Job execution failed")
 		}
 
-		logger.Info().Str("job", j.name).Str("rid", rid).Dur("took", time.Since(start)).Msg("Job done")
+		logger.Info().Str("job", j.name).Str("rid", rid).Dur("took", time.Since(start)).Msg("job completed")
 	}
 
 	id, err := crontab.AddFunc(j.spec, cmd, opts...)
@@ -121,7 +121,7 @@ func (j *Job) Stop() {
 func AddJob(ctx context.Context, name, spec string, runner Runner, opts ...cron.EntryOption) (*Job, error) {
 	if job, ok := GetJob(name); ok {
 		if job.IsRunning() && job.spec == spec {
-			logger.Info().Str(name, spec).Msg("ignore adding job")
+			logger.Info().Str(name, spec).Msg("skipping job add")
 			return job, nil
 		}
 		job.Stop()
@@ -140,7 +140,7 @@ func GetJob(name string) (*Job, bool) {
 
 // StopJob 通过名称停止任务
 func StopJob(name string) bool {
-	logger.Info().Str("job", name).Msg("about to stop")
+	logger.Info().Str("job", name).Msg("stopping job")
 	if j, ok := GetJob(name); ok {
 		j.Stop()
 		return true

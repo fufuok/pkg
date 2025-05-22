@@ -61,5 +61,5 @@ func initMain() {
 	}
 	crontab = cron.New(opts...)
 	crontab.Start()
-	logger.Info().Msg("crontab is working")
+	logger.Info().Msg("crontab started")
 }

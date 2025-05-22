@@ -70,7 +70,7 @@ func ntpdate() {
 		return
 	}
 	dur := <-ch
-	logger.Warn().Str("clock_offset", dur.String()).Str("name", name).Msg("first ntpdate")
+	logger.Warn().Str("clock_offset", dur.String()).Str("name", name).Msg("Initial NTP sync completed")
 	ntpCancel()
 	common.SetClockOffset(dur)
 
@@ -83,11 +83,11 @@ func ntpdate() {
 	if ch == nil {
 		return
 	}
-	logger.Warn().Str("name", name).Msg("ntpdate is working")
+	logger.Warn().Str("name", name).Msg("NTP sync service started")
 	for dur = range ch {
 		common.SetClockOffset(dur)
 	}
-	logger.Warn().Str("clock_offet", common.GetClockOffset().String()).Str("type", name).Msg("ntpdate exited")
+	logger.Warn().Str("clock_offet", common.GetClockOffset().String()).Str("type", name).Msg("NTP sync service stopped")
 }
 
 func getClockOffsetChan(ctx context.Context, dur time.Duration) (string, chan time.Duration) {

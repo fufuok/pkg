@@ -52,13 +52,13 @@ func SendAlarm(code, info, more string) {
 		code = cfg.AlarmCode
 	}
 	if cfg.PostAlarmAPI == "" || code == "" {
-		LogSampled.Warn().Str("info", info).Str("more", more).Msg("SendAlarm")
+		LogSampled.Warn().Str("info", info).Str("more", more).Msg("Sending alarm")
 		return
 	}
 	data := GenAlarmJson(code, info, more)
 	_ = ants.Submit(func() {
 		if _, err := req.SetBodyJsonBytes(data).Post(cfg.PostAlarmAPI); err != nil {
-			LogSampled.Warn().Err(err).Str("url", cfg.PostAlarmAPI).Msg("SendAlarm")
+			LogSampled.Warn().Err(err).Str("url", cfg.PostAlarmAPI).Msg("Sending alarm")
 		}
 	})
 }
@@ -94,7 +94,7 @@ func sendAlarm(fn AlarmJsonGenerator, bs []byte) {
 	}
 	data := fn(cfg.AlarmCode, bs)
 	if _, err := req.SetBodyJsonBytes(data).Post(cfg.PostAlarmAPI); err != nil {
-		LogSampled.Warn().Err(err).Str("url", cfg.PostAlarmAPI).Msg("sendAlarm")
+		LogSampled.Warn().Err(err).Str("url", cfg.PostAlarmAPI).Msg("Sending alarm")
 	}
 }
 

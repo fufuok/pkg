@@ -54,6 +54,6 @@ func SetClockOffset(dur time.Duration) {
 	offset := int64(dur)
 	if math.Abs(float64(offset-clockOffset.Load())) >= ClockOffsetLimit {
 		clockOffset.Store(offset + ClockOffsetAdjust)
-		Log.Warn().Str("clock_offset", GetClockOffset().String()).Msg("ntpdate")
+		Log.Warn().Str("clock_offset", GetClockOffset().String()).Msg("NTP sync completed")
 	}
 }

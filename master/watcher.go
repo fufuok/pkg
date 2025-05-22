@@ -69,7 +69,7 @@ func (w Watcher) Start() {
 	watcherMD5.Store(w.Key, md5)
 	watchers.Store(w.Key, w)
 	if isRuntime {
-		logger.Warn().Str("key", w.Key).Strs("files", w.Files).Msg("Watching")
+		logger.Warn().Str("key", w.Key).Strs("files", w.Files).Msg("Watcher started")
 	}
 }
 
@@ -100,7 +100,7 @@ func initWatcher() {
 	config.DebVersion = getCurrentDebVersion()
 	logger.Warn().Str("main", mainFile).Str(config.DebName, config.DebVersion).Msg("Watching")
 	logger.Warn().Strs("configs", confFiles).Msg("Watching")
-	logger.Warn().RawJSON("data", json.MustJSON(config.Config().NodeConf.NodeInfo)).Msg("NodeInfo")
+	logger.Warn().RawJSON("data", json.MustJSON(config.Config().NodeConf.NodeInfo)).Msg("Node info updated")
 
 	var keys []string
 	watchers.Range(func(key string, _ Watcher) bool {
@@ -152,15 +152,15 @@ func startWatcher() {
 		if interval != cfg.WatcherIntervalDuration {
 			interval = cfg.WatcherIntervalDuration
 			ticker.Reset(interval)
-			logger.Warn().Str("interval", interval.String()).Msg("Main watcher reset ticker")
+			logger.Warn().Str("interval", interval.String()).Msg("Main watcher interval updated")
 		}
 
 		// 最终的配置列表和 MD5
 		md5ok, confFiles := MD5ConfigFiles()
 		watcherMD5.Store(MainWatcherConfKey, md5ok)
-		logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> reload config <<<<<<<")
+		logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> Reload config <<<<<<<")
 		logger.Warn().Strs("configs", confFiles).Msg("Watching")
-		logger.Warn().RawJSON("data", json.MustJSON(config.Config().NodeConf.NodeInfo)).Msg("NodeInfo")
+		logger.Warn().RawJSON("data", json.MustJSON(config.Config().NodeConf.NodeInfo)).Msg("Node info updated")
 		logger.Warn().Int("count", watchers.Size()+2).Str("interval", interval.String()).Msg("Watching")
 		reloadChan <- true
 	}
@@ -173,7 +173,7 @@ func mainWatcher() (needContinue bool) {
 	if md5New == md5Main {
 		return
 	}
-	logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> restart main <<<<<<<")
+	logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> Restart main <<<<<<<")
 	restartChan <- true
 	return true
 }
@@ -201,7 +201,7 @@ func configWatcher() (needContinue bool) {
 
 	// 任意配置文件变化, 热加载所有配置
 	if err := config.LoadConfig(); err != nil {
-		logger.Error().Err(err).Msg("Reload config")
+		logger.Error().Err(err).Msg("Failed to reload config")
 		return true
 	}
 	return false
@@ -215,7 +215,7 @@ func checkUpgradeOrRestart(cfg config.SYSConf) (needContinue bool) {
 		logger.Warn().
 			Strs("deb_versions", []string{config.DebVersion, cfg.DebVersion}).
 			Bool("to_install", toInstall).Str("ip", common.ExternalIPv4).Uint64("threshold", threshold).
-			Msg("Canary deployment")
+			Msg("Starting canary deployment")
 		if toInstall {
 			go installDeb(cfg.DebVersion)
 		}
@@ -223,7 +223,7 @@ func checkUpgradeOrRestart(cfg config.SYSConf) (needContinue bool) {
 
 	// 重启程序指令
 	if cfg.RestartMain {
-		logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> restart main(config) <<<<<<<")
+		logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> Restart main(config) <<<<<<<")
 		restartChan <- true
 		return true
 	}

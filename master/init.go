@@ -60,7 +60,7 @@ func runtimeConfigPipeline() {
 	ps := getPipelines(ConfigStage)
 	for _, p := range ps {
 		if err := p.Runtime(); err != nil {
-			alarm.Error().Err(err).Msg("runtime config pipeline")
+			alarm.Error().Err(err).Msg("Runtime config pipeline failed")
 		}
 	}
 }
@@ -70,7 +70,7 @@ func runtimePipeline() {
 	ps := getPipelines(MainStage)
 	for _, p := range ps {
 		if err := p.Runtime(); err != nil {
-			alarm.Error().Err(err).Msg("runtime main pipeline")
+			alarm.Error().Err(err).Msg("Runtime main pipeline failed")
 		}
 	}
 }
@@ -98,12 +98,12 @@ func mainScheduler() {
 		select {
 		case <-restartChan:
 			// 强制退出, 由 Daemon 重启程序
-			logger.Warn().Msg("restart <-restartChan")
+			logger.Warn().Msg("Restart <-restartChan")
 			os.Exit(0)
 		case <-reloadChan:
 			// 重载配置及相关服务
 			cancel()
-			logger.Warn().Msg("reload <-reloadChan")
+			logger.Warn().Msg("Reload <-reloadChan")
 		}
 	}
 }

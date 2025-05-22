@@ -29,13 +29,13 @@ func loadReq() {
 	req.SetTimeout(cfg.ReqTimeoutDuration).
 		SetCommonRetryCount(cfg.ReqMaxRetries).
 		SetCommonRetryHook(func(resp *req.Response, err error) {
-			LogSampled.Warn().Err(err).Str("resp", resp.String()).Msg("Retry request")
+			LogSampled.Warn().Err(err).Str("resp", resp.String()).Msg("Retrying request")
 		})
 	if reqDebug == cfg.ReqDebug {
 		return
 	}
 	reqDebug = cfg.ReqDebug
-	Log.Warn().Bool("req_debug", reqDebug).Msg("Req debug switch")
+	Log.Warn().Bool("req_debug", reqDebug).Msg("Request debug switch changed")
 	req.SetLogger(NewAppLogger())
 	ReqUpload.SetLogger(NewAppLogger())
 	ReqDownload.SetLogger(NewAppLogger())

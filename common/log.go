@@ -84,7 +84,7 @@ func loadLogger() error {
 	alarmOn := config.AlarmOn.Load()
 	if logAlarmOnConf != alarmOn {
 		logAlarmOnConf = alarmOn
-		Log.Warn().Bool("alarm_on", logAlarmOnConf).Msg("Alarm switch")
+		Log.Warn().Bool("alarm_on", logAlarmOnConf).Msg("Alarm switch changed")
 	}
 	cfg := config.Config().LogConf
 	if logCurrentConf == cfg {
@@ -113,7 +113,7 @@ func loadLogger() error {
 		Str("app_name", config.AppName).Str("bin_name", config.BinName).Str("deb_name", config.DebName).
 		Int("cpus", runtime.NumCPU()).Int("procs", runtime.GOMAXPROCS(0)).
 		Bool("alarm_on", logAlarmOnConf).Str("alarm_code", cfg.AlarmCode).Bool("app_sampler", AppLoggerUseSampler).
-		Msg("Logger initialized successfully")
+		Msg("Logger initialized")
 	return nil
 }
 

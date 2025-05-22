@@ -25,7 +25,7 @@ func startRemotePipelines(ctx context.Context) {
 		sf := sf
 		utils.SafeGoWithContext(ctx, sf, common.RecoverAlarm)
 	}
-	logger.Warn().Int("count", len(ps)+3).Msg("Remote configuration fetcher")
+	logger.Warn().Int("count", len(ps)+3).Msg("Remote config fetchers started")
 }
 
 func getMainRemoteConf(ctx context.Context) {
@@ -57,7 +57,7 @@ func getBlacklistRemoteConf(ctx context.Context) {
 func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 	id := common.GTimeNowString("060102150405.999999999")
 	logger.Warn().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
-		Msg("Remote configuration fetcher is working")
+		Msg("Remote config fetcher started")
 
 	for {
 		wait := utils.FastIntn(cfg.RandomWait)
@@ -65,7 +65,7 @@ func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 		select {
 		case <-ctx.Done():
 			logger.Warn().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
-				Msg("Remote configuration fetcher exited")
+				Msg("Remote config fetcher exited")
 			return
 		default:
 		}
@@ -73,10 +73,10 @@ func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 		if !config.IsSkipRemoteConfig() {
 			if err := common.InvokeConfigMethod(cfg); err != nil {
 				sampler.Error().Err(err).Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
-					Msg("Failed to get remote configuration")
+					Msg("Failed to get remote config")
 			} else {
 				logger.Info().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
-					Msg("Execute remote configuration fetcher")
+					Msg("Execute remote config fetcher")
 			}
 		}
 		time.Sleep(cfg.GetConfDuration)
