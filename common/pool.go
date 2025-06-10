@@ -26,15 +26,15 @@ func poolRelease() {
 	ants.Release()
 }
 
-// NewChanxOf 初始化无限缓冲信道
-func NewChanxOf[T any](maxBufferSize ...int) *chanx.UnboundedChanOf[T] {
-	return NewChanxWithContextOf[T](context.Background(), maxBufferSize...)
+// NewChanx 初始化无限缓冲信道
+func NewChanx[T any](maxBufferSize ...int) *chanx.UnboundedChan[T] {
+	return NewChanxWithContext[T](context.Background(), maxBufferSize...)
 }
 
-func NewChanxWithContextOf[T any](ctx context.Context, maxBufferSize ...int) *chanx.UnboundedChanOf[T] {
+func NewChanxWithContext[T any](ctx context.Context, maxBufferSize ...int) *chanx.UnboundedChan[T] {
 	m := config.ChanxMaxBufCap
 	if len(maxBufferSize) > 0 {
 		m = maxBufferSize[0]
 	}
-	return chanx.NewUnboundedChanOf[T](ctx, config.ChanxInitCap, m)
+	return chanx.NewUnboundedChan[T](ctx, config.ChanxInitCap, m)
 }

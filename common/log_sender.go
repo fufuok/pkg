@@ -13,14 +13,14 @@ import (
 
 var (
 	// LogChan 日志缓存队列
-	LogChan *chanx.UnboundedChanOf[[]byte]
+	LogChan *chanx.UnboundedChan[[]byte]
 
 	// 日志发送接口地址
 	postAPI string
 )
 
 func initLogSender() {
-	LogChan = NewChanxOf[[]byte](config.ChanxInitCap)
+	LogChan = NewChanx[[]byte](config.ChanxInitCap)
 	go logSender()
 }
 
