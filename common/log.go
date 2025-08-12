@@ -294,3 +294,23 @@ func NewRedisLogger(useSampler ...bool) *RedisLogger {
 func (l *RedisLogger) Printf(_ context.Context, format string, v ...any) {
 	l.log().Error().Msgf(format, v...)
 }
+
+type AppLoggerWriter struct {
+	log func() *zerolog.Logger
+}
+
+// NewAppLoggerWriter 实现基于 Log 的 writer
+func NewAppLoggerWriter(useSampler ...bool) *AppLoggerWriter {
+	l := &AppLoggerWriter{
+		log: Log,
+	}
+	if len(useSampler) == 0 && AppLoggerUseSampler || len(useSampler) > 0 && useSampler[0] {
+		l.log = LogSampled
+	}
+	return l
+}
+
+func (l *AppLoggerWriter) Write(p []byte) (n int, err error) {
+	l.log().Log().Msg(utils.B2S(p))
+	return len(p), nil
+}
