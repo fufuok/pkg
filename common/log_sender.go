@@ -59,7 +59,7 @@ func logSender() {
 				if bb.Len() > 0 {
 					postLog(bb)
 				}
-				Log.Warn().Msg("Log sender exited")
+				Log().Warn().Msg("Log sender exited")
 				return
 			}
 
@@ -92,7 +92,7 @@ func postLog(bb *buffer.Buffer) {
 	_ = ants.Submit(func() {
 		defer bb.Put()
 		if _, err := req.SetBodyJsonBytes(bb.B).Post(postAPI); err != nil {
-			LogSampled.Warn().Err(err).Str("api", postAPI).Msg("Posting log")
+			LogSampled().Warn().Err(err).Str("api", postAPI).Msg("Posting log")
 		}
 	})
 }
@@ -106,7 +106,7 @@ func PostLog(bs []byte) {
 	// 推送日志数据到接口 POST JSON
 	_ = ants.Submit(func() {
 		if _, err := req.SetBodyJsonBytes(bs).Post(postAPI); err != nil {
-			LogSampled.Warn().Err(err).Str("api", postAPI).Msg("Posting log")
+			LogSampled().Warn().Err(err).Str("api", postAPI).Msg("Posting log")
 		}
 	})
 }

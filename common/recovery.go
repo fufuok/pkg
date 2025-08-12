@@ -13,7 +13,7 @@ var (
 func RecoverAlarm(err interface{}, trace []byte) {
 	info := utils.MustString(err)
 	more := utils.MustString(trace)
-	Log.Error().Str("error", info).Str("trace", more).Msg("Recovered and triggered alarm")
+	Log().Error().Str("error", info).Str("trace", more).Msg("Recovered and triggered alarm")
 	SendAlarm("", info, more)
 }
 
@@ -21,5 +21,5 @@ func RecoverAlarm(err interface{}, trace []byte) {
 func RecoverLogger(err interface{}, trace []byte) {
 	info := utils.MustString(err)
 	more := utils.MustString(trace)
-	Log.Error().Str("error", info).Str("trace", more).Msg("Recovered from panic")
+	Log().Error().Str("error", info).Str("trace", more).Msg("Recovered from panic")
 }

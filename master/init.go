@@ -28,8 +28,8 @@ func registerCommonFuncs() {
 
 // 注册框架级 Pipeline
 func registerPipeline() {
-	configPipelines = append([]Pipeline{&config.M{}}, configPipelines...)
-	mainPipelines = append([]Pipeline{&common.M{}, &crontab.M{}}, mainPipelines...)
+	configPipelines = append([]Pipeline{&config.M{}, &common.M{}}, configPipelines...)
+	mainPipelines = append([]Pipeline{&crontab.M{}}, mainPipelines...)
 	mainPipelines = append(mainPipelines, &addons{})
 }
 
