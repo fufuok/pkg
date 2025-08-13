@@ -82,4 +82,10 @@ func calcQPS(n uint64) (rate float64) {
 }
 
 // ResetStatistics 重置统计数据
-func ResetStatistics() {}
+func ResetStatistics() {
+	for _, counter := range httpCounter {
+		counter.In.Store(0)
+		counter.OK.Store(0)
+		counter.Err.Store(0)
+	}
+}
