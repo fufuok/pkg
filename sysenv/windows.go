@@ -5,6 +5,7 @@ package sysenv
 
 const (
 	BinApt       = "unknown"
+	BinBash      = "unknown"
 	BinDpkg      = "unknown"
 	BinNSLookup  = "unknown"
 	BinSystemctl = "unknown"

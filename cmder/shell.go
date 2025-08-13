@@ -1,9 +1,14 @@
+//go:build linux
+// +build linux
+
 package cmder
 
 import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/fufuok/pkg/sysenv"
 )
 
 var (
@@ -11,7 +16,7 @@ var (
 	DefaultShellTimeout = 10 * time.Second
 
 	// BashCmd 主命令绝对路径
-	BashCmd = []string{"/bin/bash"}
+	BashCmd = []string{sysenv.BinBash}
 )
 
 // RunShell 运行 Shell 脚本返回是否执行成功
