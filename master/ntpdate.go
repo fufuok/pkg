@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/fufuok/ntp"
+	"github.com/fufuok/utils"
 	"github.com/fufuok/utils/pools/timerpool"
 
 	"github.com/fufuok/pkg/common"
@@ -95,7 +96,8 @@ func getClockOffsetChan(ctx context.Context, dur time.Duration) (string, chan ti
 	if ntpName == "" {
 		return "", nil
 	}
-	if ntpName == "redis" && common.RedisDB != nil {
+	ntpName = utils.ToLower(ntpName)
+	if ntpName == "redis" && common.RedisDBInited.Load() {
 		return ntpName, common.ClockOffsetChanRedis(ctx, dur, common.RedisDB)
 	}
 	return ntpName, ntp.ClockOffsetChan(ctx, dur)

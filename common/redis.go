@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -10,31 +11,48 @@ import (
 
 // !!! 注意: 先执行 InitRedisDB(...) 初始化后再使用下面的方法
 
-// RedisDB Redis 连接
-var RedisDB redis.UniversalClient
+var (
+	// RedisDB Redis 连接
+	RedisDB redis.UniversalClient
+
+	// RedisDBInited RedisDB 是否已经初始化
+	RedisDBInited atomic.Bool
+)
 
 // InitRedisDB 指定已初始化的 *redis.Client
 func InitRedisDB(rdb redis.UniversalClient) {
 	RedisDB = rdb
+	RedisDBInited.Store(rdb != nil)
 }
 
 // TryLock 简单锁, 过期机制, 不主动解锁
 func TryLock(key string, ttl time.Duration) bool {
+	if !RedisDBInited.Load() {
+		return false
+	}
 	return RedisDB.SetNX(context.Background(), key, "", ttl).Val()
 }
 
 // LockKeyTTL 锁的剩余生命周期
 func LockKeyTTL(key string) time.Duration {
+	if !RedisDBInited.Load() {
+		return 0
+	}
 	return RedisDB.PTTL(context.Background(), key).Val()
 }
 
 // ClockOffsetChanRedis 基于 Redis, 周期性获取时钟偏移值
 func ClockOffsetChanRedis(ctx context.Context, interval time.Duration, rdb redis.UniversalClient) chan time.Duration {
+	if rdb == nil {
+		return nil
+	}
+
 	if interval == 0 {
 		interval = ClockOffsetInterval
 	} else if interval < ClockOffsetMinInterval {
 		interval = ClockOffsetMinInterval
 	}
+
 	var offsets []int
 	ch := make(chan time.Duration, 1)
 	go func() {
