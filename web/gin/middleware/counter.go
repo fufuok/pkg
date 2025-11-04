@@ -4,19 +4,19 @@ import (
 	"fmt"
 	"net/http"
 	"sync/atomic"
-	"time"
 
 	"github.com/fufuok/utils"
 	"github.com/gin-gonic/gin"
+
+	"github.com/fufuok/pkg/kit"
 )
 
 var (
 	// 指定路由名称计数
 	httpCounter = make(map[string]*httpCount)
 
-	// 上一次总请求计数和值对应的时间点
-	httpTotal     uint64
-	httpTotalTime time.Time
+	// 请求速率统计
+	httpQPS kit.RateState
 )
 
 type httpCount struct {
@@ -65,20 +65,9 @@ func CounterStats() map[string]any {
 	stats["/"] = fmt.Sprintf("In: %s  Ok: %s  Err: %s  Running: %d",
 		utils.Commau(ii), utils.Commau(oo), utils.Commau(ee), bb)
 
-	// 请求速率 (前后两次刷新时间)
-	stats["QPS"] = calcQPS(ii)
+	// 请求速率
+	stats["QPS"] = httpQPS.Rate(ii)
 	return stats
-}
-
-func calcQPS(n uint64) (rate float64) {
-	now := time.Now()
-	if httpTotal > 0 && n > httpTotal {
-		rate = float64(n-httpTotal) / now.Sub(httpTotalTime).Seconds()
-		rate = utils.Round(rate, 2)
-	}
-	httpTotal = n
-	httpTotalTime = now
-	return
 }
 
 // ResetStatistics 重置统计数据
