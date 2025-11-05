@@ -38,6 +38,7 @@ type Job struct {
 
 	// 任务是否被调度运行中
 	running atomic.Bool
+
 	// 单例执行锁
 	runningMu sync.Mutex
 }
@@ -103,17 +104,20 @@ func (j *Job) IsRunning() bool {
 	return j.running.Load()
 }
 
+// 从运行中切换到停止
+func (j *Job) runningToStop() bool {
+	return j.running.CompareAndSwap(true, false)
+}
+
 func (j *Job) Stop() {
-	if !j.IsRunning() {
+	if !j.runningToStop() {
 		return
 	}
 	logger.Warn().Str("job", j.name).Str("cron", j.spec).Time("prev", j.Prev()).Msg("Job stopped")
 	jobs.Delete(j.name)
-	j.running.Store(false)
 	crontab.Remove(j.id)
 	if j.cancel != nil {
 		j.cancel()
-		j.cancel = nil
 	}
 }
 
