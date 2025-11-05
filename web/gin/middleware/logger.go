@@ -26,6 +26,10 @@ func DefaultLogCondition(c *gin.Context, elapsed time.Duration) bool {
 		(elapsed > config.WebLogSlowResponse || c.Writer.Status() >= config.WebLogMinStatusCode)
 }
 
+func AllLogCondition(*gin.Context, time.Duration) bool {
+	return config.Config().LogConf.PostAPI != ""
+}
+
 // WebLogger Web 日志, 记录错误日志, 推送请求日志到接口
 func WebLogger(cond LogCondition) gin.HandlerFunc {
 	gin.Logger()

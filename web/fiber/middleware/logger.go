@@ -18,6 +18,10 @@ func DefaultLogCondition(c *fiber.Ctx, elapsed time.Duration) bool {
 	return elapsed > config.WebLogSlowResponse || c.Response().StatusCode() >= config.WebLogMinStatusCode
 }
 
+func AllLogCondition(*fiber.Ctx, time.Duration) bool {
+	return true
+}
+
 // WebLogger Web 日志
 func WebLogger(cond LogCondition, withBody ...bool) fiber.Handler {
 	if cond == nil {
