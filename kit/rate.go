@@ -23,15 +23,22 @@ type RateState struct {
 }
 
 // NewRateState 创建速率计算器, 可选设置最小保护时间间隔, 默认 1 秒
-func NewRateState(second ...float64) *RateState {
+func NewRateState(seconds ...float64) *RateState {
 	sec := 1.0
-	if len(second) > 0 {
-		sec = second[0]
+	if len(seconds) > 0 {
+		sec = seconds[0]
 	}
 	r := &RateState{
 		minSecond: sec,
 	}
 	return r
+}
+
+// SetMinSecond 设置最小时间间隔 (秒)
+//
+//go:norace
+func (r *RateState) SetMinSecond(second float64) {
+	r.minSecond = second
 }
 
 // Rate 计算并返回速率(每秒), 返回最近两次触达计算的请求时间间隔之间的计数增长平均速率

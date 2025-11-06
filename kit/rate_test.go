@@ -66,28 +66,28 @@ func TestRateState_ZeroValue(t *testing.T) {
 	t.Run("零值结构体可以直接使用", func(t *testing.T) {
 		// 测试零值结构体是否可以直接使用
 		var rate RateState
-		
+
 		// 第一次调用应该返回0
 		rate1 := rate.Rate(100)
 		assert.Equal(t, float64(0), rate1)
-		
+
 		// 模拟时间流逝
 		rate.lastTime = rate.lastTime.Add(-2 * time.Second)
-		
+
 		// 第二次调用应该计算速率
 		rate2 := rate.Rate(200)
 		assert.Equal(t, float64(50), rate2) // (200-100)/2 = 50
 	})
-	
+
 	t.Run("零值结构体默认最小时间间隔", func(t *testing.T) {
 		var rate RateState
-		
+
 		// 检查默认最小时间间隔是否为1.0秒
 		rate.Rate(100) // 触发初始化
-		
+
 		// 模拟时间流逝但不足1秒
 		rate.lastTime = rate.lastTime.Add(-500 * time.Millisecond)
-		
+
 		// 应该返回上次速率（0），因为时间间隔不足
 		rateResult := rate.Rate(200)
 		assert.Equal(t, float64(0), rateResult)
@@ -121,7 +121,7 @@ func TestNewRateState(t *testing.T) {
 		// 模拟时间流逝但不足2秒
 		rs.lastTime = rs.lastTime.Add(-1 * time.Second)
 		rate := rs.Rate(200)
-		// 应该返回上次速率（0），因为时间间隔不足, 且计数器未改变
+		// 应该返回上次速率（0），因为时间间隔不足, 且计数器不改变
 		assert.Equal(t, float64(0), rate)
 
 		// 模拟时间流逝超过2秒
@@ -129,5 +129,47 @@ func TestNewRateState(t *testing.T) {
 		rate = rs.Rate(300)
 		// 应该计算新的速率 (200/2 = 100)
 		assert.Equal(t, float64(100), rate)
+	})
+}
+
+// 新增测试用例：测试 SetMinSecond 方法
+func TestRateState_SetMinSecond(t *testing.T) {
+	t.Run("设置最小时间间隔", func(t *testing.T) {
+		rs := NewRateState()
+		// 默认应该是1秒
+		assert.Equal(t, 1.0, rs.minSecond)
+
+		// 设置为0.5秒
+		rs.SetMinSecond(0.5)
+		assert.Equal(t, 0.5, rs.minSecond)
+
+		rs.Rate(100) // 初始化
+
+		// 模拟时间流逝0.6秒，大于0.5秒
+		rs.lastTime = rs.lastTime.Add(-600 * time.Millisecond)
+		rate := rs.Rate(200)
+		// 应该计算新的速率 (100/0.6 ≈ 166.67)
+		assert.Equal(t, 166.67, rate)
+	})
+
+	t.Run("零值结构体设置最小时间间隔", func(t *testing.T) {
+		var rs RateState
+		// 设置为2秒
+		rs.SetMinSecond(2.0)
+		assert.Equal(t, 2.0, rs.minSecond)
+
+		rs.Rate(100) // 初始化
+
+		// 模拟时间流逝1.5秒，小于2秒
+		rs.lastTime = rs.lastTime.Add(-1500 * time.Millisecond)
+		rate := rs.Rate(200)
+		// 应该返回上次速率（0），因为时间间隔不足, 且计数器值不改变
+		assert.Equal(t, float64(0), rate)
+
+		// 模拟时间流逝再增加1秒，总共2.5秒，大于2秒
+		rs.lastTime = rs.lastTime.Add(-1 * time.Second)
+		rate = rs.Rate(300)
+		// 应该计算新的速率 (200/2.5 = 80)
+		assert.Equal(t, float64(80), rate)
 	})
 }
