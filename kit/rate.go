@@ -38,7 +38,9 @@ func NewRateState(seconds ...float64) *RateState {
 //
 //go:norace
 func (r *RateState) SetMinSecond(second float64) {
-	r.minSecond = second
+	if r.minSecond != second {
+		r.minSecond = second
+	}
 }
 
 // Rate 计算并返回速率(每秒), 返回最近两次触达计算的请求时间间隔之间的计数增长平均速率
@@ -47,6 +49,12 @@ func (r *RateState) SetMinSecond(second float64) {
 // 若需要得到相对精准的结果, 按指定时间间隔调用 Rate 函数
 // -1 表示计数器被重置或无效, 0 表示无变化
 func (r *RateState) Rate(count uint64) float64 {
+	rate, _ := r.RateWithLastCount(count)
+	return rate
+}
+
+// RateWithLastCount 获取速率和上次计数
+func (r *RateState) RateWithLastCount(count uint64) (float64, uint64) {
 	// 确保零值实例默认 minSecond 值为: 1.0
 	r.initOnce.Do(func() {
 		if r.minSecond <= 0 {
@@ -56,13 +64,14 @@ func (r *RateState) Rate(count uint64) float64 {
 
 	// 异常数据 或 重置计数器
 	if count == 0 || count < r.lastCount {
+		lcount := r.lastCount
 		r.lastCount = 0
-		return -1
+		return -1, lcount
 	}
 
 	// 避免频繁计算, 允许使用旧值
 	if !r.tryLock.CompareAndSwap(0, 1) {
-		return r.lastRate
+		return r.lastRate, r.lastCount
 	}
 	defer r.tryLock.Store(0)
 
@@ -72,24 +81,25 @@ func (r *RateState) Rate(count uint64) float64 {
 		r.lastRate = 0
 		r.lastTime = now
 		r.lastCount = count
-		return 0
+		return 0, 0
 	}
 
 	// 计数未改变时: 不更新时间
 	if count == r.lastCount {
-		return 0
+		return 0, r.lastCount
 	}
 
 	// 计算时间差 (秒), 至少达到 n 秒的间隔才计算速率
 	sec := now.Sub(r.lastTime).Seconds()
 	if sec < r.minSecond {
-		return r.lastRate
+		return r.lastRate, r.lastCount
 	}
 
 	// 计算速率 = (当前总数 - 上次总数) / 时间差
-	rate := utils.Round(float64(count-r.lastCount)/sec, 2)
+	lcount := r.lastCount
+	rate := utils.Round(float64(count-lcount)/sec, 2)
 	r.lastRate = rate
 	r.lastTime = now
 	r.lastCount = count
-	return rate
+	return rate, lcount
 }

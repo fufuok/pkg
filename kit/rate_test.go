@@ -172,4 +172,49 @@ func TestRateState_SetMinSecond(t *testing.T) {
 		// 应该计算新的速率 (200/2.5 = 80)
 		assert.Equal(t, float64(80), rate)
 	})
+
+	t.Run("SetMinSecond避免不必要的更新", func(t *testing.T) {
+		rs := NewRateState(1.0)
+		original := rs.minSecond
+
+		// 设置相同的值，应该不更新
+		rs.SetMinSecond(1.0)
+		assert.Equal(t, original, rs.minSecond)
+
+		// 设置不同的值，应该更新
+		rs.SetMinSecond(2.0)
+		assert.Equal(t, 2.0, rs.minSecond)
+	})
+}
+
+// 新增测试用例：测试 RateWithLastCount 方法
+func TestRateState_RateWithLastCount(t *testing.T) {
+	t.Run("获取速率和上次计数", func(t *testing.T) {
+		rs := NewRateState()
+		rate, lastCount := rs.RateWithLastCount(100)
+		assert.Equal(t, float64(0), rate)     // 首次调用返回0
+		assert.Equal(t, uint64(0), lastCount) // 首次调用返回0
+
+		// 模拟时间流逝
+		rs.lastTime = rs.lastTime.Add(-2 * time.Second)
+		rate, lastCount = rs.RateWithLastCount(200)
+		assert.Equal(t, float64(50), rate)      // (200-100)/2 = 50
+		assert.Equal(t, uint64(100), lastCount) // 上次计数是100
+	})
+
+	t.Run("计数器重置情况", func(t *testing.T) {
+		rs := NewRateState()
+		rs.RateWithLastCount(100)                   // 初始化
+		rate, lastCount := rs.RateWithLastCount(50) // 计数器重置
+		assert.Equal(t, float64(-1), rate)
+		assert.Equal(t, uint64(100), lastCount)
+	})
+
+	t.Run("计数未改变情况", func(t *testing.T) {
+		rs := NewRateState()
+		rs.RateWithLastCount(100)                    // 初始化
+		rate, lastCount := rs.RateWithLastCount(100) // 计数未改变
+		assert.Equal(t, float64(0), rate)
+		assert.Equal(t, uint64(100), lastCount) // 上次计数是100
+	})
 }
