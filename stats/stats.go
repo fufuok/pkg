@@ -205,13 +205,26 @@ func MetricStats() map[string]any {
 		"LastGCAgo": timeSinceLastGC.String(),
 	}
 
-	bs := bytespool.RuntimeStats()
-	metrics["BytesPool"] = map[string]string{
-		"Big":   utils.HumanIBytes(bs["Big"]),
-		"New":   utils.HumanIBytes(bs["New"]),
-		"Reuse": utils.HumanIBytes(bs["Reuse"]),
+	if bsStats := BytesPoolStats(); bsStats != nil {
+		metrics["BytesPool"] = bsStats
 	}
 	return metrics
+}
+
+func BytesPoolStats() map[string]any {
+	ss := bytespool.RuntimeStatsSummary(10)
+	if ss.TopPools == nil {
+		return nil
+	}
+
+	m := map[string]any{
+		"NewBytes":    utils.HumanIBytes(ss.NewBytes),
+		"OutBytes":    utils.HumanIBytes(ss.OutBytes),
+		"OutCount":    utils.Commau(ss.OutCount),
+		"ReusedBytes": utils.HumanIBytes(ss.ReusedBytes),
+		"TopPools":    ss.TopPools,
+	}
+	return m
 }
 
 // MainStats 主程序系统指标
