@@ -22,7 +22,7 @@ type ptoken struct {
 	_ [cacheLineSize - 4]byte
 }
 
-// A Counter is a striped int64 counter.
+// Counter is a striped int64 counter that supports negative values.
 //
 // Should be preferred over a single atomically updated int64
 // counter in high contention scenarios.
@@ -33,8 +33,25 @@ type Counter struct {
 	mask    uint32
 }
 
+// UCounter is a striped uint64 counter that only supports non-negative values.
+//
+// Should be preferred over a single atomically updated uint64
+// counter in high contention scenarios.
+//
+// A UCounter must not be copied after first use.
+type UCounter struct {
+	stripes []uStripe
+	mask    uint32
+}
+
 type cstripe struct {
-	c int64
+	c atomic.Int64
+	// Padding to prevent false sharing.
+	_ [cacheLineSize - 8]byte
+}
+
+type uStripe struct {
+	c atomic.Uint64
 	// Padding to prevent false sharing.
 	_ [cacheLineSize - 8]byte
 }
@@ -44,6 +61,16 @@ func NewCounter() *Counter {
 	nstripes := NextPowOf2(Parallelism())
 	c := Counter{
 		stripes: make([]cstripe, nstripes),
+		mask:    nstripes - 1,
+	}
+	return &c
+}
+
+// NewUCounter creates a new UCounter instance.
+func NewUCounter() *UCounter {
+	nstripes := NextPowOf2(Parallelism())
+	c := UCounter{
+		stripes: make([]uStripe, nstripes),
 		mask:    nstripes - 1,
 	}
 	return &c
@@ -61,6 +88,10 @@ func (c *Counter) Dec() {
 
 // Add adds the delta to the counter.
 func (c *Counter) Add(delta int64) {
+	if delta == 0 {
+		return
+	}
+
 	t, ok := ptokenPool.Get().(*ptoken)
 	if !ok {
 		t = new(ptoken)
@@ -68,8 +99,8 @@ func (c *Counter) Add(delta int64) {
 	}
 	for {
 		stripe := &c.stripes[t.idx&c.mask]
-		cnt := atomic.LoadInt64(&stripe.c)
-		if atomic.CompareAndSwapInt64(&stripe.c, cnt, cnt+delta) {
+		cnt := stripe.c.Load()
+		if stripe.c.CompareAndSwap(cnt, cnt+delta) {
 			break
 		}
 		// Give a try with another randomly selected stripe.
@@ -79,13 +110,13 @@ func (c *Counter) Add(delta int64) {
 }
 
 // Value returns the current counter value.
-// The returned value may not include all of the latest operations in
+// The returned value may not include all the latest operations in
 // presence of concurrent modifications of the counter.
 func (c *Counter) Value() int64 {
 	v := int64(0)
 	for i := 0; i < len(c.stripes); i++ {
 		stripe := &c.stripes[i]
-		v += atomic.LoadInt64(&stripe.c)
+		v += stripe.c.Load()
 	}
 	return v
 }
@@ -96,6 +127,57 @@ func (c *Counter) Value() int64 {
 func (c *Counter) Reset() {
 	for i := 0; i < len(c.stripes); i++ {
 		stripe := &c.stripes[i]
-		atomic.StoreInt64(&stripe.c, 0)
+		stripe.c.Store(0)
+	}
+}
+
+// Inc increments the counter by 1.
+func (c *UCounter) Inc() {
+	c.Add(1)
+}
+
+// Add adds the delta to the counter.
+// It panics if delta is negative.
+func (c *UCounter) Add(delta uint64) {
+	if delta == 0 {
+		return
+	}
+
+	t, ok := ptokenPool.Get().(*ptoken)
+	if !ok {
+		t = new(ptoken)
+		t.idx = runtime_cheaprand()
+	}
+	for {
+		stripe := &c.stripes[t.idx&c.mask]
+		cnt := stripe.c.Load()
+		if stripe.c.CompareAndSwap(cnt, cnt+delta) {
+			break
+		}
+		// Give a try with another randomly selected stripe.
+		t.idx = runtime_cheaprand()
+	}
+	ptokenPool.Put(t)
+}
+
+// Value returns the current counter value.
+// The returned value may not include all the latest operations in
+// presence of concurrent modifications of the counter.
+func (c *UCounter) Value() uint64 {
+	v := uint64(0)
+	for i := 0; i < len(c.stripes); i++ {
+		stripe := &c.stripes[i]
+		v += stripe.c.Load()
+	}
+	return v
+}
+
+// Reset resets the counter to zero.
+// This method should only be used when it is known that there are
+// no concurrent modifications of the counter.
+func (c *UCounter) Reset() {
+	for i := 0; i < len(c.stripes); i++ {
+		stripe := &c.stripes[i]
+		stripe.c.Store(0)
 	}
 }
