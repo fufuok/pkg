@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"fmt"
-	"sync/atomic"
 
 	"github.com/fufuok/utils"
 	"github.com/gofiber/fiber/v2"
@@ -19,16 +18,20 @@ var (
 )
 
 type httpCount struct {
-	In  atomic.Uint64
-	OK  atomic.Uint64
-	Err atomic.Uint64
+	In  *kit.UCounter
+	OK  *kit.UCounter
+	Err *kit.UCounter
 }
 
 // HTTPCounter 请求简单计数
 func HTTPCounter(name string) fiber.Handler {
 	counter, ok := httpCounter[name]
 	if !ok {
-		counter = &httpCount{}
+		counter = &httpCount{
+			In:  kit.NewUCounter(),
+			OK:  kit.NewUCounter(),
+			Err: kit.NewUCounter(),
+		}
 		httpCounter[name] = counter
 	}
 	return func(c *fiber.Ctx) (err error) {

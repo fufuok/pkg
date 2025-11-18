@@ -3,7 +3,6 @@ package middleware
 import (
 	"fmt"
 	"net/http"
-	"sync/atomic"
 
 	"github.com/fufuok/utils"
 	"github.com/gin-gonic/gin"
@@ -20,16 +19,20 @@ var (
 )
 
 type httpCount struct {
-	In  atomic.Uint64
-	OK  atomic.Uint64
-	Err atomic.Uint64
+	In  *kit.UCounter
+	OK  *kit.UCounter
+	Err *kit.UCounter
 }
 
 // HTTPCounter 请求简单计数
 func HTTPCounter(name string) gin.HandlerFunc {
 	counter, ok := httpCounter[name]
 	if !ok {
-		counter = &httpCount{}
+		counter = &httpCount{
+			In:  kit.NewUCounter(),
+			OK:  kit.NewUCounter(),
+			Err: kit.NewUCounter(),
+		}
 		httpCounter[name] = counter
 	}
 	return func(c *gin.Context) {
