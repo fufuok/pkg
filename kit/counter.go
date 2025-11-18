@@ -1,5 +1,7 @@
 // Package kit
 // Reference: https://github.com/puzpuzpuz/xsync/blob/main/counter.go
+// A Counter is a striped int64 counter inspired by the j.u.c.a.LongAdder class from the Java standard library.
+// Works better in comparison with a single atomically updated int64 counter in high contention scenarios.
 package kit
 
 import (
