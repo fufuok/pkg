@@ -37,6 +37,42 @@ func TestCounterAdd(t *testing.T) {
 	}
 }
 
+func TestCounterLoad(t *testing.T) {
+	c := NewCounter()
+	c.Add(100)
+	if v := c.Load(); v != int64(100) {
+		t.Fatalf("Load got %v, want %d", v, 100)
+	}
+	
+	c.Add(-50)
+	if v := c.Load(); v != int64(50) {
+		t.Fatalf("Load got %v, want %d", v, 50)
+	}
+}
+
+func TestCounterStore(t *testing.T) {
+	c := NewCounter()
+	c.Add(100)
+	
+	// Store a new value
+	c.Store(42)
+	if v := c.Value(); v != int64(42) {
+		t.Fatalf("Value got %v, want %d", v, 42)
+	}
+	
+	// Store zero
+	c.Store(0)
+	if v := c.Value(); v != int64(0) {
+		t.Fatalf("Value got %v, want %d", v, 0)
+	}
+	
+	// Store negative value
+	c.Store(-100)
+	if v := c.Value(); v != int64(-100) {
+		t.Fatalf("Value got %v, want %d", v, -100)
+	}
+}
+
 func TestCounterNegative(t *testing.T) {
 	c := NewCounter()
 	c.Add(-100)
@@ -74,6 +110,34 @@ func TestUCounterAdd(t *testing.T) {
 			t.Fatalf("got %v, want %d", v, i*42)
 		}
 		c.Add(42)
+	}
+}
+
+func TestUCounterLoad(t *testing.T) {
+	c := NewUCounter()
+	for i := range 100 {
+		if v := c.Load(); v != uint64(i) {
+			t.Fatalf("Load got %v, want %d", v, i)
+		}
+		c.Inc()
+	}
+}
+
+func TestUCounterStore(t *testing.T) {
+	c := NewUCounter()
+	c.Add(42)
+	if v := c.Value(); v != 42 {
+		t.Fatalf("Value got %v, want %d", v, 42)
+	}
+	
+	c.Store(100)
+	if v := c.Value(); v != 100 {
+		t.Fatalf("Value got %v, want %d", v, 100)
+	}
+	
+	c.Store(0)
+	if v := c.Value(); v != 0 {
+		t.Fatalf("Value got %v, want %d", v, 0)
 	}
 }
 

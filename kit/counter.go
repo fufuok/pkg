@@ -109,6 +109,26 @@ func (c *Counter) Add(delta int64) {
 	ptokenPool.Put(t)
 }
 
+// Load returns the current counter value.
+// It is equivalent to Value(), added for API consistency with atomic types.
+func (c *Counter) Load() int64 {
+	return c.Value()
+}
+
+// Store sets the counter value to the given newValue.
+// This operation resets all stripes and stores the entire value in the first stripe.
+// Note: This operation is not atomic and should be used with care in concurrent environments.
+func (c *Counter) Store(val int64) {
+	for i := 0; i < len(c.stripes); i++ {
+		stripe := &c.stripes[i]
+		if i == 0 {
+			stripe.c.Store(val)
+		} else {
+			stripe.c.Store(0)
+		}
+	}
+}
+
 // Value returns the current counter value.
 // The returned value may not include all the latest operations in
 // presence of concurrent modifications of the counter.
@@ -158,6 +178,26 @@ func (c *UCounter) Add(delta uint64) {
 		t.idx = runtime_cheaprand()
 	}
 	ptokenPool.Put(t)
+}
+
+// Load returns the current counter value.
+// It is equivalent to Value(), added for API consistency with atomic types.
+func (c *UCounter) Load() uint64 {
+	return c.Value()
+}
+
+// Store sets the counter value to the given newValue.
+// This operation resets all stripes and stores the entire value in the first stripe.
+// Note: This operation is not atomic and should be used with care in concurrent environments.
+func (c *UCounter) Store(val uint64) {
+	for i := 0; i < len(c.stripes); i++ {
+		stripe := &c.stripes[i]
+		if i == 0 {
+			stripe.c.Store(val)
+		} else {
+			stripe.c.Store(0)
+		}
+	}
 }
 
 // Value returns the current counter value.
