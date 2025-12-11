@@ -39,12 +39,15 @@ type Job struct {
 	// 任务是否被调度运行中
 	running atomic.Bool
 
+	// 任务是否已被执行过
+	executed atomic.Bool
+
 	// 单例执行锁
 	runningMu sync.Mutex
 }
 
 // 添加或更新任务, 返回工作中的任务对象
-func (j *Job) start(ctx context.Context, r Runner, opts ...cron.EntryOption) (*Job, error) {
+func (j *Job) start(ctx context.Context, r Runner, once bool, opts ...cron.EntryOption) (*Job, error) {
 	j.ctx, j.cancel = context.WithCancel(ctx)
 	cmd := func() {
 		if skipIfStillRunning.Load() {
@@ -57,6 +60,11 @@ func (j *Job) start(ctx context.Context, r Runner, opts ...cron.EntryOption) (*J
 			defer j.runningMu.Unlock()
 		}
 
+		if once && !j.executed.CompareAndSwap(false, true) {
+			logger.Info().Str("job", j.name).Msg("once job already executed, skipping")
+			return
+		}
+
 		start := time.Now()
 		rid := xid.NewString()
 		logger.Info().Str("job", j.name).Str("rid", rid).Msg("starting job")
@@ -67,6 +75,10 @@ func (j *Job) start(ctx context.Context, r Runner, opts ...cron.EntryOption) (*J
 		}
 
 		logger.Info().Str("job", j.name).Str("rid", rid).Dur("took", time.Since(start)).Msg("job completed")
+
+		if once {
+			j.Stop()
+		}
 	}
 
 	id, err := crontab.AddFunc(j.spec, cmd, opts...)
@@ -123,6 +135,16 @@ func (j *Job) Stop() {
 
 // AddJob 添加任务
 func AddJob(ctx context.Context, name, spec string, runner Runner, opts ...cron.EntryOption) (*Job, error) {
+	return addJob(ctx, name, spec, runner, false, opts...)
+}
+
+// AddOnceJob 添加单次任务, 只会执行一次，执行后自动移除
+func AddOnceJob(ctx context.Context, name, spec string, runner Runner, opts ...cron.EntryOption) (*Job, error) {
+	return addJob(ctx, name, spec, runner, true, opts...)
+}
+
+// 添加任务
+func addJob(ctx context.Context, name, spec string, runner Runner, once bool, opts ...cron.EntryOption) (*Job, error) {
 	if job, ok := GetJob(name); ok {
 		if job.IsRunning() && job.spec == spec {
 			logger.Info().Str(name, spec).Msg("skipping job add")
@@ -134,7 +156,7 @@ func AddJob(ctx context.Context, name, spec string, runner Runner, opts ...cron.
 		name: name,
 		spec: spec,
 	}
-	return j.start(ctx, runner, opts...)
+	return j.start(ctx, runner, once, opts...)
 }
 
 // GetJob 通过名称获取任务对象
