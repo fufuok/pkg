@@ -173,9 +173,11 @@ func TestJobExecutionWithSkipIfStillRunning(t *testing.T) {
 			skipIfStillRunning.Store(false)
 		}()
 
+		sched := make(chan int, 2)
 		// 创建一个执行时间较长的 Runner
 		mockRunner := &MockRunner{
 			runFunc: func() {
+				sched <- 1
 				// 模拟执行时间超过调度间隔
 				time.Sleep(2 * time.Second)
 			},
@@ -186,8 +188,10 @@ func TestJobExecutionWithSkipIfStillRunning(t *testing.T) {
 		job, err := AddJob(ctx, "overlap_test", "@every 1s", mockRunner)
 		assert.Nil(t, err)
 
+		<-sched
+
 		// 等待足够长时间让任务被调度多次
-		time.Sleep(2*time.Second + 200*time.Millisecond)
+		time.Sleep(1*time.Second + 500*time.Millisecond)
 
 		// 由于启用了 skipIfStillRunning，应该只执行了一次
 		assert.Equal(t, 1, mockRunner.runCount)
@@ -197,9 +201,11 @@ func TestJobExecutionWithSkipIfStillRunning(t *testing.T) {
 	})
 
 	t.Run("not_skip_if_still_running_blocks_overlap", func(t *testing.T) {
+		sched := make(chan int, 2)
 		// 创建一个执行时间较长的 Runner
 		mockRunner := &MockRunner{
 			runFunc: func() {
+				sched <- 1
 				// 模拟执行时间超过调度间隔
 				time.Sleep(2 * time.Second)
 			},
@@ -210,8 +216,10 @@ func TestJobExecutionWithSkipIfStillRunning(t *testing.T) {
 		job, err := AddJob(ctx, "overlap_test", "@every 1s", mockRunner)
 		assert.Nil(t, err)
 
+		<-sched
+
 		// 等待足够长时间让任务被调度多次
-		time.Sleep(2*time.Second + 200*time.Millisecond)
+		time.Sleep(1*time.Second + 500*time.Millisecond)
 
 		// 由于未启用了 skipIfStillRunning，应该只执行了 2 次
 		assert.Equal(t, 2, mockRunner.runCount)

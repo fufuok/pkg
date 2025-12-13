@@ -274,16 +274,16 @@ func MainStats() map[string]any {
 }
 
 func WebStats() map[string]any {
-	cfg := config.Config()
+	cfg := config.Config().WebConf
 	stats := map[string]any{
 		// HTTP 服务是否关闭了减少内存占用选项
-		"DisableReduceMemoryUsage": cfg.WebConf.DisableReduceMemoryUsage,
+		"DisableReduceMemoryUsage": cfg.DisableReduceMemoryUsage,
 		// HTTP 服务是否关闭了 keep-alive
-		"DisableKeepalive": cfg.WebConf.DisableKeepalive,
+		"DisableKeepalive": cfg.DisableKeepalive,
 		// 是否启用了 HTTPS
-		"HTTPS": cfg.WebConf.ServerHttpsAddr != "",
+		"HTTPS": cfg.ServerHttpsAddr != "",
 		// 请求体大小限制
-		"BodyLimit": utils.HumanIntIBytes(cfg.WebConf.BodyLimit),
+		"BodyLimit": utils.HumanIntIBytes(cfg.BodyLimit),
 	}
 	return stats
 }

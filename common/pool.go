@@ -10,15 +10,18 @@ import (
 	"github.com/fufuok/pkg/config"
 )
 
-// expiryDuration is the interval time to clean up those expired workers.
-const expiryDuration = 10 * time.Second
+// DefaultWorkerExpiry is the interval time to clean up those expired workers.
+const DefaultWorkerExpiry = 10 * time.Second
 
 func initPool() {
 	ants.SetDefaultAntsPool(
 		ants.DefaultAntsPoolSize,
-		ants.WithExpiryDuration(expiryDuration),
+		ants.WithExpiryDuration(DefaultWorkerExpiry),
 		ants.WithNonblocking(true),
 		ants.WithLogger(NewAppLogger()),
+		ants.WithPanicHandler(func(r any) {
+			LogSampled().Error().Msgf("Recovery worker: %s", r)
+		}),
 	)
 }
 
