@@ -3,6 +3,7 @@ package crontab
 import (
 	"context"
 	"errors"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/fufuok/cache/xsync"
 	"github.com/fufuok/cron"
 	"github.com/fufuok/utils/xid"
+	"github.com/rs/zerolog"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/logger"
@@ -32,6 +34,9 @@ type Job struct {
 	name string
 	spec string
 
+	// 附加的任务字段
+	fields map[string]any
+
 	id     cron.EntryID
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -44,6 +49,40 @@ type Job struct {
 
 	// 单例执行锁
 	runningMu sync.Mutex
+}
+
+func (j *Job) Name() string {
+	return j.name
+}
+
+func (j *Job) Next() time.Time {
+	if !j.IsRunning() {
+		return time.Time{}
+	}
+	return crontab.Entry(j.id).Next
+}
+
+func (j *Job) Prev() time.Time {
+	if !j.IsRunning() {
+		return time.Time{}
+	}
+	return crontab.Entry(j.id).Prev
+}
+
+func (j *Job) IsRunning() bool {
+	return j.running.Load()
+}
+
+func (j *Job) Stop() {
+	if !j.runningToStop() {
+		return
+	}
+	logger.Warn().Str("job", j.name).Str("cron", j.spec).Time("prev", j.Prev()).Msg("Job stopped")
+	jobs.Delete(j.name)
+	crontab.Remove(j.id)
+	if j.cancel != nil {
+		j.cancel()
+	}
 }
 
 // 添加或更新任务, 返回工作中的任务对象
@@ -71,7 +110,8 @@ func (j *Job) start(ctx context.Context, r Runner, once bool, opts ...cron.Entry
 
 		err := r.Run(j.ctx)
 		if err != nil {
-			alarm.Error().Err(err).Str("job", j.name).Str("rid", rid).Dur("took", time.Since(start)).Msg("Job execution failed")
+			logEvent := alarm.Error().Err(err).Str("job", j.name).Str("rid", rid).Dur("took", time.Since(start))
+			j.addLogFields(logEvent).Msg("Job execution failed")
 		}
 
 		logger.Info().Str("job", j.name).Str("rid", rid).Dur("took", time.Since(start)).Msg("job completed")
@@ -94,26 +134,15 @@ func (j *Job) start(ctx context.Context, r Runner, once bool, opts ...cron.Entry
 	return j, nil
 }
 
-func (j *Job) Name() string {
-	return j.name
-}
-
-func (j *Job) Next() time.Time {
-	if !j.IsRunning() {
-		return time.Time{}
+// 处理日志字段
+func (j *Job) addLogFields(event *zerolog.Event) *zerolog.Event {
+	if j.fields == nil {
+		return event
 	}
-	return crontab.Entry(j.id).Next
-}
-
-func (j *Job) Prev() time.Time {
-	if !j.IsRunning() {
-		return time.Time{}
+	for k, v := range j.fields {
+		event.Any(k, v)
 	}
-	return crontab.Entry(j.id).Prev
-}
-
-func (j *Job) IsRunning() bool {
-	return j.running.Load()
+	return event
 }
 
 // 从运行中切换到停止
@@ -121,30 +150,30 @@ func (j *Job) runningToStop() bool {
 	return j.running.CompareAndSwap(true, false)
 }
 
-func (j *Job) Stop() {
-	if !j.runningToStop() {
-		return
-	}
-	logger.Warn().Str("job", j.name).Str("cron", j.spec).Time("prev", j.Prev()).Msg("Job stopped")
-	jobs.Delete(j.name)
-	crontab.Remove(j.id)
-	if j.cancel != nil {
-		j.cancel()
-	}
-}
-
 // AddJob 添加任务
 func AddJob(ctx context.Context, name, spec string, runner Runner, opts ...cron.EntryOption) (*Job, error) {
-	return addJob(ctx, name, spec, runner, false, opts...)
+	return addJob(ctx, name, spec, runner, false, nil, opts...)
 }
 
 // AddOnceJob 添加单次任务, 只会执行一次，执行后自动移除
 func AddOnceJob(ctx context.Context, name, spec string, runner Runner, opts ...cron.EntryOption) (*Job, error) {
-	return addJob(ctx, name, spec, runner, true, opts...)
+	return addJob(ctx, name, spec, runner, true, nil, opts...)
+}
+
+// AddJobWithFields 添加带自定义日志字段的任务
+// fields: 任务执行时附加到日志中的自定义字段, 这些字段会在错误日志中特别有用
+func AddJobWithFields(ctx context.Context, name, spec string, runner Runner, fields map[string]any, opts ...cron.EntryOption) (*Job, error) {
+	return addJob(ctx, name, spec, runner, false, fields, opts...)
+}
+
+// AddOnceJobWithFields 添加单次任务, 只会执行一次，执行后自动移除
+// fields: 任务执行时附加到日志中的自定义字段, 这些字段会在错误日志中特别有用
+func AddOnceJobWithFields(ctx context.Context, name, spec string, runner Runner, fields map[string]any, opts ...cron.EntryOption) (*Job, error) {
+	return addJob(ctx, name, spec, runner, true, fields, opts...)
 }
 
 // 添加任务
-func addJob(ctx context.Context, name, spec string, runner Runner, once bool, opts ...cron.EntryOption) (*Job, error) {
+func addJob(ctx context.Context, name, spec string, runner Runner, once bool, fields map[string]any, opts ...cron.EntryOption) (*Job, error) {
 	if job, ok := GetJob(name); ok {
 		if job.IsRunning() && job.spec == spec {
 			logger.Info().Str(name, spec).Msg("skipping job add")
@@ -153,8 +182,9 @@ func addJob(ctx context.Context, name, spec string, runner Runner, once bool, op
 		job.Stop()
 	}
 	j := &Job{
-		name: name,
-		spec: spec,
+		name:   name,
+		spec:   spec,
+		fields: maps.Clone(fields),
 	}
 	return j.start(ctx, runner, once, opts...)
 }
