@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	LogMoreFieldName = "more"
-	LogJobFieldName  = "job"
+	LogAlarmCodeFieldName = "alarm_code"
+	LogMoreFieldName      = "more"
+	LogJobFieldName       = "job"
 )
 
 // ErrMsgMaxLength 日志中错误消息字段转换为报警消息的最大长度
@@ -65,6 +66,9 @@ func SendAlarm(code, info, more string) {
 
 // GenAlarmData 错误日志转换为报警信息
 func GenAlarmData(code string, bs []byte) []byte {
+	if alarmCode := gjson.GetBytes(bs, LogAlarmCodeFieldName).String(); alarmCode != "" {
+		code = alarmCode
+	}
 	more := gjson.GetBytes(bs, LogMoreFieldName).String()
 	info := gjson.GetBytes(bs, LogMessageFieldName).String()
 	err := gjson.GetBytes(bs, LogErrorFieldName).String()
@@ -100,6 +104,9 @@ func sendAlarm(fn AlarmJsonGenerator, bs []byte) {
 
 // 错误日志转换为报警信息
 func genAlarmJson(code string, bs []byte) []byte {
+	if alarmCode := gjson.GetBytes(bs, LogAlarmCodeFieldName).String(); alarmCode != "" {
+		code = alarmCode
+	}
 	more := gjson.GetBytes(bs, LogMoreFieldName).String()
 	info := gjson.GetBytes(bs, LogMessageFieldName).String()
 	job := gjson.GetBytes(bs, LogJobFieldName).String()
@@ -111,6 +118,7 @@ func genAlarmJson(code string, bs []byte) []byte {
 	cfg := config.Config().NodeConf.NodeInfo
 	js := jsongen.NewMap()
 	js.PutString("code", code)
+	js.PutInt("node_id", int64(cfg.NodeID))
 	js.PutString("node_ip", cfg.NodeIP)
 	js.PutString("node_name", cfg.NodeName)
 	js.PutString("node_desc", cfg.NodeDesc)
