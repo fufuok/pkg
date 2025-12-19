@@ -3,7 +3,6 @@ package json
 import (
 	"bytes"
 	"errors"
-	"unsafe"
 
 	"github.com/fufuok/bytespool"
 	"github.com/fufuok/utils"
@@ -42,7 +41,7 @@ func MustJSONIndent(v any) []byte {
 // MustJSONIndentString 转 json 返回 string
 func MustJSONIndentString(v any) string {
 	js := MustJSONIndent(v)
-	return *(*string)(unsafe.Pointer(&js))
+	return utils.B2S(js)
 }
 
 // MustJSON 转 json 返回 []byte
@@ -54,7 +53,7 @@ func MustJSON(v any) []byte {
 // MustJSONString 转 json 返回 string
 func MustJSONString(v any) string {
 	js := MustJSON(v)
-	return *(*string)(unsafe.Pointer(&js))
+	return utils.B2S(js)
 }
 
 // MustJSONUnEscapeIndent 转 json 返回 []byte, 不转义 ( '&', '<', '>' )

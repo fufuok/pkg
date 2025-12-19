@@ -29,15 +29,15 @@ func RunShellTimeout(sh string, timeout time.Duration, args ...string) (ok bool)
 }
 
 // RunShellWithResult 运行 Shell 脚本并返回输出结果
-func RunShellWithResult(sh string, args ...string) (stdout, errout string, ok bool) {
-	stdout, errout, ok = RunShellTimeoutWithResult(sh, DefaultShellTimeout, args...)
+func RunShellWithResult(sh string, args ...string) (stdout, stderr string, ok bool) {
+	stdout, stderr, ok = RunShellTimeoutWithResult(sh, DefaultShellTimeout, args...)
 	return
 }
 
 // RunShellTimeoutWithResult 运行 Shell 脚本并返回标准输出和错误输出, 以及是否执行成功
 // 示例命令: /bin/bash /opt/app/script/echo.sh my-app
 // 示例调用: RunShellTimeoutWithResult("/opt/app/script/echo.sh", 3*time.Second, "my-app")
-func RunShellTimeoutWithResult(sh string, timeout time.Duration, args ...string) (stdout, errout string, ok bool) {
+func RunShellTimeoutWithResult(sh string, timeout time.Duration, args ...string) (stdout, stderr string, ok bool) {
 	cmd := append(BashCmd, sh)
 	if len(args) > 0 {
 		cmd = append(cmd, args...)
@@ -46,12 +46,12 @@ func RunShellTimeoutWithResult(sh string, timeout time.Duration, args ...string)
 	status := RunCmd(cmd, timeout)
 	stdout = strings.Join(status.Stdout, "\n")
 	stdout = strings.TrimSpace(stdout)
-	errout = ""
+	stderr = ""
 	if status.Error != nil {
-		errout += fmt.Sprintf("error: %v\n", status.Error)
+		stderr += fmt.Sprintf("error: %v\n", status.Error)
 	}
-	errout += strings.Join(status.Stderr, "\n")
-	errout = strings.TrimSpace(errout)
+	stderr += strings.Join(status.Stderr, "\n")
+	stderr = strings.TrimSpace(stderr)
 	ok = status.Exit == 0 && status.Error == nil
 	return
 }
