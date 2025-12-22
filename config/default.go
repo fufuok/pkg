@@ -175,6 +175,9 @@ var (
 func initDefaultConfig() {
 	if RootPath == "" {
 		RootPath = DefaultRootPath
+	} else {
+		// 指定程序根路径时, 修正缺省日志路径
+		DefaultLogPath = filepath.Join(RootPath, "..", "log")
 	}
 
 	if LogPath == "" {
