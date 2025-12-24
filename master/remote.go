@@ -15,15 +15,14 @@ import (
 // 初始化获取远端配置
 func startRemotePipelines(ctx context.Context) {
 	// 定时获取远程主配置, 黑白名单配置
-	utils.SafeGoWithContext(ctx, getMainRemoteConf, common.RecoverAlarm)
-	utils.SafeGoWithContext(ctx, getWhitelistRemoteConf, common.RecoverAlarm)
-	utils.SafeGoWithContext(ctx, getBlacklistRemoteConf, common.RecoverAlarm)
+	getMainRemoteConf(ctx)
+	getWhitelistRemoteConf(ctx)
+	getBlacklistRemoteConf(ctx)
 
 	// 运行应用级自定义的获取远端方法
 	ps := getPipelinesWithContext(RemoteStage)
 	for _, sf := range ps {
-		sf := sf
-		utils.SafeGoWithContext(ctx, sf, common.RecoverAlarm)
+		sf(ctx)
 	}
 	logger.Warn().Int("count", len(ps)+3).Msg("Remote config fetchers started")
 }
@@ -58,27 +57,29 @@ func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 	id := common.GTimeNowString("060102150405.999999999")
 	logger.Warn().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
 		Msg("Remote config fetcher started")
-
-	for {
-		wait := utils.FastIntn(cfg.RandomWait)
-		time.Sleep(time.Duration(wait) * time.Second)
-		select {
-		case <-ctx.Done():
-			logger.Warn().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
-				Msg("Remote config fetcher exited")
-			return
-		default:
-		}
-		// 是否跳过更新远端配置
-		if !config.IsSkipRemoteConfig() {
-			if err := common.InvokeConfigMethod(cfg); err != nil {
-				sampler.Error().Err(err).Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
-					Msg("Failed to get remote config")
-			} else {
-				logger.Info().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
-					Msg("Execute remote config fetcher")
+	fetcher := func() {
+		for {
+			wait := utils.FastIntn(cfg.RandomWait)
+			time.Sleep(time.Duration(wait) * time.Second)
+			select {
+			case <-ctx.Done():
+				logger.Warn().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
+					Msg("Remote config fetcher exited")
+				return
+			default:
 			}
+			// 是否跳过更新远端配置
+			if !config.IsSkipRemoteConfig() {
+				if err := common.InvokeConfigMethod(cfg); err != nil {
+					sampler.Error().Err(err).Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
+						Msg("Failed to get remote config")
+				} else {
+					logger.Info().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
+						Msg("Execute remote config fetcher")
+				}
+			}
+			time.Sleep(cfg.GetConfDuration)
 		}
-		time.Sleep(cfg.GetConfDuration)
 	}
+	utils.SafeGo(fetcher, common.RecoverAlarm)
 }
