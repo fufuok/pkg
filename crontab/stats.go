@@ -4,6 +4,8 @@ import (
 	"time"
 
 	"github.com/fufuok/utils/xjson/jsongen"
+
+	"github.com/fufuok/pkg/json"
 )
 
 func DataStats() *jsongen.Map {
@@ -17,4 +19,8 @@ func DataStats() *jsongen.Map {
 		return true
 	})
 	return jss
+}
+
+func DataStatsJSON() json.RawMessage {
+	return json.RawMessage(DataStats().Serialize(nil))
 }

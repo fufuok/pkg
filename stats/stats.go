@@ -256,19 +256,22 @@ func MainStats() map[string]any {
 	}
 
 	stats := map[string]any{
-		"ProcessPid":     mainProcess.Pid,
-		"NumThreads":     numThreads,
-		"CPUPercent":     fmt.Sprintf("%.2f%%", cpuPercent),
-		"MemPercent":     fmt.Sprintf("%.2f%%", memPercent),
-		"MemRSS":         utils.HumanIBytes(memInfo.RSS),
-		"MemVMS":         utils.HumanIBytes(memInfo.VMS),
-		"MemSwap":        utils.HumanIBytes(memInfo.Swap),
-		"NumGoroutine":   runtime.NumGoroutine(),
-		"NumCgoCall":     utils.Comma(runtime.NumCgoCall()),
-		"GoPool":         ants.Running(),
-		"GoMaxProcs":     runtime.GOMAXPROCS(0),
-		"NumConnections": connCount,
-		"NumOpenFiles":   fdCount,
+		"ProcessPid":         mainProcess.Pid,
+		"NumThreads":         numThreads,
+		"CPUPercent":         fmt.Sprintf("%.2f%%", cpuPercent),
+		"MemPercent":         fmt.Sprintf("%.2f%%", memPercent),
+		"MemRSS":             utils.HumanIBytes(memInfo.RSS),
+		"MemVMS":             utils.HumanIBytes(memInfo.VMS),
+		"MemSwap":            utils.HumanIBytes(memInfo.Swap),
+		"NumGoroutine":       runtime.NumGoroutine(),
+		"NumCgoCall":         utils.Comma(runtime.NumCgoCall()),
+		"GoMaxProcs":         runtime.GOMAXPROCS(0),
+		"NumConnections":     connCount,
+		"NumOpenFiles":       fdCount,
+		"GoPoolFree":         ants.Free(),
+		"GoPoolRunning":      ants.Running(),
+		"GoPoolIdleWorkers":  ants.IdleWorkers(),
+		"GoPoolTotalWorkers": ants.TotalWorkers(),
 	}
 	return stats
 }
