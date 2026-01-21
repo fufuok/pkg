@@ -114,3 +114,126 @@ func TestCalcThreshold_MinimumValue(t *testing.T) {
 		})
 	}
 }
+
+func TestCalcRatio(t *testing.T) {
+	// 测试整数类型
+	testsInt := []struct {
+		name          string
+		a             int
+		b             int
+		decimalPlaces int
+		expected      float64
+	}{
+		{"dividend is zero", 0, 5, 2, 0.0},
+		{"divisor is zero", 5, 0, 2, 0.0},
+		{"both are zero", 0, 0, 2, 0.0},
+		{"normal case", 3, 4, 2, 0.75},
+		{"rounding up", 1, 3, 2, 0.33},
+		{"rounding down", 2, 3, 2, 0.67},
+		{"no decimal places", 3, 4, 0, 1.0},
+		{"negative decimal places", 3, 4, -2, 0.0},
+		{"large decimal places", 1, 3, 10, 0.3333333333},
+		{"a greater than b", 5, 2, 2, 2.50},
+		{"equal values", 5, 5, 2, 1.00},
+	}
+
+	for _, tt := range testsInt {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CalcRatio(tt.a, tt.b, tt.decimalPlaces)
+			if result != tt.expected {
+				t.Errorf("CalcRatio(%d, %d, %d) = %f; expected %f", tt.a, tt.b, tt.decimalPlaces, result, tt.expected)
+			}
+		})
+	}
+
+	// 测试 int64 类型
+	testsInt64 := []struct {
+		name          string
+		a             int64
+		b             int64
+		decimalPlaces int
+		expected      float64
+	}{
+		{"dividend is zero", 0, 5, 2, 0.0},
+		{"divisor is zero", 5, 0, 2, 0.0},
+		{"large int64 values", 1000000000000, 3, 2, 333333333333.33},
+	}
+
+	for _, tt := range testsInt64 {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CalcRatio(tt.a, tt.b, tt.decimalPlaces)
+			if result != tt.expected {
+				t.Errorf("CalcRatio(%d, %d, %d) = %f; expected %f", tt.a, tt.b, tt.decimalPlaces, result, tt.expected)
+			}
+		})
+	}
+
+	// 测试 uint64 类型
+	testsUint64 := []struct {
+		name          string
+		a             uint64
+		b             uint64
+		decimalPlaces int
+		expected      float64
+	}{
+		{"dividend is zero", 0, 5, 2, 0.0},
+		{"divisor is zero", 5, 0, 2, 0.0},
+		{"normal uint64", 3, 4, 2, 0.75},
+	}
+
+	for _, tt := range testsUint64 {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CalcRatio(tt.a, tt.b, tt.decimalPlaces)
+			if result != tt.expected {
+				t.Errorf("CalcRatio(%d, %d, %d) = %f; expected %f", tt.a, tt.b, tt.decimalPlaces, result, tt.expected)
+			}
+		})
+	}
+
+	// 测试 float32 类型
+	testsFloat32 := []struct {
+		name          string
+		a             float32
+		b             float32
+		decimalPlaces int
+		expected      float64
+	}{
+		{"dividend is zero", 0.0, 5.0, 2, 0.0},
+		{"divisor is zero", 5.0, 0.0, 2, 0.0},
+		{"normal float32", 0.12345, 1.0, 3, 0.123},
+		{"float32 division", 1.0, 3.0, 2, 0.33},
+	}
+
+	for _, tt := range testsFloat32 {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CalcRatio(tt.a, tt.b, tt.decimalPlaces)
+			if result != tt.expected {
+				t.Errorf("CalcRatio(%f, %f, %d) = %f; expected %f", tt.a, tt.b, tt.decimalPlaces, result, tt.expected)
+			}
+		})
+	}
+
+	// 测试 float64 类型
+	testsFloat64 := []struct {
+		name          string
+		a             float64
+		b             float64
+		decimalPlaces int
+		expected      float64
+	}{
+		{"dividend is zero", 0.0, 5.0, 2, 0.0},
+		{"divisor is zero", 5.0, 0.0, 2, 0.0},
+		{"normal float64", 0.123456789, 1.0, 5, 0.12346},
+		{"float64 division", 2.0, 3.0, 2, 0.67},
+		{"very small numbers", 0.0000001, 0.0000002, 2, 0.50},
+	}
+
+	for _, tt := range testsFloat64 {
+		t.Run(tt.name, func(t *testing.T) {
+			result := CalcRatio(tt.a, tt.b, tt.decimalPlaces)
+			if result != tt.expected {
+				t.Errorf("CalcRatio(%f, %f, %d) = %f; expected %f", tt.a, tt.b, tt.decimalPlaces, result, tt.expected)
+			}
+		})
+	}
+}
