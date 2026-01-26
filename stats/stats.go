@@ -204,25 +204,31 @@ func MetricStats() map[string]any {
 		// Time since last GC (距离上次GC的时间)
 		"LastGCAgo": timeSinceLastGC.String(),
 	}
-
-	if bsStats := BytesPoolStats(); bsStats != nil {
-		metrics["BytesPool"] = bsStats
-	}
 	return metrics
 }
 
-func BytesPoolStats() map[string]any {
-	ss := bytespool.RuntimeStatsSummary(10)
-	if ss.TopPools == nil {
-		return nil
-	}
+// MetricStatsWithBytesPoolStats 带内存池统计指标
+func MetricStatsWithBytesPoolStats(topN int, ps ...*bytespool.CapacityPools) map[string]any {
+	metrics := MetricStats()
+	metrics["BytesPool"] = BytesPoolStats(topN, ps...)
+	return metrics
+}
 
+func BytesPoolStats(topN int, ps ...*bytespool.CapacityPools) map[string]any {
+	ss := bytespool.RuntimeStatsSummary(topN, ps...)
 	m := map[string]any{
+		"Capacity": fmt.Sprintf(
+			"[%s, %s]",
+			utils.HumanIntIBytes(ss.MinSize),
+			utils.HumanIntIBytes(ss.MaxSize),
+		),
 		"NewBytes":    utils.HumanIBytes(ss.NewBytes),
 		"OutBytes":    utils.HumanIBytes(ss.OutBytes),
 		"OutCount":    utils.Commau(ss.OutCount),
 		"ReusedBytes": utils.HumanIBytes(ss.ReusedBytes),
-		"TopPools":    ss.TopPools,
+	}
+	if topN > 0 {
+		m["TopPools"] = ss.TopPools
 	}
 	return m
 }

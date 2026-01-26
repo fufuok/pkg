@@ -85,9 +85,12 @@ func MetricStatsDesc() map[string]any {
 			"LastGCAgo":         "距离上次GC的时间间隔",
 		},
 		"BytesPool": map[string]string{
-			"Big":   "大对象字节池使用量",
-			"New":   "新分配的字节量",
-			"Reuse": "重用的字节量",
+			"Capacity":    "字节池刻度: [最小值, 最大值]",
+			"OutBytes":    "直接申请未被字节池回收的使用量",
+			"OutCount":    "直接申请未被字节池回收的次数",
+			"NewBytes":    "新分配的字节量",
+			"ReusedBytes": "被复用的字节量",
+			"TopPools":    "被复用的字节容量刻度TOP10",
 		},
 	}
 }
