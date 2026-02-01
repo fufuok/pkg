@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"io"
 	"log"
+	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -45,20 +47,26 @@ func Run(setup App) {
 	eg := errgroup.Group{}
 	if cfg.ServerHttpsAddr != "" {
 		for _, addr := range strings.Split(cfg.ServerHttpsAddr, ",") {
-			addr := addr
-			eg.Go(func() (err error) {
+			eg.Go(func() error {
 				logger.Warn().Str("addr", addr).Msg("HTTPS server started")
-				err = app.RunTLS(addr, cfg.CertFile, cfg.KeyFile)
-				return
+				server := &http.Server{
+					Addr:     addr,
+					Handler:  app,
+					ErrorLog: log.New(io.Discard, "", 0), // 禁用底层服务器错误日志(TLS握手/连接重置等)
+				}
+				return server.ListenAndServeTLS(cfg.CertFile, cfg.KeyFile)
 			})
 		}
 	}
 	for _, addr := range strings.Split(cfg.ServerAddr, ",") {
-		addr := addr
-		eg.Go(func() (err error) {
+		eg.Go(func() error {
 			logger.Warn().Str("addr", addr).Msg("HTTP server started")
-			err = app.Run(addr)
-			return
+			server := &http.Server{
+				Addr:     addr,
+				Handler:  app,
+				ErrorLog: log.New(io.Discard, "", 0), // 禁用底层服务器错误日志(TLS握手/连接重置等)
+			}
+			return server.ListenAndServe()
 		})
 	}
 	if err := eg.Wait(); err != nil {
