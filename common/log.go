@@ -25,9 +25,9 @@ const (
 	LogErrorFieldName   = "E"
 	LogTimeFormat       = "0102 15:04:05"
 
-	// 文件滚动单位
-	megabyte = 1024 * 1024
-	days     = 24 * time.Hour
+	// Megabyte 文件滚动单位
+	Megabyte = 1024 * 1024
+	Days     = 24 * time.Hour
 )
 
 var (
@@ -149,10 +149,10 @@ func newLogger() (err error) {
 		wr, err = lumberjack.NewRoller(
 			cfg.File,
 			// 以 MiB 为单位
-			cfg.MaxSize*megabyte,
+			cfg.MaxSize*Megabyte,
 			&lumberjack.Options{
 				// 以 天 为单位
-				MaxAge:     time.Duration(cfg.MaxAge) * days,
+				MaxAge:     time.Duration(cfg.MaxAge) * Days,
 				MaxBackups: cfg.MaxBackups,
 				LocalTime:  true,
 				Compress:   true,
