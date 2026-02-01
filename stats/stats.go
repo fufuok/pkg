@@ -29,6 +29,8 @@ var (
 
 // SYSStats 系统信息
 func SYSStats() map[string]any {
+	now := common.GTimeNow()
+	uptime := now.Sub(common.StartTime)
 	stats := map[string]any{
 		// 应用信息
 		"App": map[string]any{
@@ -48,11 +50,12 @@ func SYSStats() map[string]any {
 		},
 		// 时间信息
 		"Time": map[string]any{
-			"Uptime":      time.Since(common.StartTime).String(),
-			"StartTime":   common.StartTime,
-			"ClockOffset": common.GetClockOffset().String(),
-			"GlobalTime":  common.GTimeNowString(time.RFC3339Nano),
-			"LocalTime":   time.Now(),
+			"Uptime":       uptime.String(),
+			"UptimeSecond": int(uptime.Seconds()),
+			"StartTime":    common.StartTime,
+			"ClockOffset":  common.GetClockOffset().String(),
+			"GlobalTime":   now.Format(time.RFC3339Nano),
+			"LocalTime":    time.Now(),
 		},
 	}
 
