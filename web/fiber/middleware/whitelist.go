@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/fufuok/freelru"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
@@ -16,7 +16,7 @@ import (
 	"github.com/fufuok/pkg/web/fiber/tproxy"
 )
 
-type ForbiddenChecker = func(*fiber.Ctx) bool
+type ForbiddenChecker = func(fiber.Ctx) bool
 
 var (
 	// 存放最近检查的白名单 IP
@@ -53,7 +53,7 @@ func PurgeWhitelistCache() {
 // CheckWhitelist 接口白名单检查
 func CheckWhitelist(asAPI bool) fiber.Handler {
 	errMsg := fmt.Sprintf("[ERROR] 非法来访(%s): ", config.AppName)
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if !WhitelistChecker(c) {
 			return responseForbidden(c, errMsg, asAPI)
 		}
@@ -64,7 +64,7 @@ func CheckWhitelist(asAPI bool) fiber.Handler {
 // CheckWhitelistOr 校验接口白名单或自定义检查器
 func CheckWhitelistOr(checker ForbiddenChecker, asAPI bool) fiber.Handler {
 	errMsg := fmt.Sprintf("[ERROR] 禁止来访(%s): ", config.AppName)
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if !WhitelistChecker(c) && !checker(c) {
 			return responseForbidden(c, errMsg, asAPI)
 		}
@@ -75,7 +75,7 @@ func CheckWhitelistOr(checker ForbiddenChecker, asAPI bool) fiber.Handler {
 // CheckWhitelistAnd 同时校验接口白名单和自定义检查器
 func CheckWhitelistAnd(checker ForbiddenChecker, asAPI bool) fiber.Handler {
 	errMsg := fmt.Sprintf("[ERROR] 禁止访问(%s): ", config.AppName)
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if !WhitelistChecker(c) || !checker(c) {
 			return responseForbidden(c, errMsg, asAPI)
 		}
@@ -84,7 +84,7 @@ func CheckWhitelistAnd(checker ForbiddenChecker, asAPI bool) fiber.Handler {
 }
 
 // WhitelistChecker 是否通过了白名单检查, true 是白名单 (白名单为空时: 通过, true)
-func WhitelistChecker(c *fiber.Ctx) bool {
+func WhitelistChecker(c fiber.Ctx) bool {
 	clientIP := tproxy.GetClientIP(c)
 	if len(config.Whitelist) > 0 {
 		if useWhitelistLRU.Load() {
@@ -101,7 +101,7 @@ func WhitelistChecker(c *fiber.Ctx) bool {
 	return true
 }
 
-func responseForbidden(c *fiber.Ctx, msg string, asAPI bool) error {
+func responseForbidden(c fiber.Ctx, msg string, asAPI bool) error {
 	clientIP := tproxy.GetClientIP(c)
 	msg += clientIP
 	sampler.Info().

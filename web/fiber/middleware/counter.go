@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/fufuok/utils"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"github.com/fufuok/pkg/kit"
 )
@@ -34,7 +34,7 @@ func HTTPCounter(name string) fiber.Handler {
 		}
 		httpCounter[name] = counter
 	}
-	return func(c *fiber.Ctx) (err error) {
+	return func(c fiber.Ctx) (err error) {
 		counter.In.Add(1)
 
 		err = c.Next()

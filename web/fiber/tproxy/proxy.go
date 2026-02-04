@@ -5,8 +5,8 @@ import (
 
 	"github.com/fufuok/utils"
 	"github.com/fufuok/utils/xhash"
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/proxy"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/proxy"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
@@ -33,7 +33,7 @@ func ProxyHandler(backendServers []string, timeout time.Duration, backendHost st
 	proxyHandler := proxy.Balancer(proxy.Config{
 		Servers: backendServers,
 		Timeout: timeout,
-		ModifyRequest: func(c *fiber.Ctx) error {
+		ModifyRequest: func(c fiber.Ctx) error {
 			if backendHost != "" {
 				c.Request().Header.Set("Host", backendHost)
 			}
@@ -47,7 +47,7 @@ func ProxyHandler(backendServers []string, timeout time.Duration, backendHost st
 // SetClientIP 首个代理加密客户端 IP, 中间代理透传
 // 当前来访为内网 IP 会跳过设置
 // immutable
-func SetClientIP(c *fiber.Ctx) {
+func SetClientIP(c fiber.Ctx) {
 	xip := c.Get(HeaderXProxyClientIP)
 	if xip == "" {
 		xip = c.IP()
@@ -66,7 +66,7 @@ func SetClientIP(c *fiber.Ctx) {
 // 2. 下游代理头信息中获取
 // 3. TCP 协议 RemoteIP()
 // immutable
-func GetClientIP(c *fiber.Ctx) string {
+func GetClientIP(c fiber.Ctx) string {
 	clientIP, _ := c.Locals(HeaderXProxyClientIP).(string)
 	if clientIP != "" {
 		return clientIP

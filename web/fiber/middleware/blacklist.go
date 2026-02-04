@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/fufuok/freelru"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
@@ -48,7 +48,7 @@ func PurgeBlacklistCache() {
 // CheckBlacklist 接口黑名单检查
 func CheckBlacklist(asAPI bool) fiber.Handler {
 	errMsg := fmt.Sprintf("[ERROR] 非法访问(%s): ", config.AppName)
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if BlacklistChecker(c) {
 			return responseForbidden(c, errMsg, asAPI)
 		}
@@ -57,7 +57,7 @@ func CheckBlacklist(asAPI bool) fiber.Handler {
 }
 
 // BlacklistChecker 是否存在于黑名单, true 是黑名单 (黑名单为空时: 放过, false)
-func BlacklistChecker(c *fiber.Ctx) bool {
+func BlacklistChecker(c fiber.Ctx) bool {
 	clientIP := tproxy.GetClientIP(c)
 	if len(config.Blacklist) > 0 {
 		if useBlacklistLRU.Load() {

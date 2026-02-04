@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/fufuok/utils/assert"
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 )
 
 // Ref: https://github.com/gofiber/fiber/tree/master/middleware/timeout
@@ -19,9 +19,9 @@ var ErrFooTimeOut = errors.New("foo context canceled")
 func Test_TimeoutUseWithCustomError(t *testing.T) {
 	app := fiber.New()
 	app.Use(WithTimeout(200*time.Millisecond, ErrFooTimeOut))
-	h := func(c *fiber.Ctx) error {
+	h := func(c fiber.Ctx) error {
 		sleepTime, _ := time.ParseDuration(c.Params("sleepTime") + "ms")
-		if err := sleepWithContext(c.UserContext(), sleepTime, context.DeadlineExceeded); err != nil {
+		if err := sleepWithContext(c.Context(), sleepTime, context.DeadlineExceeded); err != nil {
 			return fmt.Errorf("%w: l2 wrap", fmt.Errorf("%w: l1 wrap ", err))
 		}
 		return nil
@@ -55,10 +55,10 @@ func Test_TimeoutUseWithCustomError(t *testing.T) {
 func Test_WithTimeoutSkipTimeoutStatus(t *testing.T) {
 	app := fiber.New()
 	app.Use(WithTimeout(200*time.Millisecond, ErrFooTimeOut))
-	h := func(c *fiber.Ctx) error {
+	h := func(c fiber.Ctx) error {
 		sleepTime, _ := time.ParseDuration(c.Params("sleepTime") + "ms")
-		if err := sleepWithContext(c.UserContext(), sleepTime, context.DeadlineExceeded); err != nil {
-			return c.SendString("Error: " + err.Error())
+		if err := sleepWithContext(c.Context(), sleepTime, context.DeadlineExceeded); err != nil {
+			return nil
 		}
 		return c.SendString("OK")
 	}
@@ -71,10 +71,10 @@ func Test_WithTimeoutSkipTimeoutStatus(t *testing.T) {
 	testTimeout := func(traget string) {
 		resp, err := app.Test(httptest.NewRequest("GET", traget, nil))
 		assert.Equal(t, nil, err, "app.Test(req)")
-		assert.Equal(t, fiber.StatusOK, resp.StatusCode, "Status code")
+		assert.Equal(t, fiber.StatusRequestTimeout, resp.StatusCode, "Status code")
 		body, err := io.ReadAll(resp.Body)
 		assert.Equal(t, nil, err)
-		assert.Equal(t, "Error: "+context.DeadlineExceeded.Error(), string(body))
+		assert.Equal(t, fiber.ErrRequestTimeout.Message, string(body))
 		_ = resp.Body.Close()
 	}
 	testSucces := func(traget string) {

@@ -5,8 +5,8 @@ import (
 	"log"
 	"strings"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/compress"
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/compress"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/fufuok/pkg/config"
@@ -26,17 +26,19 @@ type App func(app *fiber.App) *fiber.App
 func Run(setup App) {
 	cfg := config.Config().WebConf
 	app = fiber.New(fiber.Config{
-		BodyLimit:               cfg.BodyLimit,
-		DisableKeepalive:        cfg.DisableKeepalive,
-		ReduceMemoryUsage:       !cfg.DisableReduceMemoryUsage,
-		ProxyHeader:             cfg.ProxyHeader,
-		EnableTrustedProxyCheck: cfg.EnableTrustedProxyCheck,
-		TrustedProxies:          cfg.TrustedProxies,
-		JSONEncoder:             json.Marshal,
-		JSONDecoder:             json.Unmarshal,
-		DisableStartupMessage:   true,
-		StrictRouting:           true,
-		ErrorHandler:            errorHandler,
+		AppName:           config.AppName,
+		BodyLimit:         cfg.BodyLimit,
+		DisableKeepalive:  cfg.DisableKeepalive,
+		ReduceMemoryUsage: !cfg.DisableReduceMemoryUsage,
+		ProxyHeader:       cfg.ProxyHeader,
+		TrustProxy:        cfg.EnableTrustedProxyCheck,
+		TrustProxyConfig: fiber.TrustProxyConfig{
+			Proxies: cfg.TrustedProxies,
+		},
+		JSONEncoder:   json.Marshal,
+		JSONDecoder:   json.Unmarshal,
+		StrictRouting: true,
+		ErrorHandler:  errorHandler,
 	})
 
 	app = setup(app)
@@ -57,19 +59,23 @@ func Run(setup App) {
 	eg := errgroup.Group{}
 	if cfg.ServerHttpsAddr != "" {
 		for _, addr := range strings.Split(cfg.ServerHttpsAddr, ",") {
-			addr := addr
 			eg.Go(func() (err error) {
 				logger.Warn().Str("addr", addr).Msg("HTTPS server started")
-				err = app.ListenTLS(addr, cfg.CertFile, cfg.KeyFile)
+				err = app.Listen(addr, fiber.ListenConfig{
+					DisableStartupMessage: true,
+					CertFile:              cfg.CertFile,
+					CertKeyFile:           cfg.KeyFile,
+				})
 				return
 			})
 		}
 	}
 	for _, addr := range strings.Split(cfg.ServerAddr, ",") {
-		addr := addr
 		eg.Go(func() (err error) {
-			logger.Warn().Str("addr", addr).Msg("HTTPS server started")
-			err = app.Listen(addr)
+			logger.Warn().Str("addr", addr).Msg("HTTP server started")
+			err = app.Listen(addr, fiber.ListenConfig{
+				DisableStartupMessage: true,
+			})
 			return
 		})
 	}
@@ -79,7 +85,7 @@ func Run(setup App) {
 }
 
 // 请求错误处理
-func errorHandler(c *fiber.Ctx, err error) error {
+func errorHandler(c fiber.Ctx, err error) error {
 	code := fiber.StatusInternalServerError
 	var e *fiber.Error
 	if errors.As(err, &e) {

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/web/fiber/response"
@@ -22,7 +22,7 @@ var (
 	DefaultLimitMessage = "处理中的请求数过多"
 
 	// DefaultLimitReached 达到限制时执行的 Hook
-	DefaultLimitReached = func(c *fiber.Ctx) error {
+	DefaultLimitReached = func(c fiber.Ctx) error {
 		return response.APIException(c, http.StatusTooManyRequests, DefaultLimitMessage, nil)
 	}
 )
@@ -88,7 +88,7 @@ func (r *RequestsLimiter) Remaining() int32 {
 }
 
 func (r *RequestsLimiter) Handler() fiber.Handler {
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		if !r.Allow() {
 			r.limited.Add(1)
 			return r.limitReached(c)

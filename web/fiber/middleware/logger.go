@@ -4,7 +4,7 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v3"
 
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/logger/sampler"
@@ -12,13 +12,13 @@ import (
 )
 
 // LogCondition 日志记录条件计算器
-type LogCondition func(c *fiber.Ctx, elapsed time.Duration) bool
+type LogCondition func(c fiber.Ctx, elapsed time.Duration) bool
 
-func DefaultLogCondition(c *fiber.Ctx, elapsed time.Duration) bool {
+func DefaultLogCondition(c fiber.Ctx, elapsed time.Duration) bool {
 	return elapsed > config.WebLogSlowResponse || c.Response().StatusCode() >= config.WebLogMinStatusCode
 }
 
-func AllLogCondition(*fiber.Ctx, time.Duration) bool {
+func AllLogCondition(fiber.Ctx, time.Duration) bool {
 	return true
 }
 
@@ -28,7 +28,7 @@ func WebLogger(cond LogCondition, withBody ...bool) fiber.Handler {
 		cond = DefaultLogCondition
 	}
 	withbody := len(withBody) > 0 && withBody[0]
-	return func(c *fiber.Ctx) error {
+	return func(c fiber.Ctx) error {
 		start := time.Now()
 
 		// Handle request, store err for logging
@@ -62,7 +62,7 @@ func WebLogger(cond LogCondition, withBody ...bool) fiber.Handler {
 
 // RecoverLogger Recover 并记录日志
 func RecoverLogger() fiber.Handler {
-	return func(c *fiber.Ctx) (err error) {
+	return func(c fiber.Ctx) (err error) {
 		defer func() {
 			if r := recover(); r != nil {
 				var ok bool
