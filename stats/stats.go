@@ -63,6 +63,7 @@ func SYSStats() map[string]any {
 		"InternalIPv4": common.InternalIPv4,
 		"ExternalIPv4": common.ExternalIPv4,
 		"NumCpus":      runtime.NumCPU(),
+		"NodeInfo":     config.Config().NodeConf.NodeInfo,
 	}
 	// 系统负载 (LoadAvg)
 	if avg, err := load.Avg(); err == nil {
