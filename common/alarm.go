@@ -1,7 +1,6 @@
 package common
 
 import (
-	"os"
 	"time"
 
 	"github.com/fufuok/ants"
@@ -80,13 +79,12 @@ func GenAlarmData(code string, bs []byte) []byte {
 
 // GenAlarmJson 整合报警消息
 func GenAlarmJson(code, info, more string) []byte {
-	hostname, _ := os.Hostname()
 	js := jsongen.NewMap()
 	js.PutString("code", code)
 	js.PutString("time", GTimeNowString(time.RFC3339))
 	js.PutString("info", info)
 	js.PutString("more", more)
-	js.PutString("hostname", hostname)
+	js.PutString("hostname", config.Config().NodeConf.NodeInfo.Hostname)
 	return js.Serialize(nil)
 }
 
