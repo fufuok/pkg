@@ -320,6 +320,11 @@ func parseMainRemoteConfig(cfg *MainConf) error {
 	}
 	// 忽略配置文件中指定的主配置文件路径, 由命令行参数或 BinName 确定, 或由应用端 init 指定
 	cfg.MainConf.Path = ConfigFile
+	// 优先使用环境变量中指定的主配置文件获取 API
+	if api := os.Getenv(MainConfRemoteAPIEnvName); api != "" {
+		_ = os.Setenv(MainConfRemoteAPIEnvName, "")
+		cfg.MainConf.API = api
+	}
 	return nil
 }
 
