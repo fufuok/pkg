@@ -171,7 +171,6 @@ func GetNodeIPFromAPIs(ipapi string, timeout ...time.Duration) string {
 	apis := utils.TrimSlice(strings.Split(ipapi, ","))
 	ipChan := make(chan string, len(apis))
 	for _, api := range apis {
-		api := api
 		go func() {
 			resp, err := req.DefaultClient().Clone().SetTimeout(dur).R().SetContext(ctx).Get(api)
 			if err == nil && resp.IsSuccessState() {
