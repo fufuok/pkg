@@ -1,10 +1,10 @@
 module github.com/fufuok/pkg
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/chenyahui/gin-cache v1.10.0
-	github.com/fufuok/ants v1.11.8
+	github.com/fufuok/ants v1.11.9
 	github.com/fufuok/bytespool v1.5.1
 	github.com/fufuok/cache v1.1.1
 	github.com/fufuok/chanx v1.3.1
@@ -50,7 +50,7 @@ require (
 	github.com/icholy/digest v1.1.0 // indirect
 	github.com/jellydator/ttlcache/v2 v2.11.1 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.18.3 // indirect
+	github.com/klauspost/compress v1.18.4 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20251013123823-9fd1530e3ec3 // indirect
@@ -76,9 +76,9 @@ require (
 	github.com/valyala/fasthttp v1.69.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/arch v0.24.0 // indirect
-	golang.org/x/crypto v0.47.0 // indirect
-	golang.org/x/net v0.49.0 // indirect
+	golang.org/x/crypto v0.48.0 // indirect
+	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
-	golang.org/x/text v0.33.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"runtime/metrics"
 	"sync"
 	"time"
 
@@ -85,18 +86,12 @@ func SYSStats() map[string]any {
 	return stats
 }
 
-// MetricStats 主程序运行指标
-func MetricStats() map[string]any {
-	metrics := make(map[string]any)
-	var ms runtime.MemStats
-	runtime.ReadMemStats(&ms)
-
-	metrics["Main"] = MainStats()
-
+// getMemoryStats 获取内存相关指标
+func getMemoryStats(ms *runtime.MemStats) map[string]any {
 	// 内存碎片化指标计算
 	// (HeapIdle - HeapReleased) 表示已保留但未使用的内存，HeapSys 表示系统为堆分配的总内存
 	trueFragRatio := float64(ms.HeapIdle-ms.HeapReleased) / float64(ms.HeapSys+1) // +1 防止除零
-	metrics["Memory"] = map[string]any{
+	return map[string]any{
 		// TotalAlloc: 程序启动后累计向操作系统申请的字节数（包括已释放的内存）
 		// Total bytes allocated for heap objects since program start (累计分配的堆对象字节数)
 		"TotalAlloc": utils.HumanIBytes(ms.TotalAlloc),
@@ -131,7 +126,10 @@ func MetricStats() map[string]any {
 		// Heap fragmentation percent: (HeapIdle-HeapReleased)/HeapSys (堆内存碎片率，反映未被使用但未释放的堆内存占比)
 		"FragmentationPercent": fmt.Sprintf("%.2f%%", trueFragRatio*100),
 	}
+}
 
+// getGCStats 获取GC相关指标
+func getGCStats(ms *runtime.MemStats) map[string]any {
 	// Pause durations (ms) for the last 5 GCs (最近5次GC的暂停时间，单位ms)
 	var lastPauses []string
 	// For calculating the max pause (用于计算最大暂停时间)
@@ -167,7 +165,8 @@ func MetricStats() map[string]any {
 			}
 		}
 	}
-	metrics["GC"] = map[string]any{
+
+	return map[string]any{
 		// NextGC: 下次GC触发的堆分配字节阈值
 		// Next GC trigger threshold in bytes (下次GC触发的堆分配字节阈值)
 		"NextGC": utils.HumanIBytes(ms.NextGC),
@@ -208,19 +207,150 @@ func MetricStats() map[string]any {
 		// Time since last GC (距离上次GC的时间)
 		"LastGCAgo": timeSinceLastGC.String(),
 	}
-	return metrics
+}
+
+// getSchedulerStats 获取调度器相关指标
+func getSchedulerStats(gcStats map[string]any) map[string]any {
+	schedMetrics := map[string]any{
+		"GC":                 gcStats,
+		"GoPoolFree":         ants.Free(),
+		"GoPoolRunning":      ants.Running(),
+		"GoPoolIdleWorkers":  ants.IdleWorkers(),
+		"GoPoolTotalWorkers": ants.TotalWorkers(),
+	}
+
+	// 定义指标名称到映射键的映射
+	metricMap := map[string]string{
+		// 调度器相关指标
+		"/sched/goroutines-created:goroutines":   "GoroutinesCreated",
+		"/sched/goroutines/not-in-go:goroutines": "GoroutinesNotInGo",
+		"/sched/goroutines/runnable:goroutines":  "GoroutinesRunnable",
+		"/sched/goroutines/running:goroutines":   "GoroutinesRunning",
+		"/sched/goroutines/waiting:goroutines":   "GoroutinesWaiting",
+		"/sched/threads/total:threads":           "ThreadsTotal",
+		"/sched/goroutines:goroutines":           "GoroutinesTotal",
+		"/sched/gomaxprocs:threads":              "GOMAXPROCS",
+		"/sched/latencies:seconds":               "SchedulingLatencies",
+
+		// 内存分配相关指标
+		"/gc/heap/allocs:bytes": "HeapAllocsBytes",
+		"/gc/heap/frees:bytes":  "HeapFreesBytes",
+
+		// GC 相关指标
+		"/gc/pauses:seconds": "GCPauses",
+	}
+
+	// 构建 metricSamples
+	metricSamples := make([]metrics.Sample, 0, len(metricMap))
+	for name := range metricMap {
+		metricSamples = append(metricSamples, metrics.Sample{Name: name})
+	}
+
+	// 调用 runtime/metrics 包的 Read 函数
+	metrics.Read(metricSamples)
+
+	// 存储原始数值用于分析
+	rawMetrics := make(map[string]uint64)
+	for _, sample := range metricSamples {
+		// 使用映射获取对应的键名
+		key, ok := metricMap[sample.Name]
+		if !ok {
+			continue
+		}
+
+		switch sample.Value.Kind() {
+		default:
+			continue
+		case metrics.KindUint64:
+			value := sample.Value.Uint64()
+			rawMetrics[sample.Name] = value
+			schedMetrics[key] = utils.Commau(value)
+		case metrics.KindFloat64:
+			value := sample.Value.Float64()
+			schedMetrics[key] = fmt.Sprintf("%.4f", value)
+		case metrics.KindFloat64Histogram:
+			hist := sample.Value.Float64Histogram()
+			if hist != nil {
+				totalCount := uint64(0)
+				for _, count := range hist.Counts {
+					totalCount += count
+				}
+
+				if totalCount == 0 {
+					continue
+				}
+
+				// 计算平均、最大等统计量
+				sum := 0.0
+				maxValue := 0.0
+
+				for i, count := range hist.Counts {
+					if count > 0 && i < len(hist.Buckets) {
+						// 使用桶的上限作为该桶内事件的值
+						bucketValue := hist.Buckets[i]
+						sum += bucketValue * float64(count)
+						if bucketValue > maxValue {
+							maxValue = bucketValue
+						}
+					}
+				}
+
+				average := sum / float64(totalCount)
+				if key == "GCPauses" {
+					if gcMap, ok := schedMetrics["GC"].(map[string]any); ok {
+						gcMap["PausesHistogram"] = map[string]any{
+							"TotalCount":  totalCount,                         // GC 暂停事件总计数
+							"AverageMs":   fmt.Sprintf("%.3f", average*1000),  // 平均暂停时间(毫秒)
+							"MaxMs":       fmt.Sprintf("%.3f", maxValue*1000), // 最大暂停时间(毫秒)
+							"BucketCount": len(hist.Buckets),                  // 直方图的桶数
+						}
+					}
+				} else if key == "SchedulingLatencies" {
+					schedMetrics[key] = map[string]any{
+						"TotalCount":  totalCount,                        // 调度事件总计数
+						"AverageMs":   fmt.Sprintf("%.3f", average*1e3),  // 平均调度延迟(毫秒)
+						"MaxMs":       fmt.Sprintf("%.3f", maxValue*1e3), // 最大调度延迟(毫秒)
+						"BucketCount": len(hist.Buckets),                 // 直方图的桶数
+					}
+				} else {
+					// 通用直方图输出
+					schedMetrics[key] = map[string]any{
+						"TotalCount":  totalCount,        // 事件总计数
+						"BucketCount": len(hist.Buckets), // 直方图的桶数
+					}
+				}
+			}
+		}
+	}
+
+	return schedMetrics
+}
+
+// MetricStats 主程序运行指标
+func MetricStats() map[string]any {
+	result := make(map[string]any)
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+
+	result["Main"] = MainStats()
+	result["Memory"] = getMemoryStats(&ms)
+
+	gcStats := getGCStats(&ms)
+	result["Scheduler"] = getSchedulerStats(gcStats)
+
+	return result
 }
 
 // MetricStatsWithBytesPoolStats 带内存池统计指标
 func MetricStatsWithBytesPoolStats(topN int, ps ...*bytespool.CapacityPools) map[string]any {
-	metrics := MetricStats()
-	metrics["BytesPool"] = BytesPoolStats(topN, ps...)
-	return metrics
+	ms := MetricStats()
+	ms["BytesPool"] = BytesPoolStats(topN, ps...)
+	return ms
 }
 
 func BytesPoolStats(topN int, ps ...*bytespool.CapacityPools) map[string]any {
 	ss := bytespool.RuntimeStatsSummary(topN, ps...)
-	m := map[string]any{
+	ms := map[string]any{
 		"Capacity": fmt.Sprintf(
 			"[%s, %s]",
 			utils.HumanIntIBytes(ss.MinSize),
@@ -232,9 +362,9 @@ func BytesPoolStats(topN int, ps ...*bytespool.CapacityPools) map[string]any {
 		"ReusedBytes": utils.HumanIBytes(ss.ReusedBytes),
 	}
 	if topN > 0 {
-		m["TopPools"] = ss.TopPools
+		ms["TopPools"] = ss.TopPools
 	}
-	return m
+	return ms
 }
 
 // MainStats 主程序系统指标
@@ -266,22 +396,18 @@ func MainStats() map[string]any {
 	}
 
 	stats := map[string]any{
-		"ProcessPid":         mainProcess.Pid,
-		"NumThreads":         numThreads,
-		"CPUPercent":         fmt.Sprintf("%.2f%%", cpuPercent),
-		"MemPercent":         fmt.Sprintf("%.2f%%", memPercent),
-		"MemRSS":             utils.HumanIBytes(memInfo.RSS),
-		"MemVMS":             utils.HumanIBytes(memInfo.VMS),
-		"MemSwap":            utils.HumanIBytes(memInfo.Swap),
-		"NumGoroutine":       runtime.NumGoroutine(),
-		"NumCgoCall":         utils.Comma(runtime.NumCgoCall()),
-		"GoMaxProcs":         runtime.GOMAXPROCS(0),
-		"NumConnections":     connCount,
-		"NumOpenFiles":       fdCount,
-		"GoPoolFree":         ants.Free(),
-		"GoPoolRunning":      ants.Running(),
-		"GoPoolIdleWorkers":  ants.IdleWorkers(),
-		"GoPoolTotalWorkers": ants.TotalWorkers(),
+		"ProcessPid":     mainProcess.Pid,
+		"NumThreads":     numThreads,
+		"CPUPercent":     fmt.Sprintf("%.2f%%", cpuPercent),
+		"MemPercent":     fmt.Sprintf("%.2f%%", memPercent),
+		"MemRSS":         utils.HumanIBytes(memInfo.RSS),
+		"MemVMS":         utils.HumanIBytes(memInfo.VMS),
+		"MemSwap":        utils.HumanIBytes(memInfo.Swap),
+		"NumGoroutine":   runtime.NumGoroutine(),
+		"NumCgoCall":     utils.Comma(runtime.NumCgoCall()),
+		"GoMaxProcs":     runtime.GOMAXPROCS(0),
+		"NumConnections": connCount,
+		"NumOpenFiles":   fdCount,
 	}
 	return stats
 }
