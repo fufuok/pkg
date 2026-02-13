@@ -86,14 +86,15 @@ func GetDataSourceBody(params DataSourceArgs) (string, error) {
 	}
 
 	// 获取所有配置项数据
-	body := ""
+	var builder strings.Builder
 	for _, info := range res.Data {
 		if txt, ok := info["ip_info"]; ok {
-			body += utils.MustString(txt) + "\n"
+			builder.WriteString(utils.MustString(txt))
+			builder.WriteString("\n")
 		}
 	}
 
-	body = strings.TrimSpace(body)
+	body := strings.TrimSpace(builder.String())
 	if body == "" {
 		return "", errors.New("data source result is empty")
 	}

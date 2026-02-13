@@ -209,6 +209,80 @@ func getGCStats(ms *runtime.MemStats) map[string]any {
 	}
 }
 
+// processFloat64Histogram 处理 float64 直方图类型的指标
+func processFloat64Histogram(hist *metrics.Float64Histogram, key string, schedMetrics map[string]any) {
+	if hist == nil {
+		return
+	}
+
+	totalCount := uint64(0)
+	for _, count := range hist.Counts {
+		totalCount += count
+	}
+
+	if totalCount == 0 {
+		// 无数据时的默认输出
+		if key == "GCPauses" {
+			// 将GCPauses移至GC子map中
+			if gcMap, ok := schedMetrics["GC"].(map[string]any); ok {
+				gcMap["PausesHistogram"] = map[string]any{
+					"TotalCount":  0,
+					"BucketCount": len(hist.Buckets),
+				}
+			}
+		} else {
+			schedMetrics[key] = map[string]any{
+				"TotalCount":  0,
+				"BucketCount": len(hist.Buckets),
+			}
+		}
+		return
+	}
+
+	// 计算平均、最大等统计量
+	sum := 0.0
+	maxValue := 0.0
+
+	for i, count := range hist.Counts {
+		if count > 0 && i < len(hist.Buckets) {
+			// 使用桶的上限作为该桶内事件的值
+			bucketValue := hist.Buckets[i]
+			sum += bucketValue * float64(count)
+			if bucketValue > maxValue {
+				maxValue = bucketValue
+			}
+		}
+	}
+
+	average := sum / float64(totalCount)
+
+	// 根据指标类型提供更有针对性的输出
+	switch key {
+	case "GCPauses":
+		if gcMap, ok := schedMetrics["GC"].(map[string]any); ok {
+			gcMap["PausesHistogram"] = map[string]any{
+				"TotalCount":  totalCount,                         // GC 暂停事件总计数
+				"AverageMs":   fmt.Sprintf("%.3f", average*1000),  // 平均暂停时间(毫秒)
+				"MaxMs":       fmt.Sprintf("%.3f", maxValue*1000), // 最大暂停时间(毫秒)
+				"BucketCount": len(hist.Buckets),                  // 直方图的桶数
+			}
+		}
+	case "SchedulingLatencies":
+		schedMetrics[key] = map[string]any{
+			"TotalCount":  totalCount,                          // 调度事件总计数
+			"AverageMs":   fmt.Sprintf("%.3fms", average*1e3),  // 平均调度延迟(毫秒)
+			"MaxMs":       fmt.Sprintf("%.3fms", maxValue*1e3), // 最大调度延迟(毫秒)
+			"BucketCount": len(hist.Buckets),                   // 直方图的桶数
+		}
+	default:
+		// 通用直方图输出
+		schedMetrics[key] = map[string]any{
+			"TotalCount":  totalCount,        // 事件总计数
+			"BucketCount": len(hist.Buckets), // 直方图的桶数
+		}
+	}
+}
+
 // getSchedulerStats 获取调度器相关指标
 func getSchedulerStats(gcStats map[string]any) map[string]any {
 	schedMetrics := map[string]any{
@@ -269,57 +343,12 @@ func getSchedulerStats(gcStats map[string]any) map[string]any {
 			value := sample.Value.Float64()
 			schedMetrics[key] = fmt.Sprintf("%.4f", value)
 		case metrics.KindFloat64Histogram:
+			// 处理直方图类型的指标
 			hist := sample.Value.Float64Histogram()
-			if hist != nil {
-				totalCount := uint64(0)
-				for _, count := range hist.Counts {
-					totalCount += count
-				}
-
-				if totalCount == 0 {
-					continue
-				}
-
-				// 计算平均、最大等统计量
-				sum := 0.0
-				maxValue := 0.0
-
-				for i, count := range hist.Counts {
-					if count > 0 && i < len(hist.Buckets) {
-						// 使用桶的上限作为该桶内事件的值
-						bucketValue := hist.Buckets[i]
-						sum += bucketValue * float64(count)
-						if bucketValue > maxValue {
-							maxValue = bucketValue
-						}
-					}
-				}
-
-				average := sum / float64(totalCount)
-				if key == "GCPauses" {
-					if gcMap, ok := schedMetrics["GC"].(map[string]any); ok {
-						gcMap["PausesHistogram"] = map[string]any{
-							"TotalCount":  totalCount,                         // GC 暂停事件总计数
-							"AverageMs":   fmt.Sprintf("%.3f", average*1000),  // 平均暂停时间(毫秒)
-							"MaxMs":       fmt.Sprintf("%.3f", maxValue*1000), // 最大暂停时间(毫秒)
-							"BucketCount": len(hist.Buckets),                  // 直方图的桶数
-						}
-					}
-				} else if key == "SchedulingLatencies" {
-					schedMetrics[key] = map[string]any{
-						"TotalCount":  totalCount,                        // 调度事件总计数
-						"AverageMs":   fmt.Sprintf("%.3f", average*1e3),  // 平均调度延迟(毫秒)
-						"MaxMs":       fmt.Sprintf("%.3f", maxValue*1e3), // 最大调度延迟(毫秒)
-						"BucketCount": len(hist.Buckets),                 // 直方图的桶数
-					}
-				} else {
-					// 通用直方图输出
-					schedMetrics[key] = map[string]any{
-						"TotalCount":  totalCount,        // 事件总计数
-						"BucketCount": len(hist.Buckets), // 直方图的桶数
-					}
-				}
-			}
+			processFloat64Histogram(hist, key, schedMetrics)
+		case metrics.KindBad:
+			// 无效的指标值类型，跳过处理
+			continue
 		}
 	}
 

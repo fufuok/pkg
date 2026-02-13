@@ -117,6 +117,7 @@ func (ps *PubSub[T, M]) Shutdown() {
 	ps.cmdChan <- cmd[T, M]{op: shutdown}
 }
 
+//nolint:cyclop
 func (ps *PubSub[T, M]) start() {
 	reg := registry[T, M]{
 		topics:    make(map[T]map[chan M]subType),
@@ -126,18 +127,20 @@ func (ps *PubSub[T, M]) start() {
 loop:
 	for cmd := range ps.cmdChan {
 		if cmd.topics == nil {
+			//nolint:exhaustive
 			switch cmd.op {
 			case unsubAll:
 				reg.removeChannel(cmd.ch)
-
 			case shutdown:
 				break loop
+			default:
 			}
 
 			continue loop
 		}
 
 		for _, topic := range cmd.topics {
+			//nolint:exhaustive
 			switch cmd.op {
 			case sub:
 				reg.add(topic, cmd.ch, normal)
@@ -159,6 +162,7 @@ loop:
 
 			case closeTopic:
 				reg.removeTopic(topic)
+			default:
 			}
 		}
 	}
@@ -207,6 +211,7 @@ func (reg *registry[T, M]) send(topic T, msg M) {
 			}
 		case onceEach:
 			reg.remove(topic, ch)
+		case normal:
 		}
 	}
 }
@@ -222,6 +227,7 @@ func (reg *registry[T, M]) sendNoWait(topic T, msg M) {
 				}
 			case onceEach:
 				reg.remove(topic, ch)
+			case normal:
 			}
 		default:
 		}

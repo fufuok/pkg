@@ -2,6 +2,7 @@ package master
 
 import (
 	"log"
+	"strings"
 	"time"
 
 	"github.com/fufuok/cache/xsync"
@@ -249,9 +250,10 @@ func MD5ConfigFiles() (md5 string, confFiles []string) {
 
 // MD5Files 文件 MD5
 func MD5Files(files ...string) (md5 string) {
+	var builder strings.Builder
 	for _, f := range files {
-		md5 += xhash.MustMD5Sum(f)
+		builder.WriteString(xhash.MustMD5Sum(f))
 	}
-	md5 = xhash.MD5Hex(md5)
+	md5 = xhash.MD5Hex(builder.String())
 	return
 }

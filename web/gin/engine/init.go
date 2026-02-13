@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/errgroup"
@@ -50,9 +51,10 @@ func Run(setup App) {
 			eg.Go(func() error {
 				logger.Warn().Str("addr", addr).Msg("HTTPS server started")
 				server := &http.Server{
-					Addr:     addr,
-					Handler:  app,
-					ErrorLog: log.New(io.Discard, "", 0), // 禁用底层服务器错误日志(TLS握手/连接重置等)
+					Addr:              addr,
+					Handler:           app,
+					ErrorLog:          log.New(io.Discard, "", 0), // 禁用底层服务器错误日志(TLS握手/连接重置等)
+					ReadHeaderTimeout: 5 * time.Second,            // 防止Slowloris攻击
 				}
 				return server.ListenAndServeTLS(cfg.CertFile, cfg.KeyFile)
 			})
@@ -62,9 +64,10 @@ func Run(setup App) {
 		eg.Go(func() error {
 			logger.Warn().Str("addr", addr).Msg("HTTP server started")
 			server := &http.Server{
-				Addr:     addr,
-				Handler:  app,
-				ErrorLog: log.New(io.Discard, "", 0), // 禁用底层服务器错误日志(TLS握手/连接重置等)
+				Addr:              addr,
+				Handler:           app,
+				ErrorLog:          log.New(io.Discard, "", 0), // 禁用底层服务器错误日志(TLS握手/连接重置等)
+				ReadHeaderTimeout: 5 * time.Second,            // 防止Slowloris攻击
 			}
 			return server.ListenAndServe()
 		})
