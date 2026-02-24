@@ -338,7 +338,12 @@ func getSchedulerStats(gcStats map[string]any) map[string]any {
 		case metrics.KindUint64:
 			value := sample.Value.Uint64()
 			rawMetrics[sample.Name] = value
-			schedMetrics[key] = utils.Commau(value)
+			// 对内存分配相关指标使用 HumanIBytes 格式化
+			if key == "HeapAllocsBytes" || key == "HeapFreesBytes" {
+				schedMetrics[key] = utils.HumanIBytes(value)
+			} else {
+				schedMetrics[key] = utils.Commau(value)
+			}
 		case metrics.KindFloat64:
 			value := sample.Value.Float64()
 			schedMetrics[key] = fmt.Sprintf("%.4f", value)
