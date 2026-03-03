@@ -10,7 +10,7 @@ var (
 )
 
 // RecoverAlarm 记录崩溃日志并发出报警
-func RecoverAlarm(err interface{}, trace []byte) {
+func RecoverAlarm(err any, trace []byte) {
 	info := utils.MustString(err)
 	more := utils.MustString(trace)
 	Log().Error().Str("error", info).Str("trace", more).Msg("Recovered and triggered alarm")
@@ -18,7 +18,7 @@ func RecoverAlarm(err interface{}, trace []byte) {
 }
 
 // RecoverLogger 记录崩溃日志
-func RecoverLogger(err interface{}, trace []byte) {
+func RecoverLogger(err any, trace []byte) {
 	info := utils.MustString(err)
 	more := utils.MustString(trace)
 	Log().Error().Str("error", info).Str("trace", more).Msg("Recovered from panic")

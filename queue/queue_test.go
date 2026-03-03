@@ -112,7 +112,7 @@ func TestQueue_RateState(t *testing.T) {
 	}
 
 	// 入队一些元素
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		q.Enqueue(i)
 	}
 
@@ -140,11 +140,11 @@ func TestQueue_Concurrent(t *testing.T) {
 	itemsPerProducer := 100
 	totalItems := producerCount * itemsPerProducer
 
-	for i := 0; i < producerCount; i++ {
+	for i := range producerCount {
 		wg.Add(1)
 		go func(producerID int) {
 			defer wg.Done()
-			for j := 0; j < itemsPerProducer; j++ {
+			for j := range itemsPerProducer {
 				q.Enqueue(producerID*itemsPerProducer + j)
 			}
 		}(i)
@@ -156,7 +156,7 @@ func TestQueue_Concurrent(t *testing.T) {
 	received := make(map[int]bool)
 	go func() {
 		defer consumerWg.Done()
-		for i := 0; i < totalItems; i++ {
+		for range totalItems {
 			v := q.Dequeue()
 			received[v] = true
 		}

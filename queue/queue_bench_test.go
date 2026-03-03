@@ -20,9 +20,9 @@ func Benchmark_MPSC_UMPSCQueue(b *testing.B) {
 		wg.Add(numProducers)
 
 		// 多生产者
-		for i := 0; i < numProducers; i++ {
+		for range numProducers {
 			go func() {
-				for j := 0; j < numItems; j++ {
+				for j := range numItems {
 					q.Enqueue(j)
 				}
 				wg.Done()
@@ -31,7 +31,7 @@ func Benchmark_MPSC_UMPSCQueue(b *testing.B) {
 
 		// 单消费者
 		count := numProducers * numItems
-		for i := 0; i < count; i++ {
+		for range count {
 			_ = q.Dequeue()
 		}
 		wg.Wait()
@@ -45,9 +45,9 @@ func Benchmark_MPSC_Chanx(b *testing.B) {
 		wg.Add(numProducers)
 
 		// 多生产者
-		for i := 0; i < numProducers; i++ {
+		for range numProducers {
 			go func() {
-				for j := 0; j < numItems; j++ {
+				for j := range numItems {
 					ch.In <- j
 				}
 				wg.Done()
@@ -56,7 +56,7 @@ func Benchmark_MPSC_Chanx(b *testing.B) {
 
 		// 单消费者
 		count := numProducers * numItems
-		for i := 0; i < count; i++ {
+		for range count {
 			_ = <-ch.Out
 		}
 		wg.Wait()
@@ -70,9 +70,9 @@ func Benchmark_MPSC_Channel(b *testing.B) {
 		wg.Add(numProducers)
 
 		// 多生产者
-		for i := 0; i < numProducers; i++ {
+		for range numProducers {
 			go func() {
-				for j := 0; j < numItems; j++ {
+				for j := range numItems {
 					ch <- j
 				}
 				wg.Done()
@@ -81,7 +81,7 @@ func Benchmark_MPSC_Channel(b *testing.B) {
 
 		// 单消费者
 		count := numProducers * numItems
-		for i := 0; i < count; i++ {
+		for range count {
 			_ = <-ch
 		}
 		wg.Wait()

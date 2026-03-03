@@ -52,7 +52,7 @@ func RedisInfo() map[string]any {
 
 	ret := make(map[string]any)
 	info := common.RedisDB.Info(context.Background()).Val()
-	for _, v := range strings.Split(info, "\n") {
+	for v := range strings.SplitSeq(info, "\n") {
 		v = strings.TrimSpace(v)
 		if v == "" || strings.HasPrefix(v, "#") {
 			continue

@@ -17,7 +17,7 @@ func TestCalcThreshold(t *testing.T) {
 		{"normal case", 10, 0.5, 5},
 		{"rounding up", 10, 0.33, 4}, // ceil(3.3) = 4
 		{"ratio > 1", 10, 1.5, 15},
-		{"small ratio", 100, 0.01, 1}, // ceil(1.0) = 1
+		{"small ratio", 100, 0.01, 1},       // ceil(1.0) = 1
 		{"very small ratio", 100, 0.001, 1}, // ceil(0.1) = 1
 	}
 
@@ -41,7 +41,7 @@ func TestCalcThreshold(t *testing.T) {
 		{"normal case", 10, 0.5, 5},
 		{"rounding up", 10, 0.33, 4}, // ceil(3.3) = 4
 		{"ratio > 1", 10, 1.5, 15},
-		{"small ratio", 100, 0.01, 1}, // ceil(1.0) = 1
+		{"small ratio", 100, 0.01, 1},       // ceil(1.0) = 1
 		{"very small ratio", 100, 0.001, 1}, // ceil(0.1) = 1
 	}
 
@@ -66,7 +66,7 @@ func TestCalcThreshold(t *testing.T) {
 		{"normal case", 10, 0.5, 5},
 		{"rounding up", 10, 0.33, 4}, // ceil(3.3) = 4
 		{"ratio > 1", 10, 1.5, 15},
-		{"small ratio", 100, 0.01, 1}, // ceil(1.0) = 1
+		{"small ratio", 100, 0.01, 1},       // ceil(1.0) = 1
 		{"very small ratio", 100, 0.001, 1}, // ceil(0.1) = 1
 	}
 
@@ -84,7 +84,7 @@ func TestCalcThreshold_MinimumValue(t *testing.T) {
 	// 测试确保结果始终至少为 1
 	testCases := []struct {
 		name  string
-		limit interface{}
+		limit any
 		ratio float64
 	}{
 		{"int small value", 1, 0.1},

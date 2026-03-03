@@ -47,7 +47,7 @@ func Run(setup App) {
 
 	eg := errgroup.Group{}
 	if cfg.ServerHttpsAddr != "" {
-		for _, addr := range strings.Split(cfg.ServerHttpsAddr, ",") {
+		for addr := range strings.SplitSeq(cfg.ServerHttpsAddr, ",") {
 			eg.Go(func() error {
 				logger.Warn().Str("addr", addr).Msg("HTTPS server started")
 				server := &http.Server{
@@ -60,7 +60,7 @@ func Run(setup App) {
 			})
 		}
 	}
-	for _, addr := range strings.Split(cfg.ServerAddr, ",") {
+	for addr := range strings.SplitSeq(cfg.ServerAddr, ",") {
 		eg.Go(func() error {
 			logger.Warn().Str("addr", addr).Msg("HTTP server started")
 			server := &http.Server{

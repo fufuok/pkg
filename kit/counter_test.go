@@ -316,10 +316,10 @@ func runWithGoroutines(b *testing.B, numGoroutines int, benchFn func()) {
 
 	opsPerGoroutine := b.N / numGoroutines
 
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		go func() {
 			defer wg.Done()
-			for j := 0; j < opsPerGoroutine; j++ {
+			for range opsPerGoroutine {
 				benchFn()
 			}
 		}()
