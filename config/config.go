@@ -85,6 +85,8 @@ type LogConf struct {
 }
 
 type WebConf struct {
+	// Name 可选服务标识, 多实例时用于日志区分, 如 "api" / "admin"
+	Name            string   `json:"name"`
 	PProfAddr       string   `json:"pprof_addr"`
 	ServerAddr      string   `json:"server_addr"`
 	ServerHttpsAddr string   `json:"server_https_addr"`
@@ -230,6 +232,8 @@ func parseSYSConfig(cfg *MainConf) error {
 	return nil
 }
 
+// TODO: 对外使用日志配置解析器
+//
 //nolint:cyclop
 func parseLogConfig(cfg *MainConf) {
 	// 日志级别: -1Trace 0Debug(0 或未指定该配置项) 1Info 2Warn(默认) 3Error 4Fatal 5Panic 6NoLevel 7Off

@@ -18,15 +18,21 @@ import (
 	"github.com/fufuok/pkg/web/fiber/tproxy"
 )
 
-var app *fiber.App
-
 type App func(app *fiber.App) *fiber.App
 
-// Run 启用 Web 服务
-func Run(setup App) {
+// Run 启用 Web 服务. 可选传入 webConf, 传入时优先使用, 便于同一应用按不同配置启动并监听不同端口.
+func Run(setup App, webConf ...config.WebConf) {
 	cfg := config.Config().WebConf
-	app = fiber.New(fiber.Config{
-		AppName:           config.AppName,
+	if len(webConf) > 0 {
+		cfg = webConf[0]
+	}
+
+	if cfg.Name == "" {
+		cfg.Name = config.AppName
+	}
+
+	app := fiber.New(fiber.Config{
+		AppName:           cfg.Name,
 		BodyLimit:         cfg.BodyLimit,
 		DisableKeepalive:  cfg.DisableKeepalive,
 		ReduceMemoryUsage: !cfg.DisableReduceMemoryUsage,
@@ -60,7 +66,7 @@ func Run(setup App) {
 	if cfg.ServerHttpsAddr != "" {
 		for addr := range strings.SplitSeq(cfg.ServerHttpsAddr, ",") {
 			eg.Go(func() (err error) {
-				logger.Warn().Str("addr", addr).Msg("HTTPS server started")
+				logger.Warn().Str("addr", addr).Str("service", cfg.Name).Msg("HTTPS server started")
 				err = app.Listen(addr, fiber.ListenConfig{
 					DisableStartupMessage: true,
 					CertFile:              cfg.CertFile,
@@ -72,7 +78,7 @@ func Run(setup App) {
 	}
 	for addr := range strings.SplitSeq(cfg.ServerAddr, ",") {
 		eg.Go(func() (err error) {
-			logger.Warn().Str("addr", addr).Msg("HTTP server started")
+			logger.Warn().Str("addr", addr).Str("service", cfg.Name).Msg("HTTP server started")
 			err = app.Listen(addr, fiber.ListenConfig{
 				DisableStartupMessage: true,
 			})
@@ -80,7 +86,7 @@ func Run(setup App) {
 		})
 	}
 	if err := eg.Wait(); err != nil {
-		log.Fatalln("Failed to start HTTP/HTTPS Server:", err, "\nbye.")
+		log.Fatalln("Failed to start HTTP/HTTPS Server ["+cfg.Name+"]:", err, "\nbye.")
 	}
 }
 
