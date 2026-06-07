@@ -13,10 +13,3 @@ func SetupSYSRouter(app *fiber.App) {
 		return c.SendString(c.IP())
 	})
 }
-
-// SetupExceptionRouter 设置异常请求路由
-func SetupExceptionRouter(app *fiber.App) {
-	app.Use(func(c fiber.Ctx) error {
-		return c.SendStatus(fiber.StatusNotFound)
-	})
-}

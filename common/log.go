@@ -49,22 +49,33 @@ var (
 	logAlarmOnConf bool
 )
 
+var disabledLogger = zerolog.Nop()
+
 // Log 返回通用日志记录器
 // common.Log().Debug().Msg("debug")
 func Log() *zerolog.Logger {
-	return logger.Load()
+	if l := logger.Load(); l != nil {
+		return l
+	}
+	return &disabledLogger
 }
 
 // LogSampled 返回抽样日志记录器
 // common.LogSampled().Debug().Msg("debug")
 func LogSampled() *zerolog.Logger {
-	return logSampled.Load()
+	if l := logSampled.Load(); l != nil {
+		return l
+	}
+	return Log()
 }
 
 // LogAlarm 返回报警日志记录器
 // common.LogAlarm().Warn().Err(err).Msg("alarm")
 func LogAlarm() *zerolog.Logger {
-	return logAlarm.Load()
+	if l := logAlarm.Load(); l != nil {
+		return l
+	}
+	return Log()
 }
 
 func initLogger() {

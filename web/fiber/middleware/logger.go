@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"runtime/debug"
 	"time"
 
@@ -35,8 +36,13 @@ func WebLogger(cond LogCondition, withBody ...bool) fiber.Handler {
 		chainErr := c.Next()
 		elapsed := time.Since(start)
 
-		// Manually call error handler
+		// 将下游错误交还给 Fiber 的 ErrorHandler, 保留调用方自定义的 404/405/业务错误语义.
 		if chainErr != nil {
+			var fiberErr *fiber.Error
+			if errors.As(chainErr, &fiberErr) && fiberErr.Code < fiber.StatusInternalServerError {
+				return chainErr
+			}
+
 			log := sampler.Error().Err(chainErr).
 				Str("elapsed", elapsed.String()).
 				Str("client_ip", tproxy.GetClientIP(c)).Str("method", c.Method())
@@ -44,7 +50,7 @@ func WebLogger(cond LogCondition, withBody ...bool) fiber.Handler {
 				log.Bytes("body", c.Body())
 			}
 			log.Msg(c.OriginalURL())
-			return c.SendStatus(fiber.StatusInternalServerError)
+			return chainErr
 		}
 
 		if cond(c, elapsed) {

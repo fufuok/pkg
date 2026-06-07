@@ -86,12 +86,15 @@ type LogConf struct {
 
 type WebConf struct {
 	// Name 可选服务标识, 多实例时用于日志区分, 如 "api" / "admin"
-	Name            string   `json:"name"`
-	PProfAddr       string   `json:"pprof_addr"`
-	ServerAddr      string   `json:"server_addr"`
-	ServerHttpsAddr string   `json:"server_https_addr"`
-	StatsPath       string   `json:"stats_path"`
-	TrustedProxies  []string `json:"trusted_proxies"`
+	Name            string `json:"name"`
+	PProfAddr       string `json:"pprof_addr"`
+	ServerAddr      string `json:"server_addr"`
+	ServerHttpsAddr string `json:"server_https_addr"`
+	// Groups 是同一进程内多组 Web 服务监听配置. 每组会复用 WebConf 中的通用默认项,
+	// 但可拥有独立 name/server_addr/server_https_addr 和路由注册函数.
+	Groups         map[string]WebConf `json:"groups"`
+	StatsPath      string             `json:"stats_path"`
+	TrustedProxies []string           `json:"trusted_proxies"`
 
 	// Gin
 	TrustedPlatform string `json:"trusted_platform"`
@@ -122,8 +125,109 @@ type WebConf struct {
 	SignTTL int64  `json:"sign_ttl"`
 	SignKey string `json:"-"`
 
+	// CertFileEnv/KeyFileEnv 为分组级独立 TLS 证书的环境变量名(可选).
+	// 分组同时指定二者时, 使用对应环境变量指向的证书覆盖继承自主配置的证书;
+	// 为空时该分组继承主配置(WEB_CERT_FILE/WEB_KEY_FILE)的证书.
+	CertFileEnv string `json:"cert_file_env"`
+	KeyFileEnv  string `json:"key_file_env"`
+
 	CertFile string `json:"-"`
 	KeyFile  string `json:"-"`
+}
+
+// NormalizeWebConf 将传入的 WebConf 补齐为可启动配置.
+// base 提供框架全局默认值和运行期派生字段; override 非零值覆盖 base.
+// 该函数用于同一进程内多组 Web 服务, 既保持旧 web_conf 单实例兼容,
+// 又允许应用按业务边界派生独立监听端口和服务名.
+func NormalizeWebConf(base, override WebConf) WebConf {
+	cfg := base
+	if override.Name != "" {
+		cfg.Name = override.Name
+	}
+	if override.PProfAddr != "" {
+		cfg.PProfAddr = override.PProfAddr
+	}
+	if override.ServerAddr != "" {
+		cfg.ServerAddr = override.ServerAddr
+	}
+	if override.ServerHttpsAddr != "" {
+		cfg.ServerHttpsAddr = override.ServerHttpsAddr
+	}
+	if override.Groups != nil {
+		cfg.Groups = override.Groups
+	}
+	if override.StatsPath != "" {
+		cfg.StatsPath = override.StatsPath
+	}
+	if override.TrustedProxies != nil {
+		cfg.TrustedProxies = override.TrustedProxies
+	}
+	if override.TrustedPlatform != "" {
+		cfg.TrustedPlatform = override.TrustedPlatform
+	}
+	if override.EnableTrustedProxyCheck {
+		cfg.EnableTrustedProxyCheck = true
+	}
+	if override.ProxyHeader != "" {
+		cfg.ProxyHeader = override.ProxyHeader
+	}
+	if override.DisableReduceMemoryUsage {
+		cfg.DisableReduceMemoryUsage = true
+	}
+	if override.DisableKeepalive {
+		cfg.DisableKeepalive = true
+	}
+	if override.BodyLimit != 0 {
+		cfg.BodyLimit = override.BodyLimit
+	}
+	if override.WhitelistLRUCapacity != 0 {
+		cfg.WhitelistLRUCapacity = override.WhitelistLRUCapacity
+	}
+	if override.WhitelistLRULifetime != 0 {
+		cfg.WhitelistLRULifetime = override.WhitelistLRULifetime
+	}
+	if override.BlacklistLRUCapacity != 0 {
+		cfg.BlacklistLRUCapacity = override.BlacklistLRUCapacity
+	}
+	if override.BlacklistLRULifetime != 0 {
+		cfg.BlacklistLRULifetime = override.BlacklistLRULifetime
+	}
+	if override.RequestsLimit != 0 {
+		cfg.RequestsLimit = override.RequestsLimit
+	}
+	if override.SignTTL != 0 {
+		cfg.SignTTL = override.SignTTL
+	}
+	if override.SignKey != "" {
+		cfg.SignKey = override.SignKey
+	}
+	if override.CertFileEnv != "" {
+		cfg.CertFileEnv = override.CertFileEnv
+	}
+	if override.KeyFileEnv != "" {
+		cfg.KeyFileEnv = override.KeyFileEnv
+	}
+	if override.CertFile != "" {
+		cfg.CertFile = override.CertFile
+	}
+	if override.KeyFile != "" {
+		cfg.KeyFile = override.KeyFile
+	}
+	return cfg
+}
+
+// NormalizeWebGroupConf 将 web_conf.groups.<name> 归一为一组独立 Web 服务配置.
+// 与 NormalizeWebConf 不同, 分组配置不会从 base 继承 server_addr/server_https_addr,
+// 避免多个业务组在未显式配置端口时重复监听主服务端口; 其他通用项仍继承 base.
+func NormalizeWebGroupConf(base WebConf, name string, group WebConf) WebConf {
+	cfg := NormalizeWebConf(base, group)
+	cfg.Groups = nil
+	cfg.ServerAddr = group.ServerAddr
+	cfg.ServerHttpsAddr = group.ServerHttpsAddr
+	if cfg.Name == "" {
+		cfg.Name = name
+	}
+	return cfg
 }
 
 type FilesConf struct {
@@ -360,6 +464,42 @@ func parseWebConfig(cfg *MainConf) {
 	} else {
 		cfg.WebConf.ServerHttpsAddr = ""
 	}
+
+	// 多组 Web 服务复用 web_conf 通用项, 但监听地址必须在各 group 中显式配置,
+	// 避免未配置端口的业务组继承主端口后导致重复监听或路由串线.
+	if len(cfg.WebConf.Groups) > 0 {
+		groups := make(map[string]WebConf, len(cfg.WebConf.Groups))
+		for name, group := range cfg.WebConf.Groups {
+			groupCfg := NormalizeWebGroupConf(cfg.WebConf, name, group)
+			// 解析分组证书: 指定独立证书环境变量时用该组独立证书, 否则继承主配置证书
+			resolveGroupCertFile(&groupCfg, group.CertFileEnv, group.KeyFileEnv)
+			// 该组无可用证书时关闭其 HTTPS (按分组而非主配置判定, 以支持分组独立证书)
+			if groupCfg.CertFile == "" || groupCfg.KeyFile == "" {
+				groupCfg.ServerHttpsAddr = ""
+			}
+			groups[name] = groupCfg
+		}
+		cfg.WebConf.Groups = groups
+	}
+}
+
+// resolveGroupCertFile 解析分组独立 TLS 证书.
+// 分组同时指定 certFileEnv/keyFileEnv 时, 用对应环境变量指向的证书覆盖继承自主配置的证书;
+// 指定了但文件无效时清空该组证书(不回退主证书, 避免证书与该组域名错配), 由调用方据此关闭该组 HTTPS.
+// 未指定时不改动 groupCfg, 即继承主配置证书.
+func resolveGroupCertFile(groupCfg *WebConf, certFileEnv, keyFileEnv string) {
+	if certFileEnv == "" || keyFileEnv == "" {
+		return
+	}
+	certFile := os.Getenv(certFileEnv)
+	keyFile := os.Getenv(keyFileEnv)
+	if xfile.IsFile(certFile) && xfile.IsFile(keyFile) {
+		groupCfg.CertFile = certFile
+		groupCfg.KeyFile = keyFile
+		return
+	}
+	groupCfg.CertFile = ""
+	groupCfg.KeyFile = ""
 }
 
 func parseWhitelistConfig(cfg *MainConf) error {
