@@ -3,9 +3,11 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fufuok/utils"
+	"github.com/joho/godotenv"
 )
 
 var (
@@ -33,6 +35,12 @@ var (
 
 	// MainConfRemoteAPIEnvName 获取主配置文件的 API URL (可选, 优先使用)
 	MainConfRemoteAPIEnvName = "MAIN_CONF_REMOTE_API"
+	// MainConfigFileEnvName 启动级主配置文件路径环境变量名, 绝对路径直接使用, 相对路径基于 ConfigPath
+	MainConfigFileEnvName = "MAIN_CONFIG_FILE"
+	// MainConfigNameEnvName 启动级主配置名称环境变量名, 仅作为 ConfigPath 下的 JSON 文件名使用
+	MainConfigNameEnvName = "MAIN_CONFIG_NAME"
+	// BootstrapEnvSuffix 启动级环境文件后缀, 完整文件名为 env/{BinName}.default.env
+	BootstrapEnvSuffix = ".default.env"
 
 	// ConfigInitialized 全局配置是否已初始化
 	ConfigInitialized bool
@@ -195,12 +203,14 @@ func initDefaultConfig() {
 		ConfigPath = filepath.Join(RootPath, "..", "etc")
 	}
 
-	if ConfigFile == "" {
-		ConfigFile = filepath.Join(ConfigPath, BinName+".json")
-	}
-
 	if EnvFilePath == "" {
 		EnvFilePath = filepath.Join(RootPath, "..", "env")
+	}
+
+	loadBootstrapEnv()
+
+	if ConfigFile == "" {
+		ConfigFile = resolveMainConfigFile(ConfigPath, BinName)
 	}
 
 	if EnvMainFile == "" {
@@ -229,4 +239,77 @@ func initDefaultConfig() {
 func makePaths() {
 	_ = os.MkdirAll(LogPath, 0o755)
 	_ = os.MkdirAll(ConfigPath, 0o755)
+}
+
+// loadBootstrapEnv 加载启动级环境文件 env/{BinName}.default.env.
+//
+// 该文件只用于主配置读取前的路径派生, 不是运行期热加载配置. 这里使用
+// godotenv.Load 而不是 loadEnvFiles 中的 godotenv.Overload, 是为了把该文件
+// 定义成“可被机器环境变量覆盖的默认值”. 这样 systemd Environment, /etc/default,
+// 容器 env 或 shell env 中的同名变量能保持最高机器级优先级.
+func loadBootstrapEnv() {
+	_ = godotenv.Load(filepath.Join(EnvFilePath, BinName+BootstrapEnvSuffix))
+}
+
+// ResolveDefaultConfigFile 解析可由环境变量显式指定的默认配置文件路径.
+//
+// envName 指向的环境变量表示完整文件路径: 绝对路径直接使用, 相对路径基于
+// ConfigPath. 当环境变量未设置或只包含空白时, 回退到 {ConfigPath}/{BinName}{suffix}.
+// 该函数只做路径解析, 不检查文件是否存在, 让调用方在真正读取配置时暴露部署错误.
+func ResolveDefaultConfigFile(envName, suffix string) string {
+	return resolveDefaultConfigFile(ConfigPath, BinName, envName, suffix)
+}
+
+// resolveDefaultConfigFile 是 ResolveDefaultConfigFile 的可测实现.
+//
+// 通过显式传入 configPath 和 binName, 主配置初始化和单元测试都能复用同一套路径规则,
+// 同时避免为了测试或主配置解析临时改写包级全局变量.
+func resolveDefaultConfigFile(configPath, binName, envName, suffix string) string {
+	if v := strings.TrimSpace(os.Getenv(envName)); v != "" {
+		if filepath.IsAbs(v) {
+			return v
+		}
+		return filepath.Join(configPath, v)
+	}
+	return filepath.Join(configPath, binName+suffix)
+}
+
+// ResolveDefaultConfigName 解析可由环境变量显式指定的默认配置名称.
+//
+// envName 指向的环境变量只表示配置名, 不表示路径. 解析时会裁剪空白, 取
+// filepath.Base 并自动补齐 suffix, 避免通过目录分隔符逃逸 ConfigPath. 当环境变量
+// 未设置或只包含空白时, 回退到 {ConfigPath}/{BinName}{suffix}.
+func ResolveDefaultConfigName(envName, suffix string) string {
+	return resolveDefaultConfigName(ConfigPath, BinName, envName, suffix)
+}
+
+// resolveDefaultConfigName 是 ResolveDefaultConfigName 的可测实现.
+//
+// 配置名与配置路径的语义不同: 名称只能落在 configPath 下, 因此这里会取 base 名并
+// 补齐 suffix; 路径型环境变量请使用 resolveDefaultConfigFile.
+func resolveDefaultConfigName(configPath, binName, envName, suffix string) string {
+	if v := strings.TrimSpace(os.Getenv(envName)); v != "" {
+		v = filepath.Base(v)
+		if !strings.HasSuffix(strings.ToLower(v), strings.ToLower(suffix)) {
+			v += suffix
+		}
+		return filepath.Join(configPath, v)
+	}
+	return filepath.Join(configPath, binName+suffix)
+}
+
+// resolveMainConfigFile 按启动级优先级解析主配置文件路径.
+//
+// 优先级固定为 MAIN_CONFIG_FILE > MAIN_CONFIG_NAME > {ConfigPath}/{BinName}.json.
+// 显式 ConfigFile 的最高优先级由调用方通过“仅在 ConfigFile 为空时调用本函数”保证.
+func resolveMainConfigFile(configPath, binName string) string {
+	if v := strings.TrimSpace(os.Getenv(MainConfigFileEnvName)); v != "" {
+		return resolveDefaultConfigFile(configPath, binName, MainConfigFileEnvName, ".json")
+	}
+
+	if v := strings.TrimSpace(os.Getenv(MainConfigNameEnvName)); v != "" {
+		return resolveDefaultConfigName(configPath, binName, MainConfigNameEnvName, ".json")
+	}
+
+	return resolveDefaultConfigFile(configPath, binName, "", ".json")
 }
