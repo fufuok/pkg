@@ -292,3 +292,38 @@ func restoreEnvVar(t *testing.T, key string) {
 		_ = os.Unsetenv(key)
 	})
 }
+
+// TestLoadEnvFilesClearsRemovedVars 验证 env 文件中注释/删除的变量在热加载后被置空.
+// godotenv.Overload 只设置文件中存在的 key, 注释掉的 key 不会出现在解析结果中;
+// loadEnvFiles 通过对比上次记录的 key 集合, 将已移除的 key 在进程环境中置空.
+func TestLoadEnvFilesClearsRemovedVars(t *testing.T) {
+	restoreDefaultConfigGlobals(t)
+
+	// 保存并恢复 envFileKeys, 避免影响其他测试.
+	oldEnvFileKeys := envFileKeys
+	oldExtraEnvFiles := extraEnvFiles
+	t.Cleanup(func() {
+		envFileKeys = oldEnvFileKeys
+		extraEnvFiles = oldExtraEnvFiles
+	})
+
+	envDir := t.TempDir()
+	EnvFilePath = envDir
+	EnvMainFile = filepath.Join(envDir, "main.env")
+
+	// 第一次加载: FF_ON=1, FF_REMOVE=2
+	assert.Nil(t, os.WriteFile(EnvMainFile, []byte("FF_ON=1\nFF_REMOVE=2\n"), 0o600))
+	restoreEnvVar(t, "FF_ON")
+	restoreEnvVar(t, "FF_REMOVE")
+	loadEnvFiles()
+	assert.Equal(t, "1", os.Getenv("FF_ON"))
+	assert.Equal(t, "2", os.Getenv("FF_REMOVE"))
+
+	// 第二次加载: FF_REMOVE 被注释掉, FF_ON 保留, 新增 FF_NEW=3
+	assert.Nil(t, os.WriteFile(EnvMainFile, []byte("FF_ON=1\n#FF_REMOVE=2\nFF_NEW=3\n"), 0o600))
+	restoreEnvVar(t, "FF_NEW")
+	loadEnvFiles()
+	assert.Equal(t, "1", os.Getenv("FF_ON"))
+	assert.Equal(t, "", os.Getenv("FF_REMOVE"), "commented-out var should be cleared on reload")
+	assert.Equal(t, "3", os.Getenv("FF_NEW"))
+}
