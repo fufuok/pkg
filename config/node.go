@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,11 @@ var (
 
 	// NodeInfoBackupFile 节点基本信息备份文件路径
 	NodeInfoBackupFile string
+
+	// NodeInfoBackupEnabledEnvName 节点信息备份功能开关环境变量名
+	// 节点身份信息要求实时准确, 默认关闭: 不使用上次保存的 backup 回退, 也不回写 backup 文件.
+	// 仅在明确设置 NODE_INFO_BACKUP_ENABLED=1/true 时, 启用 backup 读写兜底 (兼容旧行为).
+	NodeInfoBackupEnabledEnvName = "NODE_INFO_BACKUP_ENABLED"
 
 	nodeIPFetcherRunning bool
 
@@ -80,8 +86,9 @@ func parseNodeInfoConfig(cfg *MainConf) {
 	// 首选: 加载节点本地配置文件: node_info.json
 	parseNodeInfoJson(cfg)
 
-	// 次选: 加载上次保存的有效节点配置文件: etc/node_info.backup
-	if cfg.NodeConf.NodeInfo.NodeIP == "" {
+	// 次选: 加载上次保存的有效节点配置文件: etc/node_info.backup (默认关闭, 需环境变量显式启用)
+	backupEnabled := nodeInfoBackupEnabled()
+	if backupEnabled && cfg.NodeConf.NodeInfo.NodeIP == "" {
 		parseNodeInfoJsonBackup(cfg)
 	}
 
@@ -103,8 +110,16 @@ func parseNodeInfoConfig(cfg *MainConf) {
 	}
 	cfg.NodeConf.NodeInfo.NodeIP = nodeIP.String()
 
-	// 备份节点配置
-	saveNodeInfoBackup(cfg.NodeConf.NodeInfo)
+	// 备份节点配置 (默认关闭, 需环境变量显式启用)
+	if backupEnabled {
+		saveNodeInfoBackup(cfg.NodeConf.NodeInfo)
+	}
+}
+
+// nodeInfoBackupEnabled 是否启用节点信息备份读写兜底 (默认关闭)
+func nodeInfoBackupEnabled() bool {
+	enabled, _ := strconv.ParseBool(os.Getenv(NodeInfoBackupEnabledEnvName))
+	return enabled
 }
 
 func parseNodeInfoJson(cfg *MainConf) {
