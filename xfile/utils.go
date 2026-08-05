@@ -319,7 +319,13 @@ func UnzipDir(zipFile, dstDir string) error {
 		fullPath := filepath.Join(dstDir, file.Name)
 
 		if file.FileInfo().IsDir() {
-			if err := os.MkdirAll(fullPath, file.Mode()); err != nil {
+			directoryMode := file.Mode().Perm()
+			// zip.Writer.Create 生成的目录条目不携带可遍历的 Unix 权限. Linux
+			// 下若使用零权限或无执行位的权限, 后续嵌套文件将无法写入该目录.
+			if directoryMode == 0 || directoryMode&0o111 == 0 {
+				directoryMode = 0o755
+			}
+			if err := os.MkdirAll(fullPath, directoryMode); err != nil {
 				return fmt.Errorf("failed to create directory: %w", err)
 			}
 			continue
