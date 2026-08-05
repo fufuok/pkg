@@ -4,9 +4,9 @@ import (
 	"time"
 
 	"github.com/fufuok/ants"
-	"github.com/fufuok/utils"
-	"github.com/fufuok/utils/xjson/gjson"
-	"github.com/fufuok/utils/xjson/jsongen"
+	"github.com/fufuok/pkg/utils"
+	"github.com/fufuok/pkg/xjson/gjson"
+	"github.com/fufuok/pkg/xjson/jsongen"
 	"github.com/imroc/req/v3"
 	"github.com/rs/zerolog"
 

@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fufuok/utils"
-	"github.com/fufuok/utils/assert"
+	"github.com/fufuok/pkg/assert"
+	"github.com/fufuok/pkg/utils"
 )
 
 func TestGenSign(t *testing.T) {

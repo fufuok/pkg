@@ -9,6 +9,8 @@ on:
 jobs:
   test:
     name: Test
+    env:
+      GOTOOLCHAIN: local
     strategy:
       fail-fast: false
       matrix:

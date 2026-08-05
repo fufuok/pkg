@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fufuok/utils/assert"
+	"github.com/fufuok/pkg/assert"
 )
 
 // TestResolveMainConfigFile 覆盖启动级主配置选择的纯函数规则.

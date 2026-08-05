@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/fufuok/ants"
-	"github.com/fufuok/utils"
+	"github.com/fufuok/pkg/utils"
 	"github.com/natefinch/lumberjack/v3"
 	"github.com/rs/zerolog"
 

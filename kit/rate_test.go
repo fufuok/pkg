@@ -4,8 +4,31 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fufuok/utils/assert"
+	"github.com/fufuok/pkg/assert"
 )
+
+type rateTestClock struct {
+	current time.Time
+}
+
+// newRateStateForTest 创建使用固定时钟的速率计算器.
+// 测试必须显式推进时钟, 避免调度延迟进入两位小数精确断言.
+func newRateStateForTest(seconds ...float64) (*RateState, *rateTestClock) {
+	clock := &rateTestClock{current: time.Unix(1_700_000_000, 0)}
+	rs := NewRateState(seconds...)
+	rs.clock = clock
+	return rs, clock
+}
+
+// Now 返回测试时钟的当前时间.
+func (c *rateTestClock) Now() time.Time {
+	return c.current
+}
+
+// Advance 按指定时长推进测试时钟.
+func (c *rateTestClock) Advance(d time.Duration) {
+	c.current = c.current.Add(d)
+}
 
 func TestRateState_Rate(t *testing.T) {
 	t.Run("首次调用返回0", func(t *testing.T) {
@@ -36,26 +59,26 @@ func TestRateState_Rate(t *testing.T) {
 	})
 
 	t.Run("正常计算速率", func(t *testing.T) {
-		rs := NewRateState()
+		rs, clock := newRateStateForTest()
 		rs.Rate(100) // 初始化
 
 		// 模拟时间流逝
-		rs.lastTime = rs.lastTime.Add(-2 * time.Second)
+		clock.Advance(2 * time.Second)
 		rate := rs.Rate(200)               // 增加100个单位，在2秒内
 		assert.Equal(t, float64(50), rate) // 100/2 = 50
 
 		// 模拟时间流逝
-		rs.lastTime = rs.lastTime.Add(-2 * time.Second)
+		clock.Advance(2 * time.Second)
 		rate = rs.Rate(300)                // 增加100个单位，在2秒内
 		assert.Equal(t, float64(50), rate) // 100/2 = 50
 	})
 
 	t.Run("时间间隔不足1秒返回上次速率", func(t *testing.T) {
-		rs := NewRateState()
+		rs, clock := newRateStateForTest()
 		rs.Rate(100) // 初始化
 
 		// 模拟时间流逝但不足1秒
-		rs.lastTime = rs.lastTime.Add(-500 * time.Millisecond)
+		clock.Advance(500 * time.Millisecond)
 		rs.lastRate = 30.0 // 设置上次速率
 		rate := rs.Rate(200)
 		assert.Equal(t, float64(30), rate) // 返回上次速率
@@ -71,8 +94,10 @@ func TestRateState_ZeroValue(t *testing.T) {
 		rate1 := rate.Rate(100)
 		assert.Equal(t, float64(0), rate1)
 
-		// 模拟时间流逝
-		rate.lastTime = rate.lastTime.Add(-2 * time.Second)
+		// 首次调用验证零值可用后, 再注入固定时钟验证精确计算.
+		clock := &rateTestClock{current: rate.lastTime}
+		rate.clock = clock
+		clock.Advance(2 * time.Second)
 
 		// 第二次调用应该计算速率
 		rate2 := rate.Rate(200)
@@ -85,8 +110,9 @@ func TestRateState_ZeroValue(t *testing.T) {
 		// 检查默认最小时间间隔是否为1.0秒
 		rate.Rate(100) // 触发初始化
 
-		// 模拟时间流逝但不足1秒
-		rate.lastTime = rate.lastTime.Add(-500 * time.Millisecond)
+		clock := &rateTestClock{current: rate.lastTime}
+		rate.clock = clock
+		clock.Advance(500 * time.Millisecond)
 
 		// 应该返回上次速率（0），因为时间间隔不足
 		rateResult := rate.Rate(200)
@@ -115,17 +141,17 @@ func TestNewRateState(t *testing.T) {
 
 	t.Run("使用自定义时间间隔计算速率", func(t *testing.T) {
 		// 创建一个需要至少2秒间隔的速率计算器
-		rs := NewRateState(2.0)
+		rs, clock := newRateStateForTest(2.0)
 		rs.Rate(100) // 初始化
 
 		// 模拟时间流逝但不足2秒
-		rs.lastTime = rs.lastTime.Add(-1 * time.Second)
+		clock.Advance(time.Second)
 		rate := rs.Rate(200)
 		// 应该返回上次速率（0），因为时间间隔不足, 且计数器不改变
 		assert.Equal(t, float64(0), rate)
 
 		// 模拟时间流逝超过2秒
-		rs.lastTime = rs.lastTime.Add(-1 * time.Second) // 总共2秒
+		clock.Advance(time.Second) // 总共2秒
 		rate = rs.Rate(300)
 		// 应该计算新的速率 (200/2 = 100)
 		assert.Equal(t, float64(100), rate)
@@ -135,7 +161,7 @@ func TestNewRateState(t *testing.T) {
 // 新增测试用例：测试 SetMinSecond 方法
 func TestRateState_SetMinSecond(t *testing.T) {
 	t.Run("设置最小时间间隔", func(t *testing.T) {
-		rs := NewRateState()
+		rs, clock := newRateStateForTest()
 		// 默认应该是1秒
 		assert.Equal(t, 1.0, rs.minSecond)
 
@@ -146,7 +172,7 @@ func TestRateState_SetMinSecond(t *testing.T) {
 		rs.Rate(100) // 初始化
 
 		// 模拟时间流逝0.6秒，大于0.5秒
-		rs.lastTime = rs.lastTime.Add(-600 * time.Millisecond)
+		clock.Advance(600 * time.Millisecond)
 		rate := rs.Rate(200)
 		// 应该计算新的速率 (100/0.6 ≈ 166.67)
 		assert.Equal(t, 166.67, rate)
@@ -159,15 +185,17 @@ func TestRateState_SetMinSecond(t *testing.T) {
 		assert.Equal(t, 2.0, rs.minSecond)
 
 		rs.Rate(100) // 初始化
+		clock := &rateTestClock{current: rs.lastTime}
+		rs.clock = clock
 
 		// 模拟时间流逝1.5秒，小于2秒
-		rs.lastTime = rs.lastTime.Add(-1500 * time.Millisecond)
+		clock.Advance(1500 * time.Millisecond)
 		rate := rs.Rate(200)
 		// 应该返回上次速率（0），因为时间间隔不足, 且计数器值不改变
 		assert.Equal(t, float64(0), rate)
 
 		// 模拟时间流逝再增加1秒，总共2.5秒，大于2秒
-		rs.lastTime = rs.lastTime.Add(-1 * time.Second)
+		clock.Advance(time.Second)
 		rate = rs.Rate(300)
 		// 应该计算新的速率 (200/2.5 = 80)
 		assert.Equal(t, float64(80), rate)
@@ -190,13 +218,13 @@ func TestRateState_SetMinSecond(t *testing.T) {
 // 新增测试用例：测试 RateWithLastCount 方法
 func TestRateState_RateWithLastCount(t *testing.T) {
 	t.Run("获取速率和上次计数", func(t *testing.T) {
-		rs := NewRateState()
+		rs, clock := newRateStateForTest()
 		rate, lastCount := rs.RateWithLastCount(100)
 		assert.Equal(t, float64(0), rate)     // 首次调用返回0
 		assert.Equal(t, uint64(0), lastCount) // 首次调用返回0
 
 		// 模拟时间流逝
-		rs.lastTime = rs.lastTime.Add(-2 * time.Second)
+		clock.Advance(2 * time.Second)
 		rate, lastCount = rs.RateWithLastCount(200)
 		assert.Equal(t, float64(50), rate)      // (200-100)/2 = 50
 		assert.Equal(t, uint64(100), lastCount) // 上次计数是100

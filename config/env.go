@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/fufuok/utils/base58"
+	"github.com/fufuok/pkg/base58"
 	"github.com/joho/godotenv"
 )
 

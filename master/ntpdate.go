@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/fufuok/ntp"
-	"github.com/fufuok/utils"
-	"github.com/fufuok/utils/pools/timerpool"
+	"github.com/fufuok/pkg/internal/ntp"
+	"github.com/fufuok/pkg/pools/timerpool"
+	"github.com/fufuok/pkg/utils"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"

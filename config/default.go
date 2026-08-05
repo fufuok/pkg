@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fufuok/utils"
+	"github.com/fufuok/pkg/utils"
 	"github.com/joho/godotenv"
 )
 

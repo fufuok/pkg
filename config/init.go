@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fufuok/utils/xcrypto"
-	"github.com/fufuok/utils/xfile"
+	"github.com/fufuok/pkg/xcrypto"
+	"github.com/fufuok/pkg/xfile"
 )
 
 type M struct{}

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fufuok/utils/xjson/jsongen"
+	"github.com/fufuok/pkg/xjson/jsongen"
 	"github.com/gin-gonic/gin"
 
 	"github.com/fufuok/pkg/common"

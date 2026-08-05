@@ -1,0 +1,10 @@
+package xhash
+
+import (
+	"hash/maphash"
+)
+
+// hashString calculates a hash of s with the given seed.
+func hashString(seed maphash.Seed, s string) uint64 {
+	return maphash.String(seed, s)
+}

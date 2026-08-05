@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fufuok/utils/assert"
+	"github.com/fufuok/pkg/assert"
 )
 
 func TestWaitUntilNtpdate(t *testing.T) {

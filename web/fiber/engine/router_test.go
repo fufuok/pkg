@@ -8,7 +8,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/fufuok/utils/assert"
+	"github.com/fufuok/pkg/assert"
 )
 
 // TestSetupExceptionRouterKeepsRegisteredRoutes 验证异常路由按约定最后注册时,

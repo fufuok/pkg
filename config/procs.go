@@ -3,7 +3,7 @@ package config
 import (
 	"runtime"
 
-	"github.com/fufuok/utils"
+	"github.com/fufuok/pkg/utils"
 )
 
 // DefaultGOMAXPROCS 缺省的并发配置, 最少 4

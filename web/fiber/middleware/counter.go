@@ -3,7 +3,7 @@ package middleware
 import (
 	"fmt"
 
-	"github.com/fufuok/utils"
+	"github.com/fufuok/pkg/utils"
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/fufuok/pkg/kit"

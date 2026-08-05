@@ -4,7 +4,7 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/fufuok/utils/xhash"
+	"github.com/fufuok/pkg/xhash"
 )
 
 // LookupIPNetsString 从 IP 段集合中查询并返回对应数值

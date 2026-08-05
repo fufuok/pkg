@@ -3,7 +3,7 @@ package common
 import (
 	"errors"
 
-	"github.com/fufuok/utils/myip"
+	"github.com/fufuok/pkg/myip"
 
 	"github.com/fufuok/pkg/config"
 )

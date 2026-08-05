@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/fufuok/cron"
-	"github.com/fufuok/utils/assert"
+	"github.com/fufuok/pkg/assert"
 )
 
 func TestIsValidSpec(t *testing.T) {

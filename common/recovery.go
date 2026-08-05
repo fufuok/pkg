@@ -1,7 +1,7 @@
 package common
 
 import (
-	"github.com/fufuok/utils"
+	"github.com/fufuok/pkg/utils"
 )
 
 var (

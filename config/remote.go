@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fufuok/utils"
-	"github.com/fufuok/utils/xhash"
+	"github.com/fufuok/pkg/utils"
+	"github.com/fufuok/pkg/xhash"
 	"github.com/imroc/req/v3"
 )
 

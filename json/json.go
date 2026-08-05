@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"github.com/fufuok/bytespool"
-	"github.com/fufuok/utils"
+	"github.com/fufuok/pkg/utils"
 )
 
 type RawMessage []byte // nolint: recvcheck

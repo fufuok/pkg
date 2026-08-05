@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/fufuok/utils"
-	"github.com/fufuok/utils/xdaemon"
+	"github.com/fufuok/pkg/utils"
+	"github.com/fufuok/pkg/xdaemon"
 
 	"github.com/fufuok/pkg/config"
 )

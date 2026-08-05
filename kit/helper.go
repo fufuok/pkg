@@ -3,8 +3,8 @@ package kit
 import (
 	"math"
 
-	"github.com/fufuok/utils"
-	"github.com/fufuok/utils/generic"
+	"github.com/fufuok/pkg/generic"
+	"github.com/fufuok/pkg/utils"
 )
 
 // CalcThreshold 计算阈值, 始终向上取整且最小为: 1

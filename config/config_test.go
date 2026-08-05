@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fufuok/utils/assert"
+	"github.com/fufuok/pkg/assert"
 )
 
 func TestGetIPNetList(t *testing.T) {

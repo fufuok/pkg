@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fufuok/utils/assert"
+	"github.com/fufuok/pkg/assert"
 )
 
 func TestZeroTimeCST(t *testing.T) {

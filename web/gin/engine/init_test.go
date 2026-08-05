@@ -7,7 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/fufuok/utils/assert"
+	"github.com/fufuok/pkg/assert"
 
 	"github.com/fufuok/pkg/config"
 )

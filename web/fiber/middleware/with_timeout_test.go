@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fufuok/utils/assert"
+	"github.com/fufuok/pkg/assert"
 	"github.com/gofiber/fiber/v3"
 )
 

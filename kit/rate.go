@@ -5,8 +5,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/fufuok/utils"
+	"github.com/fufuok/pkg/utils"
 )
+
+type rateClock interface {
+	Now() time.Time
+}
+
+type wallRateClock struct{}
+
+// Now 返回系统墙钟时间.
+// 该实现无状态且可比较, 避免改变 RateState 原有的可比较性质.
+func (wallRateClock) Now() time.Time {
+	return time.Now()
+}
 
 // RateState 通过计数增长和时间间隔计算速率
 type RateState struct {
@@ -14,6 +26,9 @@ type RateState struct {
 	lastTime  time.Time
 	lastCount uint64
 	minSecond float64
+
+	// clock 返回速率计算使用的当前时间. 构造器默认使用系统墙钟, nil 时保持零值可用.
+	clock rateClock
 
 	// 轻量级 TryLock
 	tryLock atomic.Int32
@@ -30,8 +45,18 @@ func NewRateState(seconds ...float64) *RateState {
 	}
 	r := &RateState{
 		minSecond: sec,
+		clock:     wallRateClock{},
 	}
 	return r
+}
+
+// now 返回本次速率计算使用的当前时间.
+// NewRateState 默认绑定 time.Now; nil 分支保证 RateState 零值无需初始化即可使用.
+func (r *RateState) now() time.Time {
+	if r.clock != nil {
+		return r.clock.Now()
+	}
+	return time.Now()
 }
 
 // SetMinSecond 设置最小时间间隔 (秒)
@@ -76,7 +101,7 @@ func (r *RateState) RateWithLastCount(count uint64) (float64, uint64) {
 	defer r.tryLock.Store(0)
 
 	// 首次调用 或 计数器重置, 重新开始记录状态数据
-	now := time.Now()
+	now := r.now()
 	if r.lastCount == 0 {
 		r.lastRate = 0
 		r.lastTime = now

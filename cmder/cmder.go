@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fufuok/utils"
-	"github.com/fufuok/utils/pools/timerpool"
+	"github.com/fufuok/pkg/pools/timerpool"
+	"github.com/fufuok/pkg/utils"
 	"github.com/go-cmd/cmd"
 )
 

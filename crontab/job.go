@@ -10,7 +10,7 @@ import (
 
 	"github.com/fufuok/cache/xsync"
 	"github.com/fufuok/cron"
-	"github.com/fufuok/utils/xid"
+	"github.com/fufuok/pkg/xid"
 	"github.com/rs/zerolog"
 
 	"github.com/fufuok/pkg/common"

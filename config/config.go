@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/fufuok/utils/conv"
-	"github.com/fufuok/utils/xcrypto"
-	"github.com/fufuok/utils/xfile"
+	"github.com/fufuok/pkg/conv"
+	"github.com/fufuok/pkg/xcrypto"
+	"github.com/fufuok/pkg/xfile"
 
 	"github.com/fufuok/pkg/json"
 )

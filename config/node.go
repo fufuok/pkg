@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fufuok/utils"
-	"github.com/fufuok/utils/myip"
-	"github.com/fufuok/utils/pools/timerpool"
+	"github.com/fufuok/pkg/myip"
+	"github.com/fufuok/pkg/pools/timerpool"
+	"github.com/fufuok/pkg/utils"
 	"github.com/imroc/req/v3"
 
 	"github.com/fufuok/pkg/json"

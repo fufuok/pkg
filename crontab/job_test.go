@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fufuok/utils/assert"
+	"github.com/fufuok/pkg/assert"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"

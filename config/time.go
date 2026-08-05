@@ -3,7 +3,7 @@ package config
 import (
 	"time"
 
-	"github.com/fufuok/utils"
+	"github.com/fufuok/pkg/utils"
 )
 
 var (

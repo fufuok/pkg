@@ -3,7 +3,7 @@ package crontab
 import (
 	"time"
 
-	"github.com/fufuok/utils/xjson/jsongen"
+	"github.com/fufuok/pkg/xjson/jsongen"
 
 	"github.com/fufuok/pkg/json"
 )

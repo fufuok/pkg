@@ -3,7 +3,7 @@ package response
 import (
 	"strconv"
 
-	"github.com/fufuok/utils"
+	"github.com/fufuok/pkg/utils"
 )
 
 const MIMEApplicationJSONCharsetUTF8 = "application/json; charset=utf-8"

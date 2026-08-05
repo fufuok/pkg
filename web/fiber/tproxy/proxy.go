@@ -3,8 +3,8 @@ package tproxy
 import (
 	"time"
 
-	"github.com/fufuok/utils"
-	"github.com/fufuok/utils/xhash"
+	"github.com/fufuok/pkg/utils"
+	"github.com/fufuok/pkg/xhash"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/proxy"
 

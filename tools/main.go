@@ -6,8 +6,8 @@ import (
 	"log"
 	"net/url"
 
-	"github.com/fufuok/utils/base58"
-	"github.com/fufuok/utils/xcrypto"
+	"github.com/fufuok/pkg/base58"
+	"github.com/fufuok/pkg/xcrypto"
 
 	"github.com/fufuok/pkg/config"
 )

@@ -10,7 +10,7 @@ import (
 
 	"github.com/fufuok/ants"
 	"github.com/fufuok/bytespool"
-	"github.com/fufuok/utils"
+	"github.com/fufuok/pkg/utils"
 	"github.com/rs/zerolog"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/load"

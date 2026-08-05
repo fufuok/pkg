@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/fufuok/utils"
+	"github.com/fufuok/pkg/utils"
 	"github.com/gin-gonic/gin"
 
 	"github.com/fufuok/pkg/kit"

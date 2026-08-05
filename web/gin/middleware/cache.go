@@ -10,7 +10,7 @@ import (
 
 	"github.com/chenyahui/gin-cache"
 	"github.com/chenyahui/gin-cache/persist"
-	"github.com/fufuok/utils/xhash"
+	"github.com/fufuok/pkg/xhash"
 	"github.com/gin-gonic/gin"
 )
 

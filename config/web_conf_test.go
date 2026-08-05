@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fufuok/utils/assert"
+	"github.com/fufuok/pkg/assert"
 )
 
 // TestResolveGroupCertFile 覆盖分组独立 TLS 证书解析的三种边界:

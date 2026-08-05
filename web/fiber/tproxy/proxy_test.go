@@ -3,8 +3,8 @@ package tproxy
 import (
 	"testing"
 
-	"github.com/fufuok/utils/assert"
-	"github.com/fufuok/utils/xhash"
+	"github.com/fufuok/pkg/assert"
+	"github.com/fufuok/pkg/xhash"
 )
 
 func testXToken() string {
