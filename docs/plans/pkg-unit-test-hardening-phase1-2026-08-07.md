@@ -4,6 +4,7 @@
 > pkg 基线: `feature/yf/260803_整合utils包` @ `0f77364ab739ab84edc71a905499e37705dac394`
 > 主题边界: 单元测试保护网与测试能力建设, 不属于 pkg 瘦身或生命周期重构方案
 > 审查范围: pkg 源码、迁移后的 utils 及 XY.NodeAgent、xy-data-router、xy-data-plugins、XY.IPIP-TXTX 四个生产项目
+> 实施状态: 第 0 步已于 `593b52a` 完成并通过最终复审; 一期整体仍在实施中
 
 ## 1. 最终建议摘要
 
@@ -23,7 +24,7 @@
 
 - 方案可行性: Go. 范围、顺序、兼容约束和验收标准已经具备可执行性.
 - 开工决策: Go. 可以立即从第 0 步开始修复测试污染、测试助手和门禁基线.
-- 当前最终验收状态: Conditional Go. `common`/`crontab` 的 Linux race 基线、DataRouter 助手独立性、临时 `go.work` 协议和 NodeAgent Windows 基线尚未全部闭环, 不能宣称一期已验收或四项目双平台全绿.
+- 当前最终验收状态: Conditional Go. 第 0 步已闭环 `common/crontab` 的 Linux race 基线、DataRouter 助手独立性和临时 `go.work` 协议验证; 核心行为矩阵、长期门禁自动化及 NodeAgent Windows 基线仍未全部闭环, 不能宣称一期已验收或四项目双平台全绿.
 
 ## 2. 现状与判定依据
 
@@ -132,6 +133,8 @@
 6. 不在同一进程直接执行 `M.Start` 后与助手做“全状态等价”比较, 因为这会重新引入公网和不可等待 goroutine. 完整生产生命周期只通过受控子进程 smoke 验证; 助手用契约测试验证其明确承诺的最小状态.
 7. 助手仍位于原包、保持无参数和无返回值签名. `test_only.go` 是生产编译文件, 其改动必须独立提交、满足变更行覆盖门槛并通过四项目兼容门禁.
 8. 完整 `common.M.Start/Stop` 不由测试助手代替, 使用子进程测试现有生产路径.
+
+第 0 步已按以上约束落地. `config.InitTester/StopTester` 现在使用临时目录和内存配置, 只接管实际触达的环境键, 能区分“不存在”和“存在但为空”, 并恢复配置指针、路径、名单、env 跟踪、密钥派生值、Node 状态及 Alarm 开关. `common.InitTester/StopTester` 在需要时拥有并清理 config, 默认使用确定性 IP 和独立 helper pool, 不启动公网 IP、文件 logger、HTTP 客户端或永久日志 sender. 助手只释放自己创建的 pool, 生命周期内由调用方替换的 pool 保持可用. 串行重复生命周期已冻结, 嵌套调用按约定 panic.
 
 ### 4.4 子进程测试
 
@@ -323,6 +326,15 @@ NodeAgent 当前 Windows 基线因 Unix 路径与 `filepath.IsAbs` 语义不一�
 
 每个提交必须独立通过定向测试, 不能等全部用例完成后一次性修复全局状态污染.
 
+当前执行进度:
+
+| 顺序 | 状态 | 证据 |
+| --- | --- | --- |
+| 1. 修复核心测试重复与竞态基线 | 已完成 | `1ff066f`; master 重复污染、crontab race 和 common race 退出基线已闭环 |
+| 2. 固定核心包与四项目验证来源 | 下一阶段 | 临时单项目 `go.work use + replace` 已人工验证可行且四仓零写入; 仍需形成仓内可重复门禁 |
+| 3. 收敛核心包测试助手状态 | 已完成 | `5997c4a`、`23c446d`、`593b52a`; 三轮五维审查后 0 finding |
+| 4-8. 状态隔离、行为矩阵和长期门禁 | 未开始 | 必须继续按提交顺序逐阶段实施和复审 |
+
 ## 10. 生产影响与改造收益
 
 ### 10.1 对现有生产的影响
@@ -360,7 +372,7 @@ NodeAgent 当前 Windows 基线因 Unix 路径与 `filepath.IsAbs` 语义不一�
 
 ### 11.1 审查结论
 
-原始草案 As-Is 为 No-Go. 本文完成两轮源码与四项目复审后, 方案设计和开工决策为 Go; 当前代码的最终验收状态仍为 Conditional Go. 第 0 步必须闭环测试助手、clean worktree、精确临时 `go.work`、`common/crontab` race 基线; 最终还需完成四项目规定平台门禁.
+原始草案 As-Is 为 No-Go. 本文完成两轮源码与四项目复审后, 方案设计和开工决策为 Go. 第 0 步现已闭环测试助手、clean worktree、精确临时 `go.work` 验证和 `common/crontab` race 基线; 一期代码的最终验收状态仍为 Conditional Go, 因为核心行为矩阵、长期门禁自动化和四项目规定平台门禁尚未全部完成.
 
 覆盖率目标经 coverprofile 量化可达:
 
@@ -392,17 +404,19 @@ NodeAgent 当前 Windows 基线因 Unix 路径与 `filepath.IsAbs` 语义不一�
 - NodeAgent/DataRouter 使用本地 replace 时 compile/build/vet 通过, DataRouter 全量测试通过; NodeAgent Windows 全量测试只存在已确认的 Unix 绝对路径基线失败.
 - clean WSL Go 1.26 分包 race 复验: `config`、`master` 通过; `common` 即使 `-run '^$'` 也在 PASS 后 segmentation fault; `crontab` 在 `job_test.go` 的测试计数器上报告 data race. 这两项已升级为第 0 步阻断, 不采用模糊 baseline 豁免.
 - 当前 pkg 与四项目工作区均包含任务前已有的忽略文件或未提交修改. 本次审查没有写入四个生产仓库, 结论同时记录 HEAD 和工作树状态, 不把当前脏树冒充发布提交.
+- 第 0 步修复后, Windows 的助手 50 次 shuffle、核心包重复测试和 vet 均通过; WSL2 Go 1.26.5 的 `config/common/crontab` 分包 race 均通过; clean pkg worktree 的普通/`std_json` 全量测试、vet 和模块门禁均通过.
+- 第 0 步四项目 overlay 复验中, compile-only、build 和 vet 全部通过, DataRouter 两个助手用例各自及 50 次 shuffle 均通过, DataRouter/DataPlugins/IPIP 全量通过. NodeAgent Windows 全量只保留同一既有路径断言失败; 四仓 HEAD、索引树和 tracked diff 指纹前后一致.
 
 ### 11.4 最终判定
 
 - 方案可行性: Go, 文档已达到可开始实施标准.
-- 当前开工状态: Go, 仅从第 0 步开始.
-- 当前最终验收状态: Conditional Go, 不得宣称全部门禁通过.
+- 当前实施状态: 第 0 步 Go, 已通过三轮五维审查闭环; 下一阶段回到推荐顺序第 2 项, 固定验证来源.
+- 当前最终验收状态: Conditional Go, 第 0 步完成不等于一期完成, 不得宣称全部门禁通过.
 - 使用侧调用链: 不变.
 - 公共函数签名和 Pipeline 接口: 不变.
 - 正常生产逻辑: 不变.
 - 测试侧逻辑: 测试助手将变为自包含、离线和可恢复; 现有依赖测试顺序的行为不保留.
-- 实施条件: 先完成第 0 步和门禁固定, 再按 `config -> master -> common` 分批补测试; `common` 批次验收前必须完成默认 pool 的 swap 所有权与恢复后提交验证, 并解决其 race 进程崩溃.
+- 后续条件: 先把已验证的 clean worktree 和单项目临时 `go.work use + replace` 协议固化为可重复门禁, 再建立核心包状态隔离工具并按 `config -> master -> common` 分批补测试. 默认 pool 的 swap 所有权、恢复后提交验证和 common race 退出问题均已在第 0 步闭环.
 
 ### 11.5 附件审查建议采纳决策
 
@@ -418,3 +432,35 @@ NodeAgent 当前 Windows 基线因 Unix 路径与 `filepath.IsAbs` 语义不一�
 | 助手与 M.Start 做等价断言 | 方向合理、方法不当 | 调整后采纳 | 普通组件复用相同内部 init 函数; pool 只复用未导出构造函数, 生产保持 `SetDefaultPool`, 助手使用 `SwapDefaultAntsPool` 保存和恢复旧池; 完整 M.Start 放子进程 |
 | NodeAgent Windows 失败先修复 | 属实 | 分阶段采纳 | 不阻塞开工, 但阻塞最终宣称 Windows 全绿 |
 | 方案当前无条件 Go | 不成立 | 拒绝 | 方案可开工, 当前代码仍有助手、workspace、race 和平台门禁未闭环 |
+
+## 12. 第 0 步实施与复审结论
+
+### 12.1 落地内容
+
+- `master/ntpdate_test.go` 不再污染包级 channel; `crontab/job_test.go` 的测试计数器已改为同步状态; `common` race 退出崩溃随最小助手路径收敛而消除.
+- `config.InitTester/StopTester` 与 `common.InitTester/StopTester` 保持原签名, 实现自包含、默认离线、状态恢复和精确资源所有权.
+- 生产 `common.initPool` 继续使用 `SetDefaultPool`; 助手使用 `SwapDefaultAntsPool` 保存和恢复调用方 pool. 生产安装语义、正常启动组件集合与顺序均未改变.
+- 第 0 步修改的非测试 Go 语句覆盖率为 `118/128`, 即 92.2%, 高于 80% 门槛. 当前包覆盖率为 `config 62.0%`、`common 13.0%`; 后者尚未达到一期最终 40% 目标, 应在 P0-C 阶段继续补齐.
+
+### 12.2 审查闭环
+
+| 轮次 | 审查提交 | 结论 | 决策 |
+| --- | --- | --- | --- |
+| 初审 | `5997c4a` | 8 条 P2 | 全部真实, 修复环境所有权、pool 身份、调用方 config、cleanup、完整状态和临时目录证明 |
+| 第一轮复审 | `23c446d` | 原 8 条关闭, 新增 2 条 P2 | 两条均真实, 修复 helper pool 精确所有权并补齐标量状态断言 |
+| 最终复审 | `593b52a` | 五维 0 finding | 无需继续修复, 第 0 步达到可落地验收标准 |
+
+最终报告为 `.codereview/reports/cr_MSJ2LGD84hUbz9FDUA4.md`, sidecar 的 `findings_count` 为 0. 审查未发现需要通过 Context7 判定的新第三方 API; ants 语义由锁定版本源码和定向测试验证.
+
+### 12.3 生产影响与逻辑变化
+
+- 公共 API、函数签名、配置结构、默认值、Pipeline、四项目生产注册链和启动调用顺序均无变化.
+- `test_only.go` 仍参与普通生产编译, 因此二进制内容发生变化; 四项目生产源码不调用测试助手, 正常生产执行路径、网络、goroutine 和文件行为不变.
+- 逻辑变化严格限定在测试助手和既有测试: 助手从依赖调用顺序、触发公网副作用和不完整清理, 改为独立、离线、可重复并恢复调用方状态. 依赖其他测试残留的旧行为不作为兼容契约保留.
+- 改造后每个下游助手用例可独立运行, helper pool 和调用方资源所有权可被测试证明, 全局状态污染和重复/race 门禁由稳定用例拦截.
+
+### 12.4 阶段判定与下一步
+
+- 第 0 步验收: Go.
+- 一期整体验收: Conditional Go.
+- 下一步: 执行推荐顺序第 2 项“固定核心包与四项目验证来源”. 将本轮已经人工验证通过的 clean pkg worktree、单项目仓外 `go.work`、`Replace.Dir` 校验和零写入指纹协议固化为仓内可重复门禁; 完成实现、验证、审查、真实性判定和复审后, 再进入第 4 项状态隔离工具.
