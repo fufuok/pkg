@@ -8,14 +8,19 @@ import (
 )
 
 func TestWaitUntilNtpdate(t *testing.T) {
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		close(ntpFirstDoneChan)
-	}()
-	assert.False(t, WaitUntilNtpdate(50*time.Millisecond))
-	assert.True(t, WaitUntilNtpdate(120*time.Millisecond))
-	assert.True(t, WaitUntilNtpdate(120*time.Millisecond))
-	time.Sleep(100 * time.Millisecond)
+	// 每轮测试使用独立 channel, 避免关闭包级 channel 后污染重复执行.
+	oldChan, oldCancel, oldName := ntpFirstDoneChan, ntpCancel, ntpName
+	ntpFirstDoneChan = make(chan struct{})
+	ntpCancel = nil
+	ntpName = ""
+	t.Cleanup(func() {
+		ntpFirstDoneChan = oldChan
+		ntpCancel = oldCancel
+		ntpName = oldName
+	})
+
+	assert.False(t, WaitUntilNtpdate(10*time.Millisecond))
+	close(ntpFirstDoneChan)
+	assert.True(t, WaitUntilNtpdate(10*time.Millisecond))
 	assert.True(t, WaitUntilNtpdate(50*time.Millisecond))
-	assert.True(t, WaitUntilNtpdate(500*time.Millisecond))
 }

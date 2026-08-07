@@ -3,9 +3,11 @@ package crontab
 import (
 	"context"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/fufuok/cron"
 	"github.com/fufuok/pkg/assert"
 
 	"github.com/fufuok/pkg/common"
@@ -30,17 +32,22 @@ func TestMain(m *testing.M) {
 
 // MockRunner 是一个模拟的 Runner 实现
 type MockRunner struct {
-	runCount int
+	runCount atomic.Int32
 	runError error
 	runFunc  func()
 }
 
 func (m *MockRunner) Run(ctx context.Context) error {
-	m.runCount++
+	m.runCount.Add(1)
 	if m.runFunc != nil {
 		m.runFunc()
 	}
 	return m.runError
+}
+
+// RunCount 并发安全地返回任务执行次数, 供调度器异步测试读取.
+func (m *MockRunner) RunCount() int {
+	return int(m.runCount.Load())
 }
 
 func TestAddJob(t *testing.T) {
@@ -85,22 +92,27 @@ func TestAddJob(t *testing.T) {
 
 func TestAddOnceJob(t *testing.T) {
 	t.Run("once_job_execution", func(t *testing.T) {
-		mockRunner := &MockRunner{}
+		runDone := make(chan struct{}, 1)
+		mockRunner := &MockRunner{runFunc: func() { runDone <- struct{}{} }}
 		ctx := context.Background()
 
 		job, err := AddOnceJob(ctx, "once_test", "@every 1s", mockRunner)
 		assert.Nil(t, err)
 		assert.NotNil(t, job)
+		t.Cleanup(job.Stop)
 
-		// 等待任务执行
-		time.Sleep(2*time.Second + 200*time.Millisecond)
+		select {
+		case <-runDone:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for once job")
+		}
 
 		// 验证任务只执行了一次
-		assert.Equal(t, 1, mockRunner.runCount)
+		assert.Equal(t, 1, mockRunner.RunCount())
 
-		// 等待更长时间确保任务不会再次执行
-		time.Sleep(2*time.Second + 200*time.Millisecond)
-		assert.Equal(t, 1, mockRunner.runCount)
+		// 一次性任务执行后会同步停止并从调度器移除.
+		waitUntil(t, time.Second, func() bool { return !job.IsRunning() })
+		assert.Equal(t, 1, mockRunner.RunCount())
 
 		// 验证任务已停止
 		assert.False(t, job.IsRunning())
@@ -173,60 +185,91 @@ func TestJobExecutionWithSkipIfStillRunning(t *testing.T) {
 			skipIfStillRunning.Store(false)
 		}()
 
-		sched := make(chan int, 2)
+		started := make(chan struct{}, 4)
+		release := make(chan struct{})
 		// 创建一个执行时间较长的 Runner
 		mockRunner := &MockRunner{
 			runFunc: func() {
-				sched <- 1
-				// 模拟执行时间超过调度间隔
-				time.Sleep(2 * time.Second)
+				started <- struct{}{}
+				<-release
 			},
 		}
 		ctx := context.Background()
 
 		// 创建一个快速重复执行的任务
-		job, err := AddJob(ctx, "overlap_test", "@every 1s", mockRunner)
+		job, err := AddJob(ctx, "overlap_test", "@every 1s", mockRunner, cron.WithRunImmediately())
 		assert.Nil(t, err)
+		t.Cleanup(func() {
+			job.Stop()
+			close(release)
+		})
 
-		<-sched
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for first job execution")
+		}
 
-		// 等待足够长时间让任务被调度多次
-		time.Sleep(1*time.Second + 500*time.Millisecond)
+		// 等待下一次秒级调度, 被占用的单例锁应阻止重叠执行.
+		time.Sleep(1200 * time.Millisecond)
 
 		// 由于启用了 skipIfStillRunning，应该只执行了一次
-		assert.Equal(t, 1, mockRunner.runCount)
-
-		// 清理
-		job.Stop()
+		assert.Equal(t, 1, mockRunner.RunCount())
 	})
 
 	t.Run("not_skip_if_still_running_blocks_overlap", func(t *testing.T) {
-		sched := make(chan int, 2)
+		started := make(chan struct{}, 4)
+		release := make(chan struct{})
 		// 创建一个执行时间较长的 Runner
 		mockRunner := &MockRunner{
 			runFunc: func() {
-				sched <- 1
-				// 模拟执行时间超过调度间隔
-				time.Sleep(2 * time.Second)
+				started <- struct{}{}
+				<-release
 			},
 		}
 		ctx := context.Background()
 
 		// 创建一个快速重复执行的任务
-		job, err := AddJob(ctx, "overlap_test", "@every 1s", mockRunner)
+		job, err := AddJob(ctx, "overlap_test", "@every 1s", mockRunner, cron.WithRunImmediately())
 		assert.Nil(t, err)
+		t.Cleanup(func() {
+			job.Stop()
+			close(release)
+		})
 
-		<-sched
+		for range 2 {
+			select {
+			case <-started:
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for overlapping job execution")
+			}
+		}
 
-		// 等待足够长时间让任务被调度多次
-		time.Sleep(1*time.Second + 500*time.Millisecond)
-
-		// 由于未启用了 skipIfStillRunning，应该只执行了 2 次
-		assert.Equal(t, 2, mockRunner.runCount)
-
-		// 清理
-		job.Stop()
+		// 未启用 skipIfStillRunning 时, 至少两个执行可以重叠进入 Runner.
+		if got := mockRunner.RunCount(); got < 2 {
+			t.Fatalf("run count = %d, want at least 2", got)
+		}
 	})
+}
+
+// waitUntil 在限定时间内等待异步状态收敛, 避免使用固定长休眠掩盖调度失败.
+func waitUntil(t *testing.T, timeout time.Duration, condition func() bool) {
+	t.Helper()
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		if condition() {
+			return
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("timed out waiting for condition")
+		case <-ticker.C:
+		}
+	}
 }
 
 func TestStopJob(t *testing.T) {
