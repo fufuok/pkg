@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 )
 
 var (
@@ -64,8 +63,15 @@ type configTesterState struct {
 	blacklist                  map[*net.IPNet]int64
 	extraEnvFiles              []string
 	envFileKeys                map[string]struct{}
-	environment                map[string]string
+	environment                map[string]testerEnvironmentValue
 	tempRoot                   string
+}
+
+// testerEnvironmentValue 保存助手归属环境变量的值和存在性.
+// 单独记录存在性, 以区分未定义变量和显式空值.
+type testerEnvironmentValue struct {
+	value  string
+	exists bool
 }
 
 // InitTester 建立自包含、离线且可恢复的配置测试环境.
@@ -85,24 +91,8 @@ func InitTester() {
 	state.tempRoot = tempRoot
 	testState = state
 
-	// 清空可能覆盖测试配置的机器环境变量, StopTester 会按完整快照恢复.
-	for _, key := range []string{
-		MainConfigFileEnvName,
-		MainConfigNameEnvName,
-		MainConfRemoteAPIEnvName,
-		BaseSecretKeyNameEnvName,
-		BaseSecretSaltEnvName,
-		BinNameEnvName,
-		AppNameEnvName,
-		DebNameEnvName,
-		WebCertFileEnvName,
-		WebKeyFileEnvName,
-		WebSignKeyEnvName,
-		NodeInfoBackupEnabledEnvName,
-		"POST_API",
-		"POST_ALARM_API",
-		"ALARM_CODE",
-	} {
+	// 只清空助手和固定测试配置实际触达的环境键, 避免接管无关业务变量.
+	for key := range state.environment {
 		_ = os.Unsetenv(key)
 	}
 
@@ -228,30 +218,41 @@ func captureConfigTesterState() *configTesterState {
 	}
 }
 
-// captureTesterEnvironment 保存进程环境, 包括空值和助手未知的业务变量.
-func captureTesterEnvironment() map[string]string {
-	env := make(map[string]string)
-	for _, entry := range os.Environ() {
-		key, value, ok := strings.Cut(entry, "=")
-		if ok {
-			env[key] = value
-		}
+// captureTesterEnvironment 保存助手归属环境键的原值和存在性.
+// 键名来自当前可配置的环境变量名以及固定 testConfig, 支持调用方改写键名.
+func captureTesterEnvironment() map[string]testerEnvironmentValue {
+	keys := []string{
+		MainConfigFileEnvName,
+		MainConfigNameEnvName,
+		MainConfRemoteAPIEnvName,
+		BaseSecretKeyNameEnvName,
+		BaseSecretSaltEnvName,
+		BinNameEnvName,
+		AppNameEnvName,
+		DebNameEnvName,
+		WebCertFileEnvName,
+		WebKeyFileEnvName,
+		WebSignKeyEnvName,
+		NodeInfoBackupEnabledEnvName,
+		"POST_API",
+		"POST_ALARM_API",
+		"ALARM_CODE",
+	}
+	env := make(map[string]testerEnvironmentValue, len(keys))
+	for _, key := range keys {
+		value, exists := os.LookupEnv(key)
+		env[key] = testerEnvironmentValue{value: value, exists: exists}
 	}
 	return env
 }
 
-// restoreTesterEnvironment 恢复环境快照并移除助手期间新增的变量.
-func restoreTesterEnvironment(snapshot map[string]string) {
-	for _, entry := range os.Environ() {
-		key, _, ok := strings.Cut(entry, "=")
-		if !ok {
+// restoreTesterEnvironment 只恢复助手归属键, 不覆盖生命周期内的无关环境变化.
+func restoreTesterEnvironment(snapshot map[string]testerEnvironmentValue) {
+	for key, entry := range snapshot {
+		if entry.exists {
+			_ = os.Setenv(key, entry.value)
 			continue
 		}
-		if _, exists := snapshot[key]; !exists {
-			_ = os.Unsetenv(key)
-		}
-	}
-	for key, value := range snapshot {
-		_ = os.Setenv(key, value)
+		_ = os.Unsetenv(key)
 	}
 }

@@ -14,6 +14,7 @@ type commonTesterState struct {
 	configOwned  bool
 	internalIP   string
 	externalIP   string
+	helperPool   ants.Pooler
 	previousPool ants.Pooler
 }
 
@@ -42,6 +43,7 @@ func InitTester() {
 		}
 		panic("failed to create common test pool: " + err.Error())
 	}
+	state.helperPool = pool
 	state.previousPool = ants.SwapDefaultAntsPool(pool)
 	if state.previousPool == nil {
 		pool.Release()
