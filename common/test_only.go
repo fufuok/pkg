@@ -60,7 +60,8 @@ func InitTester() {
 
 // StopTester 恢复调用前的默认 pool、IP 和助手拥有的配置状态.
 //
-// pool 必须先恢复再释放换出的助手池, 否则会把已关闭资源重新发布为默认池.
+// pool 必须先恢复再释放助手拥有的 pool, 否则会把已关闭资源重新发布为默认池.
+// 停止时占据默认槽的其他 pool 仍由其调用方管理, 助手不得越权释放.
 func StopTester() {
 	state := commonTestState
 	if state == nil {
@@ -68,9 +69,9 @@ func StopTester() {
 	}
 	commonTestState = nil
 
-	helperPool := ants.SwapDefaultAntsPool(state.previousPool)
-	if helperPool != nil && helperPool != state.previousPool {
-		helperPool.Release()
+	ants.SwapDefaultAntsPool(state.previousPool)
+	if state.helperPool != nil && state.helperPool != state.previousPool {
+		state.helperPool.Release()
 	}
 	InternalIPv4 = state.internalIP
 	ExternalIPv4 = state.externalIP

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 )
@@ -23,6 +24,7 @@ func TestTesterLifecycle(t *testing.T) {
 	originalConfig := Config()
 	originalInitialized := ConfigInitialized
 	originalPaths := captureTesterPathState()
+	originalScalars := captureTesterScalarState()
 	originalWhitelist, originalBlacklist := Whitelist, Blacklist
 	originalExtraEnvFiles, originalEnvFileKeys := extraEnvFiles, envFileKeys
 	t.Cleanup(func() {
@@ -30,11 +32,22 @@ func TestTesterLifecycle(t *testing.T) {
 		mainConf.Store(originalConfig)
 		ConfigInitialized = originalInitialized
 		restoreTesterPathState(originalPaths)
+		restoreTesterScalarState(originalScalars)
 		Whitelist, Blacklist = originalWhitelist, originalBlacklist
 		extraEnvFiles, envFileKeys = originalExtraEnvFiles, originalEnvFileKeys
 	})
 
 	callerConfig := &MainConf{SYSConf: SYSConf{DebVersion: "caller-config"}}
+	callerScalars := testerScalarState{
+		appBaseSecretValue:   "caller-app-secret",
+		appConfigBody:        []byte(`{"caller":true}`),
+		baseSecretValue:      "caller-base-secret",
+		baseSecretKeyValue:   "",
+		webTokenSalt:         "caller-token-salt",
+		nodeIPFromAPI:        "203.0.113.10",
+		nodeIPFetcherRunning: true,
+		alarmOn:              true,
+	}
 	callerPaths := testerPathState{
 		rootPath:                   "caller-root",
 		defaultLogPath:             "caller-default-log",
@@ -62,6 +75,7 @@ func TestTesterLifecycle(t *testing.T) {
 	mainConf.Store(callerConfig)
 	ConfigInitialized = true
 	restoreTesterPathState(callerPaths)
+	restoreTesterScalarState(callerScalars)
 	Whitelist, Blacklist = callerWhitelist, callerBlacklist
 	extraEnvFiles, envFileKeys = callerExtraEnvFiles, callerEnvFileKeys
 	mustSetTestEnvironment(t, ownedValueEnvName, "before")
@@ -79,6 +93,16 @@ func TestTesterLifecycle(t *testing.T) {
 		if Config() == callerConfig || Config().LogConf.PostInterval != 7 {
 			t.Fatal("tester did not publish isolated test config")
 		}
+		assertTesterScalarState(t, testerScalarState{
+			appBaseSecretValue:   "Tester",
+			appConfigBody:        slices.Clone(testConfig),
+			baseSecretValue:      "Tester",
+			baseSecretKeyValue:   BaseSecretSalt + AppName,
+			webTokenSalt:         "Tester",
+			nodeIPFromAPI:        "",
+			nodeIPFetcherRunning: false,
+			alarmOn:              false,
+		})
 
 		tempRoot := filepath.Dir(RootPath)
 		if tempRoot == previousTempRoot {
@@ -113,6 +137,7 @@ func TestTesterLifecycle(t *testing.T) {
 		if !ConfigInitialized || captureTesterPathState() != callerPaths {
 			t.Fatal("tester did not restore config paths")
 		}
+		assertTesterScalarState(t, callerScalars)
 		if !maps.Equal(Whitelist, callerWhitelist) || !maps.Equal(Blacklist, callerBlacklist) {
 			t.Fatal("tester did not restore IP list state")
 		}
@@ -126,6 +151,52 @@ func TestTesterLifecycle(t *testing.T) {
 		if _, err := os.Stat(tempRoot); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("temporary root still exists after StopTester: %v", err)
 		}
+	}
+}
+
+// testerScalarState 汇总助手会改写的非路径标量和配置体状态.
+type testerScalarState struct {
+	appBaseSecretValue   string
+	appConfigBody        []byte
+	baseSecretValue      string
+	baseSecretKeyValue   string
+	webTokenSalt         string
+	nodeIPFromAPI        string
+	nodeIPFetcherRunning bool
+	alarmOn              bool
+}
+
+// captureTesterScalarState 获取助手会改写的非路径状态快照.
+func captureTesterScalarState() testerScalarState {
+	return testerScalarState{
+		appBaseSecretValue:   AppBaseSecretValue,
+		appConfigBody:        slices.Clone(AppConfigBody),
+		baseSecretValue:      BaseSecretValue,
+		baseSecretKeyValue:   BaseSecretKeyValue,
+		webTokenSalt:         WebTokenSalt,
+		nodeIPFromAPI:        NodeIPFromAPI,
+		nodeIPFetcherRunning: nodeIPFetcherRunning,
+		alarmOn:              AlarmOn.Load(),
+	}
+}
+
+// restoreTesterScalarState 恢复测试夹具主动改写的非路径状态.
+func restoreTesterScalarState(state testerScalarState) {
+	AppBaseSecretValue = state.appBaseSecretValue
+	AppConfigBody = slices.Clone(state.appConfigBody)
+	BaseSecretValue = state.baseSecretValue
+	BaseSecretKeyValue = state.baseSecretKeyValue
+	WebTokenSalt = state.webTokenSalt
+	NodeIPFromAPI = state.nodeIPFromAPI
+	nodeIPFetcherRunning = state.nodeIPFetcherRunning
+	AlarmOn.Store(state.alarmOn)
+}
+
+// assertTesterScalarState 验证助手态或恢复态的全部非路径状态.
+func assertTesterScalarState(t *testing.T, want testerScalarState) {
+	t.Helper()
+	if got := captureTesterScalarState(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("tester scalar state = %#v, want %#v", got, want)
 	}
 }
 

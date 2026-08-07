@@ -68,6 +68,32 @@ func TestTesterPreservesCallerConfig(t *testing.T) {
 	assertDefaultPoolSubmit(t)
 }
 
+// TestTesterDoesNotReleaseReplacementPool 验证助手只释放自己创建的 pool.
+func TestTesterDoesNotReleaseReplacementPool(t *testing.T) {
+	sentinelPool := installSentinelDefaultPool(t)
+	InitTester()
+	t.Cleanup(StopTester)
+	helperPool := commonTestState.helperPool
+
+	replacementPool, err := ants.NewPool(1)
+	if err != nil {
+		t.Fatalf("create caller replacement pool: %v", err)
+	}
+	t.Cleanup(replacementPool.Release)
+	if displaced := ants.SwapDefaultAntsPool(replacementPool); displaced != helperPool {
+		t.Fatal("caller replacement did not displace helper pool")
+	}
+
+	StopTester()
+	if !helperPool.IsClosed() {
+		t.Fatal("tester did not release owned helper pool")
+	}
+	if replacementPool.IsClosed() {
+		t.Fatal("tester released caller-owned replacement pool")
+	}
+	assertDefaultPoolIdentity(t, sentinelPool)
+}
+
 // TestTesterRejectsNestedInit 冻结助手只支持串行 Init-Stop 的边界.
 func TestTesterRejectsNestedInit(t *testing.T) {
 	InitTester()
