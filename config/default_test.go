@@ -185,8 +185,8 @@ func TestResolveDefaultConfigName(t *testing.T) {
 // 当机器环境变量已经存在时, godotenv.Load 不会用文件值覆盖它, 以便 systemd,
 // /etc/default, 容器 env 或 shell env 能按机器维度覆盖随包分发的默认值.
 func TestLoadBootstrapEnvKeepsMachineEnv(t *testing.T) {
-	restoreDefaultConfigGlobals(t)
-	restoreEnvVar(t, MainConfigNameEnvName)
+	preserveConfigPackageState(t)
+	clearTestEnvironment(t, MainConfigNameEnvName)
 
 	BinName = "xydatarouter"
 	EnvFilePath = t.TempDir()
@@ -202,9 +202,9 @@ func TestLoadBootstrapEnvKeepsMachineEnv(t *testing.T) {
 // EnvFilePath 必须先于 ConfigFile 派生, 否则启动级 env/{BinName}.default.env 无法在
 // ConfigFile 解析前注入 MAIN_CONFIG_NAME, 该测试会回退到默认 BinName.json 而失败.
 func TestInitDefaultConfigLoadsBootstrapBeforeConfigFile(t *testing.T) {
-	restoreDefaultConfigGlobals(t)
-	restoreEnvVar(t, MainConfigFileEnvName)
-	restoreEnvVar(t, MainConfigNameEnvName)
+	preserveConfigPackageState(t)
+	clearTestEnvironment(t, MainConfigFileEnvName)
+	clearTestEnvironment(t, MainConfigNameEnvName)
 
 	root := filepath.Join(t.TempDir(), "bin")
 	envDir := filepath.Join(root, "..", "env")
@@ -224,9 +224,9 @@ func TestInitDefaultConfigLoadsBootstrapBeforeConfigFile(t *testing.T) {
 // TestInitDefaultConfigKeepsExplicitConfigFile 验证应用 init 或命令行 -c 预先写入
 // ConfigFile 后, 启动级 MAIN_CONFIG_FILE/MAIN_CONFIG_NAME 不会改变该显式选择.
 func TestInitDefaultConfigKeepsExplicitConfigFile(t *testing.T) {
-	restoreDefaultConfigGlobals(t)
-	restoreEnvVar(t, MainConfigFileEnvName)
-	restoreEnvVar(t, MainConfigNameEnvName)
+	preserveConfigPackageState(t)
+	clearTestEnvironment(t, MainConfigFileEnvName)
+	clearTestEnvironment(t, MainConfigNameEnvName)
 
 	root := filepath.Join(t.TempDir(), "bin")
 	explicitFile := filepath.Join(t.TempDir(), "manual.json")
@@ -241,63 +241,11 @@ func TestInitDefaultConfigKeepsExplicitConfigFile(t *testing.T) {
 	assert.Equal(t, explicitFile, ConfigFile)
 }
 
-// restoreDefaultConfigGlobals 保存并恢复 initDefaultConfig 会读写的包级变量.
-// config 包大量默认值是进程级全局状态, 单测必须显式恢复, 避免影响后续测试.
-func restoreDefaultConfigGlobals(t *testing.T) {
-	t.Helper()
-
-	oldBinName := BinName
-	oldDefaultLogPath := DefaultLogPath
-	oldRootPath := RootPath
-	oldLogPath := LogPath
-	oldLogFile := LogFile
-	oldConfigPath := ConfigPath
-	oldConfigFile := ConfigFile
-	oldEnvFilePath := EnvFilePath
-	oldEnvMainFile := EnvMainFile
-	oldNodeInfoBackupFile := NodeInfoBackupFile
-	oldReqUserAgent := ReqUserAgent
-	oldDefaultWhitelistConfigFile := DefaultWhitelistConfigFile
-	oldDefaultBlacklistConfigFile := DefaultBlacklistConfigFile
-
-	t.Cleanup(func() {
-		BinName = oldBinName
-		DefaultLogPath = oldDefaultLogPath
-		RootPath = oldRootPath
-		LogPath = oldLogPath
-		LogFile = oldLogFile
-		ConfigPath = oldConfigPath
-		ConfigFile = oldConfigFile
-		EnvFilePath = oldEnvFilePath
-		EnvMainFile = oldEnvMainFile
-		NodeInfoBackupFile = oldNodeInfoBackupFile
-		ReqUserAgent = oldReqUserAgent
-		DefaultWhitelistConfigFile = oldDefaultWhitelistConfigFile
-		DefaultBlacklistConfigFile = oldDefaultBlacklistConfigFile
-	})
-}
-
-// restoreEnvVar 保存并恢复环境变量, 支持测试中先 unset 再让 godotenv.Load 注入默认值.
-// t.Setenv 会把空字符串视为已存在变量, 不适合验证 Load 对“不存在变量”的加载语义.
-func restoreEnvVar(t *testing.T, key string) {
-	t.Helper()
-
-	old, ok := os.LookupEnv(key)
-	assert.Nil(t, os.Unsetenv(key))
-	t.Cleanup(func() {
-		if ok {
-			_ = os.Setenv(key, old)
-			return
-		}
-		_ = os.Unsetenv(key)
-	})
-}
-
 // TestLoadEnvFilesClearsRemovedVars 验证 env 文件中注释/删除的变量在热加载后被置空.
 // godotenv.Overload 只设置文件中存在的 key, 注释掉的 key 不会出现在解析结果中;
 // loadEnvFiles 通过对比上次记录的 key 集合, 将已移除的 key 在进程环境中置空.
 func TestLoadEnvFilesClearsRemovedVars(t *testing.T) {
-	restoreDefaultConfigGlobals(t)
+	preserveConfigPackageState(t)
 
 	// 保存并恢复 envFileKeys, 避免影响其他测试.
 	oldEnvFileKeys := envFileKeys
@@ -313,15 +261,15 @@ func TestLoadEnvFilesClearsRemovedVars(t *testing.T) {
 
 	// 第一次加载: FF_ON=1, FF_REMOVE=2
 	assert.Nil(t, os.WriteFile(EnvMainFile, []byte("FF_ON=1\nFF_REMOVE=2\n"), 0o600))
-	restoreEnvVar(t, "FF_ON")
-	restoreEnvVar(t, "FF_REMOVE")
+	clearTestEnvironment(t, "FF_ON")
+	clearTestEnvironment(t, "FF_REMOVE")
 	loadEnvFiles()
 	assert.Equal(t, "1", os.Getenv("FF_ON"))
 	assert.Equal(t, "2", os.Getenv("FF_REMOVE"))
 
 	// 第二次加载: FF_REMOVE 被注释掉, FF_ON 保留, 新增 FF_NEW=3
 	assert.Nil(t, os.WriteFile(EnvMainFile, []byte("FF_ON=1\n#FF_REMOVE=2\nFF_NEW=3\n"), 0o600))
-	restoreEnvVar(t, "FF_NEW")
+	clearTestEnvironment(t, "FF_NEW")
 	loadEnvFiles()
 	assert.Equal(t, "1", os.Getenv("FF_ON"))
 	assert.Equal(t, "", os.Getenv("FF_REMOVE"), "commented-out var should be cleared on reload")
