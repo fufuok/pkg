@@ -145,10 +145,34 @@ func TestLocalQuery(t *testing.T) {
 	assertValid(t, r)
 }
 
-// TestLocalQueryTimeout 验证本地服务延迟超过 deadline 时返回 timeout.
+// TestLocalQueryTimeout 验证本地服务收到查询但不响应时返回 timeout.
 func TestLocalQueryTimeout(t *testing.T) {
-	host, done := startLocalNTPServer(t, 50*time.Millisecond, true)
-	r, err := QueryWithOptions(host, QueryOptions{Timeout: time.Millisecond})
+	host, received, stop, done := startLocalNTPBlackholeServer(t)
+	type queryResult struct {
+		response *Response
+		err      error
+	}
+	result := make(chan queryResult, 1)
+	go func() {
+		response, err := QueryWithOptions(host, QueryOptions{Timeout: 250 * time.Millisecond})
+		result <- queryResult{response: response, err: err}
+	}()
+
+	select {
+	case <-received:
+	case <-time.After(2 * time.Second):
+		t.Fatal("local NTP server did not receive the timeout query")
+	}
+
+	var r *Response
+	var err error
+	select {
+	case query := <-result:
+		r, err = query.response, query.err
+	case <-time.After(2 * time.Second):
+		t.Fatal("local NTP query did not honor its timeout")
+	}
+	stop()
 	awaitLocalNTPServer(t, done)
 	assert.Nil(t, r)
 	var timeoutErr net.Error

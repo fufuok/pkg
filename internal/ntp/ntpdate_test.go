@@ -2,6 +2,7 @@ package ntp
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"net"
@@ -52,6 +53,44 @@ func startLocalNTPServer(t *testing.T, delay time.Duration, valid bool) (string,
 		close(done)
 	}()
 	return conn.LocalAddr().String(), done
+}
+
+// startLocalNTPBlackholeServer 启动只接收查询但不响应的本地 UDP 服务.
+//
+// received 证明客户端请求已经进入服务器, 避免把写入前 deadline 误判为读取超时.
+// stop 会解除服务器等待, 并可由测试 cleanup 重复调用.
+func startLocalNTPBlackholeServer(t *testing.T) (string, <-chan struct{}, context.CancelFunc, <-chan error) {
+	t.Helper()
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("listen local NTP blackhole server: %v", err)
+	}
+	ctx, stop := context.WithCancel(context.Background())
+	received := make(chan struct{})
+	done := make(chan error, 1)
+	t.Cleanup(func() {
+		stop()
+		_ = conn.Close()
+	})
+	go func() {
+		done <- serveLocalNTPBlackhole(ctx, conn, received)
+		close(done)
+	}()
+	return conn.LocalAddr().String(), received, stop, done
+}
+
+// serveLocalNTPBlackhole 读取一条完整查询后等待取消, 故意不发送响应.
+func serveLocalNTPBlackhole(ctx context.Context, conn *net.UDPConn, received chan<- struct{}) error {
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		return fmt.Errorf("set local NTP blackhole deadline: %w", err)
+	}
+	buffer := make([]byte, 512)
+	if _, _, err := conn.ReadFromUDP(buffer); err != nil {
+		return fmt.Errorf("read local NTP blackhole query: %w", err)
+	}
+	close(received)
+	<-ctx.Done()
+	return nil
 }
 
 // serveLocalNTPQuery 读取客户端查询并回写与请求 TransmitTime 匹配的 NTP 响应.
