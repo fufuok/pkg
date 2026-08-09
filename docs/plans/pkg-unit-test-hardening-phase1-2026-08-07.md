@@ -4,7 +4,7 @@
 > pkg 基线: `feature/yf/260803_整合utils包` @ `0f77364ab739ab84edc71a905499e37705dac394`
 > 主题边界: 单元测试保护网与测试能力建设, 不属于 pkg 瘦身或生命周期重构方案
 > 审查范围: pkg 源码、迁移后的 utils 及 XY.NodeAgent、xy-data-router、xy-data-plugins、XY.IPIP-TXTX 四个生产项目
-> 实施状态: 第 0 步和验证来源协议已完成; 跨仓执行器已移入 Git 忽略目录, 下一步进入核心包测试状态隔离
+> 实施状态: P0-A 至 P0-D 已完成代码、五维审查和双平台门禁; 一期整体验收仍受 NodeAgent Windows 既有路径基线与长期跨仓 CI 条件约束
 
 ## 1. 最终建议摘要
 
@@ -12,7 +12,7 @@
 
 推荐执行边界如下:
 
-1. 默认只新增或修改 `*_test.go`、测试数据和 pkg 自身 CI 门禁. 跨仓一次性执行器不进入 Git; 唯一预批准的非测试源码例外是修复 `config/common` 现有测试助手的自包含与状态恢复能力, 且不得进入正常应用启动路径.
+1. 默认只新增或修改 `*_test.go`、测试数据和 pkg 自身 CI 门禁. 跨仓一次性执行器不进入 Git; 非测试源码只允许用于已有测试助手收敛或经不可测证据确认的未导出最小测试缝, 且不得改变正常应用启动路径.
 2. 使用包内测试直接覆盖未导出逻辑, 使用包外测试冻结公共契约, 使用受控子进程隔离 `log.Fatal`、`os.Exit` 和当前无法等待的完整生命周期入口.
 3. 新增测试的网络依赖使用本地 HTTP/UDP/RESP fixture, 文件依赖使用 `t.TempDir`. 现有 `common.InitTester` 触发公网 IP 探测的行为必须在第 0 步收敛, 不能作为稳定性门禁的默认前提.
 4. 迁移后的 `utils` 当前覆盖率已经达到 88.1%, 一期只保持现有契约和稳定性门禁, 不为追求数字重复补低价值用例.
@@ -24,7 +24,8 @@
 
 - 方案可行性: Go. 范围、顺序、兼容约束和验收标准已经具备可执行性.
 - 开工决策: Go. 可以立即从第 0 步开始修复测试污染、测试助手和门禁基线.
-- 当前最终验收状态: Conditional Go. 第 0 步已闭环 `common/crontab` 的 Linux race 基线、DataRouter 助手独立性和临时 `go.work` 协议验证; 核心行为矩阵、长期门禁自动化及 NodeAgent Windows 基线仍未全部闭环, 不能宣称一期已验收或四项目双平台全绿.
+- P0 代码与 pkg 门禁: Go. `config/master/common` 核心行为矩阵和迁移后 utils 稳定性边界已经落地, 覆盖率达到 84.5%/52.7%/82.7%, 双平台普通、shuffle、`std_json`、vet、模块和分包 race 门禁通过.
+- 一期整体验收状态: Conditional Go. 长期跨仓 CI 仍无法在当前 GitHub Actions 中取得四个生产项目, NodeAgent Windows 仍有既有 Unix 绝对路径断言失败; 因此不能宣称四项目双平台全绿.
 
 ## 2. 现状与判定依据
 
@@ -335,7 +336,11 @@ NodeAgent 当前 Windows 基线因 Unix 路径与 `filepath.IsAbs` 语义不一�
 | 1. 修复核心测试重复与竞态基线 | 已完成 | `1ff066f`; master 重复污染、crontab race 和 common race 退出基线已闭环 |
 | 2. 固定核心包与四项目验证来源 | 已完成, 不入 Git | clean worktree、完整 `go.work`、`Replace.Dir` 和四仓零写入协议已实测; 执行器归档到 `tmp/_pkg-unit-test-hardening/coretestgate` |
 | 3. 收敛核心包测试助手状态 | 已完成 | `5997c4a`、`23c446d`、`593b52a`; 三轮五维审查后 0 finding |
-| 4-8. 状态隔离、行为矩阵和长期门禁 | 下一阶段 | 按状态隔离 -> config -> master -> common -> 可由 CI 执行的稳定门禁顺序实施和复审 |
+| 4. 建立核心包测试状态隔离工具 | 已完成 | `09792fb`; `config/master/common` 快照与 cleanup 契约通过阶段审查 |
+| 5. 补齐 config 行为矩阵 | 已完成 | `63e9a77`; 最终覆盖率 84.5% |
+| 6. 补齐 master 行为矩阵 | 已完成 | `4ac3e9a`; Pipeline、生命周期、watcher 和失败边界已冻结, 最终覆盖率 52.7% |
+| 7. 补齐 common 行为矩阵 | 已完成 | `cc4cf33`; 日志、请求、Redis、sender、IP 和运行期契约已冻结, 最终覆盖率 82.7% |
+| 8. 迁移 utils 与最终稳定门禁 | 已完成 P0 | `e7a4306` 稳定 NTP 本地超时 fixture; `1fb2692` 是 master race Skip 中间诊断提交, `9c0373c` 改用未导出事件工厂完成无 race 专项豁免收口; 跨仓执行器继续不入 Git |
 
 ## 10. 生产影响与改造收益
 
@@ -374,17 +379,17 @@ NodeAgent 当前 Windows 基线因 Unix 路径与 `filepath.IsAbs` 语义不一�
 
 ### 11.1 审查结论
 
-原始草案 As-Is 为 No-Go. 本文完成两轮源码与四项目复审后, 方案设计和开工决策为 Go. 第 0 步现已闭环测试助手、clean worktree、精确临时 `go.work` 验证和 `common/crontab` race 基线; 一期代码的最终验收状态仍为 Conditional Go, 因为核心行为矩阵、长期门禁自动化和四项目规定平台门禁尚未全部完成.
+原始草案 As-Is 为 No-Go. 本文完成源码、四项目调用链和分阶段五维复审后, 方案设计、开工决策及 P0 代码验收均为 Go. 第 0 步、核心行为矩阵、迁移后 utils 稳定性和 pkg 双平台门禁已闭环; 一期整体验收仍为 Conditional Go, 因为长期跨仓 CI 和 NodeAgent Windows 既有路径基线尚未闭环.
 
-覆盖率目标经 coverprofile 量化可达:
+覆盖率从方案基线提升到 P0 最终结果如下:
 
-| 包 | statements | 当前覆盖 | 达标需新增覆盖约 |
-| --- | ---: | ---: | ---: |
-| `config` | 486 | 134 | 158 |
-| `master` | 315 | 5 | 106 |
-| `common` | 339 | 17 | 119 |
+| 包 | 方案基线 `0f77364` | P0 最终 | 门槛 | 判定 |
+| --- | ---: | ---: | ---: | --- |
+| `config` | 27.6% | 84.5% | 60% | 通过 |
+| `master` | 1.6% | 52.7% | 35% | 通过 |
+| `common` | 5.0% | 82.7% | 40% | 通过 |
 
-这些增量可以主要来自当前 0% 的解析、Pipeline、watcher helper、logger、request 和 Redis 可终止单元, 不要求修改公共 API.
+这些增量来自配置解析、Pipeline、watcher、logger、request、Redis 和可终止运行单元, 未新增公共 API.
 
 ### 11.2 四项目真实调用链
 
@@ -399,7 +404,7 @@ NodeAgent 当前 Windows 基线因 Unix 路径与 `filepath.IsAbs` 语义不一�
 
 ### 11.3 实际验证
 
-- pkg tracked package 合并 coverprofile 全部通过, 总覆盖率 69.0%; `config/master/common/utils` 分别为 27.6%/1.6%/5.0%/88.1%.
+- 方案基线 `0f77364` 的 tracked package 合并 coverprofile 全部通过, 总覆盖率 69.0%; 当时 `config/master/common/utils` 分别为 27.6%/1.6%/5.0%/88.1%.
 - 四项目当前 `go.work` 均 replace 到本地 pkg. 当前入口包 compile-only 全部通过, DataRouter 正确初始化配置的测试助手用例通过.
 - DataRouter `TestProcessForwardClone` 单独运行真实复现 nil pointer panic, 证明其依赖其他测试残留; 这是第 0 步必须消除的测试债务.
 - DataPlugins/IPIP 使用外部临时 `go.work` 指向 pkg `0f77364`, compile/full test/build/vet 全部通过且生产仓库零写入.
@@ -408,17 +413,19 @@ NodeAgent 当前 Windows 基线因 Unix 路径与 `filepath.IsAbs` 语义不一�
 - 当前 pkg 与四项目工作区均包含任务前已有的忽略文件或未提交修改. 本次审查没有写入四个生产仓库, 结论同时记录 HEAD 和工作树状态, 不把当前脏树冒充发布提交.
 - 第 0 步修复后, Windows 的助手 50 次 shuffle、核心包重复测试和 vet 均通过; WSL2 Go 1.26.5 的 `config/common/crontab` 分包 race 均通过; clean pkg worktree 的普通/`std_json` 全量测试、vet 和模块门禁均通过.
 - 第 0 步四项目 overlay 复验中, compile-only、build 和 vet 全部通过, DataRouter 两个助手用例各自及 50 次 shuffle 均通过, DataRouter/DataPlugins/IPIP 全量通过. NodeAgent Windows 全量只保留同一既有路径断言失败; 四仓 HEAD、索引树和 tracked diff 指纹前后一致.
+- P0 最终代码 `9c0373c` 在 Windows/WSL2 通过普通、shuffle、`std_json`、vet 和五包分包 race, 无 race 专项豁免或诊断; JSON 输出仅有 `internal/ntp` 6 个默认离线的既有 opt-in 公网 smoke Skip. 四项目基于包含 `master/init.go` 生产增量的候选执行 compile-only/build/vet 全部通过, DataRouter/DataPlugins/IPIP 全量通过, 四仓状态前后一致; NodeAgent Windows 全量仍只保留同一既有路径断言失败.
 
 ### 11.4 最终判定
 
 - 方案可行性: Go, 文档已达到可开始实施标准.
-- 当前实施状态: 第 0 步 Go, 已通过三轮五维审查闭环; 验证来源协议也已完成实测并按一次性工具边界移出 Git, 下一阶段进入推荐顺序第 4 项状态隔离.
-- 当前最终验收状态: Conditional Go, 第 0 步完成不等于一期完成, 不得宣称全部门禁通过.
+- 当前实施状态: P0-A 至 P0-D Go, 7 个代码提交均完成阶段审查、真实性核验和复审; `1fb2692` 的 Skip 方案已被 `9c0373c` 取代.
+- pkg 最终门禁: Go, Windows/WSL2 clean worktree 的普通、两轮 shuffle、`std_json`、vet 和模块门禁通过; WSL2 五个相关包分包 race 通过.
+- 一期整体验收状态: Conditional Go, NodeAgent Windows 既有路径测试和长期跨仓 CI 未闭环, 不得宣称四项目双平台全绿.
 - 使用侧调用链: 不变.
 - 公共函数签名和 Pipeline 接口: 不变.
 - 正常生产逻辑: 不变.
-- 测试侧逻辑: 测试助手将变为自包含、离线和可恢复; 现有依赖测试顺序的行为不保留.
-- 后续条件: 状态隔离助手只能存在于 `*_test.go`, 随后按 `config -> master -> common` 分批补测试. 跨仓协议继续用于阶段验收, 但只有在 CI 能实际取得四个项目时才建设长期自动门禁. 默认 pool 的 swap 所有权、恢复后提交验证和 common race 退出问题均已在第 0 步闭环.
+- 测试侧逻辑: 测试助手已变为自包含、离线和可恢复; 现有依赖测试顺序的行为不保留.
+- 后续条件: 跨仓协议继续用于阶段验收, 只有在 CI 能安全取得四个项目时才建设长期自动门禁. P1 优先处理默认 HTTP debug dump 的正文脱敏边界, 再补 `stats/json/logger` 等低覆盖运行包.
 
 ### 11.5 附件审查建议采纳决策
 
@@ -480,4 +487,46 @@ NodeAgent 当前 Windows 基线因 Unix 路径与 `filepath.IsAbs` 语义不一�
 
 - 当前 Git 提交只保留 pkg 自身源码、测试和方案文档; 公共 API、配置、Pipeline、生产调用链及四项目代码均无变化.
 - 跨仓验证协议仍是每阶段验收要求, 但其执行证据不冒充 pkg 自身单元测试覆盖.
-- 下一阶段直接进入状态隔离, 优先复用现有第 0 步助手的完整快照、精确所有权和串行恢复原则, 不新增生产 API 或常驻工具包.
+- 后续状态隔离与 P0 行为矩阵已按完整快照、精确所有权和串行恢复原则落地, 未新增生产 API 或常驻工具包.
+
+## 14. P0 落地与最终复审
+
+### 14.1 代码提交与范围
+
+| 阶段 | 提交 | 结果 |
+| --- | --- | --- |
+| 状态隔离 | `09792fb` | 建立 `config/master/common` 包内快照与 `t.Cleanup` 恢复协议 |
+| P0-A config | `63e9a77` | 覆盖加载、env、归一化、节点、远端配置与失败边界 |
+| P0-B master | `4ac3e9a` | 覆盖 Pipeline、生命周期、watcher、远端循环、NTP 和退出语义 |
+| P0-C common | `cc4cf33` | 覆盖 logger、request、Redis、sender、IP 和运行能力 |
+| P0-D utils | `e7a4306` | 使用收到请求后不响应的本地 UDP fixture 稳定 NTP 读取超时契约 |
+| race 中间诊断 | `1fb2692` | 用互斥构建标签定位 WSL2 logger 子进程问题; 该 Skip 方案不满足最终门禁, 后续已删除 |
+| P0 最终收口 | `9c0373c` | 用未导出日志事件工厂替代子进程和 race Skip, 修正请求安全契约与 canary 边界测试 |
+
+P0 相对 `d9e833f` 修改两处生产 Go 文件. `common/init.go` 新增两个未导出的 IP 查询函数变量, 默认值仍分别为 `myip.InternalIPv4` 和 `myip.ExternalIPv4`; `initServerIP` 的调用顺序、回退条件、赋值目标和 `//go:norace` 均未改变. `master/init.go` 新增未导出的 `pipelineRuntimeErrorEvent`, 默认值仍为 `alarm.Error`; 两条 Runtime 链仍在原函数、原错误分支执行 `.Err(err).Msg(...)`, 消息、错误字段、Pipeline 顺序、错误后继续执行和 zerolog caller 调用栈均不变. 两个测试缝都不导出, 不改变四项目编译接口.
+
+### 14.2 生产影响与优势
+
+- 公共 API、函数签名、配置结构、默认值、Pipeline、四项目注册链和生产启动顺序不变.
+- 正常生产网络、goroutine、文件和错误处理逻辑不变; 未导出函数变量只替换测试中的硬编码外部依赖或日志事件来源, 默认实现和调用点保持原值; 新增测试不会进入下游应用调用链.
+- 核心包覆盖率达到 `config 84.5%`、`master 52.7%`、`common 82.7%`, 均高于一期门槛.
+- 全局状态、环境变量、默认 pool、logger、HTTP/Redis fixture 和 watcher 文件状态具有显式所有权与 cleanup, 测试可独立、离线、重复和 shuffle 执行.
+- 迁移后 utils 不为覆盖率数字扩张; 本次只修复 NTP 超时 fixture 在高负载下可能于 UDP 写入前过期的真实 flake.
+
+### 14.3 审查闭环
+
+- config、master、common 各阶段均经过五维初审、发现真实性核验、修复和最终复审; common 最终报告 `.codereview/reports/cr_MSLT199YxcerzzmsZbQ.md` 为 0 finding.
+- NTP 初审发现 1 条低优先级测试耗时问题, 从 1s 收敛到 250ms 后双平台 50 轮由约 54s 降至约 17s; 最终报告 `.codereview/reports/cr_MSLUCJJK6an9YqdAPvk.md` 为 0 finding.
+- master race 初审发现“事件断言冒充日志断言”和复审注释不一致, 两项均属实; `1fb2692` 的显式 Skip 只保留为中间诊断证据, 最终未采纳. `9c0373c` 改用未导出 zerolog event 工厂, 同时断言固定消息、原始 error 和两类错误后的继续执行, WSL2 race 不再 Skip.
+- P0 总审查初审发现默认 HTTP 客户端敏感正文契约、canary 自证边界、过宽 race Skip 和文档/生产增量不一致等真实问题, 均完成修复. 最终五维报告 `.codereview/reports/cr_MSLXK8LSaBLoEJsW0FU.md` 为 0 finding; Context7 未配置且没有第三方 API 争议, 验证覆盖标记为 `NONE`.
+- `.codereview/` 为本地忽略的审查 sidecar, 不进入 pkg Git 提交.
+
+### 14.4 最终门禁与剩余条件
+
+- clean `9c0373c` 在 Windows 与 WSL2 Go 1.26.5 通过普通全量、`-shuffle=on -count=2`、`std_json` 和 vet; `go mod verify` 与 `go mod tidy -diff` 通过且 worktree 零写入.
+- WSL2 对 `config/common/master/crontab/internal/ntp` 逐包 race 均通过, 无 race 专项豁免或 race 诊断. JSON 复核确认所有 Skip 都是 6 个显式 opt-in 的既有 NTP 在线测试: 5 个公网 smoke 使用 `PKG_ONLINE_TESTS=1`, 认证用例使用 `-args test_auth` 并要求本地认证 NTP 服务. `TestPipelineRuntimeErrorsAreReported` 正常执行, 在同一进程注入内存 zerolog event, 直接验证四条日志/错误文本和 ConfigStage/MainStage 错误后的继续执行.
+- 四项目固定到包含 `master/init.go` 最终生产增量的候选执行 compile-only/build/vet 全部通过, DataRouter、DataPlugins、IPIP 全量测试通过, 四仓零写入. NodeAgent compile-only/build/vet 通过, 因此生产兼容结论不再沿用 `cc4cf33` 的旧结果.
+- NodeAgent Windows 全量仍只失败于既有 `conf.TestValidateAbsPaths` Unix 路径断言; Ubuntu 必须全绿. 该外部项目债务不阻塞 pkg P0, 但阻塞一期宣称四项目 Windows 全绿.
+- `common.loadReq` 在 `ReqDebug=true` 时对默认客户端调用 `EnableDumpAll`, 仍可能输出请求或响应正文. P0 为保持生产逻辑不变不调整该策略, 测试只冻结 debug 开关和元数据可观察性, 不把敏感正文可见性固化为契约; P1 应评审脱敏或禁用正文 dump.
+
+最终判定: pkg P0 代码与门禁为 Go; 四项目生产兼容为 Go; 一期跨项目双平台总验收为 Conditional Go.
