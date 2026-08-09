@@ -12,6 +12,10 @@ var (
 	// InternalIPv4 服务器 IP
 	InternalIPv4 string
 	ExternalIPv4 string
+
+	// internalIPv4Lookup 和 externalIPv4Lookup 保留生产默认查询实现, 仅供包内测试隔离网络边界.
+	internalIPv4Lookup = myip.InternalIPv4
+	externalIPv4Lookup = myip.ExternalIPv4
 )
 
 type M struct{}
@@ -52,10 +56,14 @@ func (m *M) Stop() error {
 	return nil
 }
 
+// initServerIP 查询内外网地址, 外网查询失败时回退到节点配置.
+//
+// 查询函数默认始终指向 myip 的生产实现. 包内测试只能在启动前替换它们, 不支持运行期并发改写.
+//
 //go:norace
 func initServerIP() {
-	InternalIPv4 = myip.InternalIPv4()
-	ExternalIPv4 = myip.ExternalIPv4()
+	InternalIPv4 = internalIPv4Lookup()
+	ExternalIPv4 = externalIPv4Lookup()
 	if ExternalIPv4 == "" {
 		ExternalIPv4 = config.Config().NodeConf.NodeInfo.NodeIP
 	}

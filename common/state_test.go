@@ -22,6 +22,8 @@ func preserveCommonPackageState(t *testing.T) {
 
 	oldInternalIP := InternalIPv4
 	oldExternalIP := ExternalIPv4
+	oldInternalIPv4Lookup := internalIPv4Lookup
+	oldExternalIPv4Lookup := externalIPv4Lookup
 	oldAppLoggerUseSampler := AppLoggerUseSampler
 	oldLogger := logger.Load()
 	oldLogSampled := logSampled.Load()
@@ -74,6 +76,8 @@ func preserveCommonPackageState(t *testing.T) {
 	InitRedisDB(nil)
 	clockOffset.Store(0)
 	Funcs = xsync.NewMap[string, Func]()
+	internalIPv4Lookup = oldInternalIPv4Lookup
+	externalIPv4Lookup = oldExternalIPv4Lookup
 
 	t.Cleanup(func() {
 		if commonTestState != nil {
@@ -81,6 +85,8 @@ func preserveCommonPackageState(t *testing.T) {
 		}
 		InternalIPv4 = oldInternalIP
 		ExternalIPv4 = oldExternalIP
+		internalIPv4Lookup = oldInternalIPv4Lookup
+		externalIPv4Lookup = oldExternalIPv4Lookup
 		AppLoggerUseSampler = oldAppLoggerUseSampler
 		logger.Store(oldLogger)
 		logSampled.Store(oldLogSampled)
