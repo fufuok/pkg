@@ -6,6 +6,7 @@ import (
 
 	"github.com/fufuok/cache/xsync"
 
+	"github.com/fufuok/pkg/assert"
 	"github.com/fufuok/pkg/common"
 )
 
@@ -42,6 +43,8 @@ func preserveMasterPackageState(t *testing.T) {
 	oldNTPFirstDoneChan := ntpFirstDoneChan
 	oldDebInstalling := debInstalling.Load()
 	oldCommonFuncs := common.Funcs
+	oldInternalIPv4 := common.InternalIPv4
+	oldExternalIPv4 := common.ExternalIPv4
 
 	restartChan = make(chan bool, 1)
 	reloadChan = make(chan bool, 1)
@@ -57,6 +60,8 @@ func preserveMasterPackageState(t *testing.T) {
 	ntpFirstDoneChan = make(chan struct{})
 	debInstalling.Store(false)
 	common.Funcs = xsync.NewMap[string, common.Func]()
+	common.InternalIPv4 = ""
+	common.ExternalIPv4 = ""
 
 	t.Cleanup(func() {
 		if ntpCancel != nil {
@@ -84,5 +89,30 @@ func preserveMasterPackageState(t *testing.T) {
 		ntpFirstDoneChan = oldNTPFirstDoneChan
 		debInstalling.Store(oldDebInstalling)
 		common.Funcs = oldCommonFuncs
+		common.InternalIPv4 = oldInternalIPv4
+		common.ExternalIPv4 = oldExternalIPv4
 	})
+}
+
+// TestPreserveMasterPackageStateRestoresCommonIP 验证 master 用例不会把 canary 输入泄漏到后续测试.
+func TestPreserveMasterPackageStateRestoresCommonIP(t *testing.T) {
+	oldInternalIPv4 := common.InternalIPv4
+	oldExternalIPv4 := common.ExternalIPv4
+	common.InternalIPv4 = "192.0.2.10"
+	common.ExternalIPv4 = "198.51.100.20"
+	t.Cleanup(func() {
+		common.InternalIPv4 = oldInternalIPv4
+		common.ExternalIPv4 = oldExternalIPv4
+	})
+
+	t.Run("mutate isolated state", func(t *testing.T) {
+		preserveMasterPackageState(t)
+		assert.Equal(t, "", common.InternalIPv4)
+		assert.Equal(t, "", common.ExternalIPv4)
+		common.InternalIPv4 = "203.0.113.30"
+		common.ExternalIPv4 = "203.0.113.40"
+	})
+
+	assert.Equal(t, "192.0.2.10", common.InternalIPv4)
+	assert.Equal(t, "198.51.100.20", common.ExternalIPv4)
 }
