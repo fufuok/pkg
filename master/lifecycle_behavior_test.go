@@ -26,25 +26,21 @@ func prepareMasterConfig(t *testing.T) *config.MainConf {
 	return config.Config()
 }
 
-// TestCanaryBoundary 验证 0、实际 hash 边界和 100 三类阈值.
+// TestCanaryBoundary 验证 0、固定 hash 桶边界和 100 三类阈值.
 func TestCanaryBoundary(t *testing.T) {
 	preserveMasterPackageState(t)
 	common.InternalIPv4 = "10.0.0.1"
 	common.ExternalIPv4 = "203.0.113.1"
-	const version = "1.2.3"
+	const (
+		version = "1.2.3"
+		bucket  = uint64(66)
+	)
 	assert.False(t, canary(version, 0))
 	assert.True(t, canary(version, 100))
 
-	firstTrue := uint64(0)
-	for threshold := uint64(1); threshold <= 100; threshold++ {
-		if canary(version, threshold) {
-			firstTrue = threshold
-			break
-		}
-	}
-	assert.True(t, firstTrue > 0)
-	assert.False(t, canary(version, firstTrue-1))
-	assert.True(t, canary(version, firstTrue))
+	// 固定输入的 hash 桶为 66, 直接区分严格小于与小于等于两种实现.
+	assert.False(t, canary(version, bucket))
+	assert.True(t, canary(version, bucket+1))
 }
 
 // TestCheckUpgradeOrRestartSignals 验证灰度阈值 0 不安装, restart 配置只发送重启信号.

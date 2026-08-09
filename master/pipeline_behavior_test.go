@@ -1,6 +1,7 @@
 package master
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/crontab"
+	"github.com/rs/zerolog"
 )
 
 // recordingPipeline 记录生命周期调用, 用于验证顺序和错误后继续执行语义.
@@ -120,39 +122,41 @@ func TestPipelineExecutionOrder(t *testing.T) {
 	assert.Equal(t, want, events)
 }
 
-// TestPipelineRuntimeErrorsAreLogged 初始化真实 logger, 验证两类 Runtime 错误均可观察.
-// 普通构建使用子进程隔离全局日志状态; race 构建因 WSL2 子进程限制显式跳过.
-// Runtime 错误后的继续执行语义由 TestPipelineExecutionOrder 在 race 门禁中覆盖.
-func TestPipelineRuntimeErrorsAreLogged(t *testing.T) {
-	if raceDetectorEnabled {
-		t.Skip("WSL2 cannot run the logger helper beside a race-instrumented parent process; normal Windows and Linux tests verify the log contract")
+// TestPipelineRuntimeErrorsAreReported 验证两类 Runtime 错误携带固定消息上报, 且不会中断后续 Pipeline.
+func TestPipelineRuntimeErrorsAreReported(t *testing.T) {
+	preserveMasterPackageState(t)
+	var reports bytes.Buffer
+	testLogger := zerolog.New(&reports)
+	pipelineRuntimeErrorEvent = func() *zerolog.Event {
+		return testLogger.Error()
 	}
-
-	output, err := runMasterSubprocess(t, "TestPipelineRuntimeErrorsAreLoggedHelper", "PKG_MASTER_RUNTIME_LOG_HELPER")
-	assert.Nil(t, err)
-	assert.Contains(t, "Runtime config pipeline failed", string(output))
-	assert.Contains(t, "expected config runtime error", string(output))
-	assert.Contains(t, "Runtime main pipeline failed", string(output))
-	assert.Contains(t, "expected main runtime error", string(output))
-}
-
-// TestPipelineRuntimeErrorsAreLoggedHelper 在独立进程中建立控制台 logger, 避免污染父进程全局日志状态.
-func TestPipelineRuntimeErrorsAreLoggedHelper(t *testing.T) {
-	if os.Getenv("PKG_MASTER_RUNTIME_LOG_HELPER") != "1" {
-		return
-	}
-	config.Debug = true
-	config.InitTester()
-	defer config.StopTester()
-	if err := (&common.M{}).Runtime(); err != nil {
-		t.Fatalf("initialize runtime logger: %v", err)
-	}
-
+	configErr := errors.New("expected config runtime error")
+	mainErr := errors.New("expected main runtime error")
 	var events []string
-	configPipelines = []Pipeline{&recordingPipeline{name: "config", events: &events, runtimeErr: errors.New("expected config runtime error")}}
-	mainPipelines = []Pipeline{&recordingPipeline{name: "main", events: &events, runtimeErr: errors.New("expected main runtime error")}}
+	configPipelines = []Pipeline{
+		&recordingPipeline{name: "config", events: &events, runtimeErr: configErr},
+		&recordingPipeline{name: "config-after-error", events: &events},
+	}
+	mainPipelines = []Pipeline{
+		&recordingPipeline{name: "main", events: &events, runtimeErr: mainErr},
+		&recordingPipeline{name: "main-after-error", events: &events},
+	}
 	runtimeConfigPipeline()
 	runtimePipeline()
+
+	assert.Equal(t, []string{
+		"runtime:config", "runtime:config-after-error",
+		"runtime:main", "runtime:main-after-error",
+	}, events)
+	output := reports.String()
+	for _, want := range []string{
+		"Runtime config pipeline failed",
+		"expected config runtime error",
+		"Runtime main pipeline failed",
+		"expected main runtime error",
+	} {
+		assert.Contains(t, want, output)
+	}
 }
 
 // TestStartPipelineExecutionOrder 使用子进程执行真实 startPipeline, 并在最后一个 Start 内退出以避开永久 scheduler.

@@ -19,6 +19,9 @@ var (
 
 	// 配置重载信息
 	reloadChan = make(chan bool)
+
+	// pipelineRuntimeErrorEvent 保留生产报警事件来源, 供包内测试隔离全局 logger.
+	pipelineRuntimeErrorEvent = alarm.Error
 )
 
 // 注册常用助手函数
@@ -60,7 +63,7 @@ func runtimeConfigPipeline() {
 	ps := getPipelines(ConfigStage)
 	for _, p := range ps {
 		if err := p.Runtime(); err != nil {
-			alarm.Error().Err(err).Msg("Runtime config pipeline failed")
+			pipelineRuntimeErrorEvent().Err(err).Msg("Runtime config pipeline failed")
 		}
 	}
 }
@@ -70,7 +73,7 @@ func runtimePipeline() {
 	ps := getPipelines(MainStage)
 	for _, p := range ps {
 		if err := p.Runtime(); err != nil {
-			alarm.Error().Err(err).Msg("Runtime main pipeline failed")
+			pipelineRuntimeErrorEvent().Err(err).Msg("Runtime main pipeline failed")
 		}
 	}
 }

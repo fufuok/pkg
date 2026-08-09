@@ -28,6 +28,7 @@ func preserveMasterPackageState(t *testing.T) {
 
 	oldRestartChan := restartChan
 	oldReloadChan := reloadChan
+	oldPipelineRuntimeErrorEvent := pipelineRuntimeErrorEvent
 	oldConfigModTime := ConfigModTime
 	oldConfigLoadTime := ConfigLoadTime
 	oldWatchers := watchers
@@ -74,6 +75,7 @@ func preserveMasterPackageState(t *testing.T) {
 		mu.Unlock()
 		restartChan = oldRestartChan
 		reloadChan = oldReloadChan
+		pipelineRuntimeErrorEvent = oldPipelineRuntimeErrorEvent
 		ConfigModTime = oldConfigModTime
 		ConfigLoadTime = oldConfigLoadTime
 		watchers = oldWatchers

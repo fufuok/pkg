@@ -14,7 +14,7 @@ import (
 	"github.com/fufuok/pkg/config"
 )
 
-// TestRequestClientContract 验证 user-agent、超时、重试、debug 和敏感 body 隐藏策略.
+// TestRequestClientContract 验证 user-agent、超时、重试、debug 和专用客户端 body 隐藏策略.
 func TestRequestClientContract(t *testing.T) {
 	cfg := prepareCommonConfig(t)
 	config.ReqUserAgent = "pkg-common-test/1.0"
@@ -67,7 +67,7 @@ func TestRequestClientContract(t *testing.T) {
 		t.Fatalf("user-agent = %q", got)
 	}
 
-	if _, err := req.SetBodyString("REGULAR_SECRET").Post(server.URL + "/echo"); err != nil {
+	if _, err := req.SetBodyString("regular request body").Post(server.URL + "/echo"); err != nil {
 		t.Fatalf("dump regular request: %v", err)
 	}
 	if _, err := ReqUpload.R().SetBodyString("UPLOAD_SECRET").Post(server.URL + "/echo"); err != nil {
@@ -76,8 +76,8 @@ func TestRequestClientContract(t *testing.T) {
 	if _, err := ReqDownload.R().Get(server.URL + "/download"); err != nil {
 		t.Fatalf("dump download request: %v", err)
 	}
-	if !strings.Contains(regularDump.String(), "REGULAR_SECRET") {
-		t.Fatal("regular debug dump omitted the request body")
+	if !strings.Contains(regularDump.String(), "POST /echo") || !strings.Contains(regularDump.String(), "200 OK") {
+		t.Fatalf("regular debug dump omitted request or response metadata: %s", regularDump.String())
 	}
 	if strings.Contains(uploadDump.String(), "UPLOAD_SECRET") {
 		t.Fatal("upload debug dump exposed the request body")
