@@ -120,8 +120,14 @@ func TestPipelineExecutionOrder(t *testing.T) {
 	assert.Equal(t, want, events)
 }
 
-// TestPipelineRuntimeErrorsAreLogged 使用子进程初始化真实 logger, 验证两类 Runtime 错误均可观察.
+// TestPipelineRuntimeErrorsAreLogged 初始化真实 logger, 验证两类 Runtime 错误均可观察.
+// 普通构建使用子进程隔离全局日志状态; race 构建因 WSL2 子进程限制显式跳过.
+// Runtime 错误后的继续执行语义由 TestPipelineExecutionOrder 在 race 门禁中覆盖.
 func TestPipelineRuntimeErrorsAreLogged(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("WSL2 cannot run the logger helper beside a race-instrumented parent process; normal Windows and Linux tests verify the log contract")
+	}
+
 	output, err := runMasterSubprocess(t, "TestPipelineRuntimeErrorsAreLoggedHelper", "PKG_MASTER_RUNTIME_LOG_HELPER")
 	assert.Nil(t, err)
 	assert.Contains(t, "Runtime config pipeline failed", string(output))
