@@ -181,6 +181,18 @@ func TestResolveDefaultConfigName(t *testing.T) {
 	}
 }
 
+// TestResolveDefaultConfigPublicContract 验证公开包装函数使用当前 ConfigPath 和 BinName.
+func TestResolveDefaultConfigPublicContract(t *testing.T) {
+	preserveConfigPackageState(t)
+	ConfigPath = filepath.Join(t.TempDir(), "etc")
+	BinName = "worker"
+	t.Setenv("PKG_PUBLIC_CONFIG_FILE", "worker.gray.json")
+	t.Setenv("PKG_PUBLIC_CONFIG_NAME", "worker.blue")
+
+	assert.Equal(t, filepath.Join(ConfigPath, "worker.gray.json"), ResolveDefaultConfigFile("PKG_PUBLIC_CONFIG_FILE", ".api.json"))
+	assert.Equal(t, filepath.Join(ConfigPath, "worker.blue.json"), ResolveDefaultConfigName("PKG_PUBLIC_CONFIG_NAME", ".json"))
+}
+
 // TestLoadBootstrapEnvKeepsMachineEnv 验证启动级 .default.env 只提供默认值.
 // 当机器环境变量已经存在时, godotenv.Load 不会用文件值覆盖它, 以便 systemd,
 // /etc/default, 容器 env 或 shell env 能按机器维度覆盖随包分发的默认值.

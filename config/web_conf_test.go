@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/fufuok/pkg/assert"
+	"github.com/fufuok/pkg/xcrypto"
 )
 
 // TestResolveGroupCertFile 覆盖分组独立 TLS 证书解析的三种边界:
@@ -58,4 +59,45 @@ func TestNormalizeWebGroupConf(t *testing.T) {
 	assert.Equal(t, 1024, got.BodyLimit)     // 通用项继承
 	assert.True(t, got.Groups == nil)        // 分组配置不再嵌套 Groups
 	assert.Equal(t, 1, len(got.TrustedProxies))
+}
+
+// TestParseWebConfigGroups 验证主配置默认值、主证书和分组独立证书的完整派生规则.
+func TestParseWebConfigGroups(t *testing.T) {
+	prepareConfigBehaviorTest(t)
+	dir := t.TempDir()
+	mainCert := filepath.Join(dir, "main.crt")
+	mainKey := filepath.Join(dir, "main.key")
+	groupCert := filepath.Join(dir, "group.crt")
+	groupKey := filepath.Join(dir, "group.key")
+	for _, file := range []string{mainCert, mainKey, groupCert, groupKey} {
+		assert.Nil(t, os.WriteFile(file, []byte("test"), 0o600))
+	}
+	t.Setenv(WebCertFileEnvName, mainCert)
+	t.Setenv(WebKeyFileEnvName, mainKey)
+	t.Setenv("PKG_GROUP_CERT", groupCert)
+	t.Setenv("PKG_GROUP_KEY", groupKey)
+	if _, err := xcrypto.SetenvEncrypt(WebSignKeyEnvName, "sign-key", "unit-test-secret"); err != nil {
+		t.Fatalf("encrypt web sign key: %v", err)
+	}
+
+	cfg := &MainConf{
+		SYSConf: SYSConf{BaseSecretValue: "unit-test-secret"},
+		WebConf: WebConf{Groups: map[string]WebConf{
+			"api":   {ServerAddr: ":18080"},
+			"admin": {ServerHttpsAddr: ":18443", CertFileEnv: "PKG_GROUP_CERT", KeyFileEnv: "PKG_GROUP_KEY"},
+		}},
+	}
+	parseWebConfig(cfg)
+
+	assert.Equal(t, WebServerAddr, cfg.WebConf.ServerAddr)
+	assert.Equal(t, WebServerHttpsAddr, cfg.WebConf.ServerHttpsAddr)
+	assert.Equal(t, WebBodyLimit, cfg.WebConf.BodyLimit)
+	assert.Equal(t, int64(WebSignTTLDefault), cfg.WebConf.SignTTL)
+	assert.Equal(t, "sign-key", cfg.WebConf.SignKey)
+	assert.Equal(t, ":18080", cfg.WebConf.Groups["api"].ServerAddr)
+	assert.Equal(t, "", cfg.WebConf.Groups["api"].ServerHttpsAddr)
+	assert.Equal(t, mainCert, cfg.WebConf.Groups["api"].CertFile)
+	assert.Equal(t, ":18443", cfg.WebConf.Groups["admin"].ServerHttpsAddr)
+	assert.Equal(t, groupCert, cfg.WebConf.Groups["admin"].CertFile)
+	assert.Equal(t, groupKey, cfg.WebConf.Groups["admin"].KeyFile)
 }
