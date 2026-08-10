@@ -38,3 +38,6 @@ jobs:
 
       - name: Run Test
         run: go test -v -cover -covermode=atomic ./...
+
+      - name: Run Test With Standard JSON
+        run: go test -tags=std_json -v ./...

@@ -4,7 +4,7 @@
 > pkg 基线: `feature/yf/260803_整合utils包` @ `0f77364ab739ab84edc71a905499e37705dac394`
 > 主题边界: 单元测试保护网与测试能力建设, 不属于 pkg 瘦身或生命周期重构方案
 > 审查范围: pkg 源码、迁移后的 utils 及 XY.NodeAgent、xy-data-router、xy-data-plugins、XY.IPIP-TXTX 四个生产项目
-> 实施状态: P0-A 至 P0-D 已完成代码、五维审查和双平台门禁; 一期整体验收仍受 NodeAgent Windows 既有路径基线与长期跨仓 CI 条件约束
+> 实施状态: P0-A 至 P0-D 及 P1 低覆盖运行包 `json/logger/stats` 已完成代码、阶段审查、clean pkg 门禁和四项目生产兼容复验; HTTP debug dump 按当前决策暂缓; 一期整体验收仍受 NodeAgent Windows 既有路径基线与长期跨仓 CI 条件约束
 
 ## 1. 最终建议摘要
 
@@ -17,6 +17,7 @@
 3. 新增测试的网络依赖使用本地 HTTP/UDP/RESP fixture, 文件依赖使用 `t.TempDir`. 现有 `common.InitTester` 触发公网 IP 探测的行为必须在第 0 步收敛, 不能作为稳定性门禁的默认前提.
 4. 迁移后的 `utils` 当前覆盖率已经达到 88.1%, 一期只保持现有契约和稳定性门禁, 不为追求数字重复补低价值用例.
 5. 若某个关键分支确实被硬编码时钟、休眠或外部命令阻断, 必须先提交不可测证据, 再单独评审未导出的最小测试缝. 不允许为了测试新增公共 API 或可变包级打桩入口.
+6. P0 完成后按真实生产使用补齐 `json/logger/stats` 契约, 并将 `std_json` 全模块测试固化到 CI. HTTP debug dump 正文脱敏不与本阶段混合, 按用户决策暂缓.
 
 因此, 一期不会改变四个生产项目的 import path、生产启动入口、Pipeline 接口、函数签名、配置结构、默认值或调用顺序. 推荐在 pkg 内部保持 `InitTester/StopTester` 签名不变并修正实现, 四个生产项目不需要配套修改生产代码或测试调用点.
 
@@ -40,7 +41,7 @@
 | `master` | 1.6% | Pipeline、reload、restart、watcher 和退出顺序几乎没有保护 |
 | `common` | 5.0% | 日志、请求客户端、Redis、IP 和后台发送链路覆盖不足 |
 | `crontab` | 69.0% | 已有较完整任务契约, 一期只验证与 master 的交互 |
-| `json` / `logger` / `stats` | 0% | 是后续优先项, 但不扩大本期核心范围 |
+| `json` / `logger` / `stats` | 0% | 方案基线缺口; P1 已完成, 当前结果见第 15 节 |
 | `utils` | 88.1% | 已具备较强基础保护, 不按统一目标继续堆覆盖率 |
 | `xdaemon` / `xfile` | 68.3% / 88.2% | 已有真实子进程和真实文件测试, 遗留资源生命周期问题单独处理 |
 
@@ -342,6 +343,15 @@ NodeAgent 当前 Windows 基线因 Unix 路径与 `filepath.IsAbs` 语义不一�
 | 7. 补齐 common 行为矩阵 | 已完成 | `cc4cf33`; 日志、请求、Redis、sender、IP 和运行期契约已冻结, 最终覆盖率 82.7% |
 | 8. 迁移 utils 与最终稳定门禁 | 已完成 P0 | `e7a4306` 稳定 NTP 本地超时 fixture; `1fb2692` 是 master race Skip 中间诊断提交, `9c0373c` 改用未导出事件工厂完成无 race 专项豁免收口; 跨仓执行器继续不入 Git |
 
+P0 后续的低覆盖运行包按独立提交推进:
+
+| 顺序 | 状态 | 证据 |
+| --- | --- | --- |
+| 9. 补齐 JSON 双实现契约 | 已完成 | `884e8b1`; 默认与 `std_json` 均为 100% |
+| 10. 补齐日志门面与文件输出契约 | 已完成 | `ed306bf`; `logger` 90.3%, `logger/alarm` 与 `logger/sampler` 100% |
+| 11. 补齐运行统计契约 | 已完成 | `68020b1`; `stats` 95.9%, 使用本地 TCP RESP fixture 覆盖 Redis 三类路径 |
+| 12. 固化双 JSON CI 与文档验收 | 已完成 | CI 增加 `go test -tags=std_json -v ./...`; HTTP 相关改造不在本阶段范围 |
+
 ## 10. 生产影响与改造收益
 
 ### 10.1 对现有生产的影响
@@ -351,6 +361,7 @@ NodeAgent 当前 Windows 基线因 Unix 路径与 `filepath.IsAbs` 语义不一�
 - 使用侧调用链: 无变化.
 - 配置与默认值: 无变化.
 - 性能、goroutine、网络和文件行为: 无变化.
+- `logger/custom_logger.go` 仅提取未导出的 `newCustomFileLogger`, 让包内测试能够显式关闭真实文件 writer. 公共构造函数继续安装原 finalizer, 且校验、默认值、writer、level 和返回值不变.
 - 测试助手内部行为: 允许变为自包含、可恢复且默认离线; 当前四项目只在测试文件使用这些入口. 由于 `test_only.go` 参与普通构建, 生产二进制内容会变化, 但四项目正常生产调用路径不会执行这些函数.
 - 四项目生产源码改造: 不需要. NodeAgent 平台测试修复属于既有测试债务, 与 pkg 生产兼容无关.
 
@@ -391,6 +402,16 @@ NodeAgent 当前 Windows 基线因 Unix 路径与 `filepath.IsAbs` 语义不一�
 
 这些增量来自配置解析、Pipeline、watcher、logger、request、Redis 和可终止运行单元, 未新增公共 API.
 
+P1 低覆盖运行包的当前结果如下:
+
+| 包 | 方案基线 | P1 最终 | 判定 |
+| --- | ---: | ---: | --- |
+| `json` | 0% | 100% | 默认与 `std_json` 双实现契约均通过 |
+| `logger` | 0% | 90.3% | 包级门面、选项、校验和真实文件输出已覆盖 |
+| `logger/alarm` | 0% | 100% | 报警日志门面契约已覆盖 |
+| `logger/sampler` | 0% | 100% | 采样日志门面契约已覆盖 |
+| `stats` | 0% | 95.9% | runtime、系统、Web、描述和 Redis 成功/失败路径已覆盖 |
+
 ### 11.2 四项目真实调用链
 
 | 项目 | 当前审查 HEAD | 业务 ConfigStage | 业务 MainStage | RemoteStage | 测试助手 |
@@ -414,18 +435,21 @@ NodeAgent 当前 Windows 基线因 Unix 路径与 `filepath.IsAbs` 语义不一�
 - 第 0 步修复后, Windows 的助手 50 次 shuffle、核心包重复测试和 vet 均通过; WSL2 Go 1.26.5 的 `config/common/crontab` 分包 race 均通过; clean pkg worktree 的普通/`std_json` 全量测试、vet 和模块门禁均通过.
 - 第 0 步四项目 overlay 复验中, compile-only、build 和 vet 全部通过, DataRouter 两个助手用例各自及 50 次 shuffle 均通过, DataRouter/DataPlugins/IPIP 全量通过. NodeAgent Windows 全量只保留同一既有路径断言失败; 四仓 HEAD、索引树和 tracked diff 指纹前后一致.
 - P0 最终代码 `9c0373c` 在 Windows/WSL2 通过普通、shuffle、`std_json`、vet 和五包分包 race, 无 race 专项豁免或诊断; JSON 输出仅有 `internal/ntp` 6 个默认离线的既有 opt-in 公网 smoke Skip. 四项目基于包含 `master/init.go` 生产增量的候选执行 compile-only/build/vet 全部通过, DataRouter/DataPlugins/IPIP 全量通过, 四仓状态前后一致; NodeAgent Windows 全量仍只保留同一既有路径断言失败.
+- P1 候选 `f4e0145` 在 clean Windows worktree 通过普通全量、`std_json` 全量、两轮 shuffle、vet、`go mod verify` 和无差异的 `go mod tidy -diff`; WSL2 对 `json/logger/.../stats` 的 race 通过. 主工作区直接全量测试仍会被既有忽略目录 `tmp/demo-hasher` 污染, 因此最终结论只采用方案规定的 clean 候选结果.
+- 四项目固定 replace 到 `f4e0145` 后, compile-only/build/vet 全部通过且仓库指纹前后一致; DataRouter/DataPlugins/IPIP 全量通过. NodeAgent 全量只复现 `conf.TestValidateAbsPaths` 的 3 个 Windows/Unix 路径既有断言失败, compile-only 已通过.
 
 ### 11.4 最终判定
 
 - 方案可行性: Go, 文档已达到可开始实施标准.
-- 当前实施状态: P0-A 至 P0-D Go, 7 个代码提交均完成阶段审查、真实性核验和复审; `1fb2692` 的 Skip 方案已被 `9c0373c` 取代.
+- 当前实施状态: P0-A 至 P0-D Go; P1 的 `json/logger/stats` 已完成独立提交、阶段审查、真实性核验和复审. `1fb2692` 的 Skip 方案已被 `9c0373c` 取代.
 - pkg 最终门禁: Go, Windows/WSL2 clean worktree 的普通、两轮 shuffle、`std_json`、vet 和模块门禁通过; WSL2 五个相关包分包 race 通过.
+- P1 运行包门禁: Go, clean 候选普通/`std_json`/shuffle/vet/模块门禁和 WSL2 定向 race 均通过; 四项目生产兼容为 Go.
 - 一期整体验收状态: Conditional Go, NodeAgent Windows 既有路径测试和长期跨仓 CI 未闭环, 不得宣称四项目双平台全绿.
 - 使用侧调用链: 不变.
 - 公共函数签名和 Pipeline 接口: 不变.
 - 正常生产逻辑: 不变.
 - 测试侧逻辑: 测试助手已变为自包含、离线和可恢复; 现有依赖测试顺序的行为不保留.
-- 后续条件: 跨仓协议继续用于阶段验收, 只有在 CI 能安全取得四个项目时才建设长期自动门禁. P1 优先处理默认 HTTP debug dump 的正文脱敏边界, 再补 `stats/json/logger` 等低覆盖运行包.
+- 后续条件: 跨仓协议继续用于阶段验收, 只有在 CI 能安全取得四个项目时才建设长期自动门禁. HTTP debug dump 正文脱敏按当前决策暂缓; `stats` 已暴露但未由本阶段测试固化的生产债务应按缺陷修复流程独立处理.
 
 ### 11.5 附件审查建议采纳决策
 
@@ -527,6 +551,53 @@ P0 相对 `d9e833f` 修改两处生产 Go 文件. `common/init.go` 新增两个�
 - WSL2 对 `config/common/master/crontab/internal/ntp` 逐包 race 均通过, 无 race 专项豁免或 race 诊断. JSON 复核确认所有 Skip 都是 6 个显式 opt-in 的既有 NTP 在线测试: 5 个公网 smoke 使用 `PKG_ONLINE_TESTS=1`, 认证用例使用 `-args test_auth` 并要求本地认证 NTP 服务. `TestPipelineRuntimeErrorsAreReported` 正常执行, 在同一进程注入内存 zerolog event, 直接验证四条日志/错误文本和 ConfigStage/MainStage 错误后的继续执行.
 - 四项目固定到包含 `master/init.go` 最终生产增量的候选执行 compile-only/build/vet 全部通过, DataRouter、DataPlugins、IPIP 全量测试通过, 四仓零写入. NodeAgent compile-only/build/vet 通过, 因此生产兼容结论不再沿用 `cc4cf33` 的旧结果.
 - NodeAgent Windows 全量仍只失败于既有 `conf.TestValidateAbsPaths` Unix 路径断言; Ubuntu 必须全绿. 该外部项目债务不阻塞 pkg P0, 但阻塞一期宣称四项目 Windows 全绿.
-- `common.loadReq` 在 `ReqDebug=true` 时对默认客户端调用 `EnableDumpAll`, 仍可能输出请求或响应正文. P0 为保持生产逻辑不变不调整该策略, 测试只冻结 debug 开关和元数据可观察性, 不把敏感正文可见性固化为契约; P1 应评审脱敏或禁用正文 dump.
+- `common.loadReq` 在 `ReqDebug=true` 时对默认客户端调用 `EnableDumpAll`, 仍可能输出请求或响应正文. P0 为保持生产逻辑不变不调整该策略, 测试只冻结 debug 开关和元数据可观察性, 不把敏感正文可见性固化为契约; 原 P0 结论建议 P1 评审脱敏或禁用正文 dump, 当前按用户决策暂缓.
 
 最终判定: pkg P0 代码与门禁为 Go; 四项目生产兼容为 Go; 一期跨项目双平台总验收为 Conditional Go.
+
+## 15. P1 低覆盖运行包落地与复审
+
+### 15.1 范围与提交
+
+本阶段只处理 `json/logger/stats` 及 pkg 自身长期 CI. HTTP debug dump 正文脱敏按用户决策暂缓, 没有修改 `common.loadReq`、req debug 配置或相关测试契约.
+
+| 阶段 | 提交 | 真实行为保护 |
+| --- | --- | --- |
+| JSON 双实现 | `884e8b1` | `RawMessage`、codec 错误传播、Must helpers、HTML 转义差异和实现名称 |
+| 日志门面与文件输出 | `ed306bf` | logger/alarm/sampler 全门面字段与级别, 自定义 logger 选项、校验、真实文件 writer 和 Close |
+| 运行统计 | `68020b1` | memory、GC、scheduler、系统、Web、描述、bytes pool、MainStats 和 Redis 未初始化/失败/成功 |
+| 长期 CI | 本阶段收口提交 | Windows/Ubuntu 在普通全模块测试之外执行 `go test -tags=std_json -v ./...` |
+
+所有网络测试只使用本机 fixture. Redis 成功路径由测试内 TCP RESP 服务实现, 不依赖已安装 Redis、外网、固定端口或生产凭据.
+
+### 15.2 生产影响、优势与逻辑变化
+
+- 公共 API、函数签名、配置字段、默认值、import path 及四项目调用链均不变.
+- `json` 和 `stats` 生产源码未修改. 新增 `*_test.go` 不进入下游应用依赖闭包, 不增加生产 goroutine、网络、文件或内存路径.
+- `logger/custom_logger.go` 仅将原构造主体提取为未导出的 `newCustomFileLogger`. 公共 `NewCustomFileLogger` 仍执行相同校验和默认回退, 创建同一 lumberjack writer 和 zerolog level, 安装原 finalizer 并返回相同类型; 生产逻辑和错误文本不变.
+- 双 JSON 实现现在共享同一组语义测试, 可阻止构建标签切换后出现静默差异; CI 会持续编译和运行 `std_json` 全模块路径.
+- 日志门面测试解析结构化 JSON 字段而不是匹配整行, 能稳定拦截 level、hook、context、采样或报警路由退化.
+- stats 使用真实 runtime 数据与最小 RESP 协议覆盖观测链, 同时避免将已经发现的错误行为写成兼容契约.
+
+### 15.3 已确认但未固化的生产债务
+
+以下问题来自当前生产源码, 不是本阶段测试引入. 为避免测试把错误行为固化为契约, 本阶段只登记, 后续按独立缺陷提交补失败用例并修复:
+
+1. `NewCustomFileLogger` 的 finalizer 闭包反向持有包含目标 logger 的 `customLogger`, 不能作为可靠的资源关闭保证; 后续应设计显式 Close 所有权, 但不得在本阶段改变公共签名.
+2. `processFloat64Histogram` 的 `BucketCount` 使用 `len(Buckets)` 而标准桶数量对应 `len(Counts)`; 延迟估算使用 `Buckets[i]` 下界, 与源码注释声称的上界不一致.
+3. `RedisInfo` 对非空、非注释且不含冒号的行直接读取 `items[1]`, 输入异常时可能 panic.
+4. `RedisStats` 将 `common.RedisDB` 强制断言为 `*redis.Client`, 与其公开的 `redis.UniversalClient` 类型边界不一致.
+5. `MainStats` 忽略 `MemoryInfo` 错误后直接读取返回指针, 错误场景可能解引用 nil.
+6. `SYSStatsDesc` 缺少 `SYSStats` 已输出的 `UptimeSecond` 和 `NodeInfo` 描述.
+
+### 15.4 阶段审查与验收
+
+- JSON、logger、stats 每个提交均完成初审、发现真实性判断、必要修复和复审, 最终均为 0 finding. logger 与 stats 的本地最终报告分别为 `.codereview/reports/cr_20260810_logger_final_01.md` 和 `.codereview/reports/cr_20260810_stats_final_01.md`; sidecar 保持 Git 忽略.
+- 当前定向覆盖率为 `json 100%`、`logger 90.3%`、`logger/alarm 100%`、`logger/sampler 100%`、`stats 95.9%`; 默认与 `std_json` 结果一致.
+- `logger` 和 `stats` 的既有债务经源码反事实核验属实, 但修复会改变生产错误边界或资源生命周期, 因而不与测试补齐混提.
+- 本阶段不更新 Understand-Anything 图谱. 理由是没有新增公共 API、跨包依赖、目录结构或调用关系; 稳定测试结论只写入本方案和 Wiki.
+- P1 总初审对 `d38c414..f4e0145` 的 13 个文件执行安全、架构、性能、可靠性和质量五维检查, 结果为 0 finding; 报告为 `.codereview/reports/cr_MSMNG5BNej04w9DQgLo.md`, sidecar `findings_count` 为 0. Context7 因无第三方 API 争议标记为 `NONE`.
+- 最终候选 `40d8727` 完成五维复审, 结果仍为 0 finding; 报告为 `.codereview/reports/cr_MSMNW2LUCxgpx71e1pE.md`. 复审确认初审后的生产/测试代码和 CI 命令未变化, 新增验收事实与真实命令结果一致.
+- clean `f4e0145` 通过 Windows 普通全量、`std_json` 全量、两轮 shuffle、vet、模块验证及 WSL2 `json/logger/.../stats` race. 四项目 compile-only/build/vet 全部通过且零写入, DataRouter/DataPlugins/IPIP 全量通过; NodeAgent 全量只保留既有 Windows 路径断言失败.
+
+最终判定: P1 代码、pkg 门禁、四项目生产兼容及 CI/文档复审均为 Go; 一期跨项目双平台总验收仍为 Conditional Go.
