@@ -79,6 +79,25 @@ func WithMaxBackups(maxBackups int) CustomLoggerOption {
 // 返回一个 *zerolog.Logger 对象, 系统会自动处理关闭操作
 // 将日志写入指定文件并享受全局的日志切割和格式化配置
 func NewCustomFileLogger(opts ...CustomLoggerOption) (*zerolog.Logger, error) {
+	customLogger, err := newCustomFileLogger(opts...)
+	if err != nil {
+		return nil, err
+	}
+	logPtr := customLogger.Logger
+
+	// 保持既有自动关闭语义. 确定性资源生命周期由后续独立改造处理,
+	// 当前提取仅让包内测试可以显式关闭同一构造路径.
+	runtime.SetFinalizer(logPtr, func(l *zerolog.Logger) {
+		_ = customLogger.Close()
+	})
+
+	return logPtr, nil
+}
+
+// newCustomFileLogger 创建带显式 Close 所有权的文件日志记录器.
+// 本函数与公共构造函数共享全部校验、默认值和 writer 逻辑, 但不安装 finalizer;
+// 仅供包内需要确定性管理资源的路径使用, 调用方必须负责调用 Close.
+func newCustomFileLogger(opts ...CustomLoggerOption) (*CustomLogger, error) {
 	// 初始化默认选项
 	defaultCfg := config.Config().LogConf
 	options := &CustomLoggerOptions{
@@ -142,16 +161,8 @@ func NewCustomFileLogger(opts ...CustomLoggerOption) (*zerolog.Logger, error) {
 	l := zerolog.New(wr).With().Timestamp().Caller().Logger().Level(options.level)
 	logPtr := &l
 
-	// 创建内部 CustomLogger 对象用于管理资源
-	customLogger := &CustomLogger{
+	return &CustomLogger{
 		Logger: logPtr,
 		closer: fileWriter,
-	}
-
-	// 设置终结器, 自动关闭资源
-	runtime.SetFinalizer(logPtr, func(l *zerolog.Logger) {
-		_ = customLogger.Close()
-	})
-
-	return logPtr, nil
+	}, nil
 }
