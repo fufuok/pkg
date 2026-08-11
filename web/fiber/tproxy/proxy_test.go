@@ -1,11 +1,21 @@
 package tproxy
 
 import (
+	"os"
 	"testing"
+	"time"
+
+	"github.com/fufuok/ants"
 
 	"github.com/fufuok/pkg/assert"
 	"github.com/fufuok/pkg/xhash"
 )
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	_ = ants.ReleaseTimeout(5 * time.Second)
+	os.Exit(code)
+}
 
 func testXToken() string {
 	xip := "118.118.8.8"
