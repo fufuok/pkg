@@ -67,6 +67,9 @@ type Roller struct {
 	stop chan struct{}
 }
 
+// NewRoller 创建按文件名滚动的写入器.
+// opt 为 nil 时使用默认 maker / logger / 刷新阈值, 避免零间隔 ticker panic.
+// 必须先归一化选项再打开文件并启动刷新协程, 否则首次缓冲大小和 Rebuild 语义都不生效.
 func NewRoller(filename string, opt *Options) (*Roller, error) {
 	if filename == "" {
 		return nil, ErrFilename
@@ -75,19 +78,21 @@ func NewRoller(filename string, opt *Options) (*Roller, error) {
 		name:      filename,
 		firstOpen: true,
 	}
+	r.setup(opt)
 	if err := r.openNewFile(); err != nil {
 		return nil, err
 	}
-	r.setup(opt)
 	r.stop = make(chan struct{}, 1)
 
 	go r.flushTimer()
 	return r, nil
 }
 
+// setup 把公开选项归一化为内部字段.
+// nil Options 与零值字段走同一套默认值, 保证 ticker 和首次 writer 可用.
 func (r *Roller) setup(opt *Options) {
 	if opt == nil {
-		return
+		opt = &Options{}
 	}
 	if opt.FilenameMaker != nil {
 		r.maker = opt.FilenameMaker
@@ -164,10 +169,12 @@ func (r *Roller) WriteString(s string) (int, error) {
 	return r.writer.WriteString(s)
 }
 
+// openNewFile 打开当前目标文件.
+// Rebuild 只在实例启动后的滚动中删除目标; 首次打开必须追加, 避免同日重启丢掉当天日志.
+// 目标尚不存在时的 Remove 失败是预期情况, 不记错误.
 func (r *Roller) openNewFile() error {
 	if r.rebuild && !r.firstOpen {
-		r.firstOpen = false
-		if err := os.Remove(r.name); err != nil {
+		if err := os.Remove(r.name); err != nil && !os.IsNotExist(err) {
 			r.logger.Errorf("rebuild file: %s, err: %v", r.name, err)
 		}
 	}
@@ -175,19 +182,26 @@ func (r *Roller) openNewFile() error {
 	if err != nil {
 		return err
 	}
-	_ = r.file.Close()
+	if r.file != nil {
+		_ = r.file.Close()
+	}
 	r.file = file
 	r.writer = bufio.NewWriterSize(r.file, r.flushSizeLimit)
+	r.firstOpen = false
 	return nil
 }
 
+// Close 刷新剩余缓冲并关闭当前文件, 同时通知刷新协程退出.
+// 调用方必须保证只关闭一次; 重复关闭会再次 close 内部通道.
 func (r *Roller) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.writer != nil {
 		_ = r.writer.Flush()
 	}
-	_ = r.file.Close()
+	if r.file != nil {
+		_ = r.file.Close()
+	}
 	close(r.stop)
 }
 

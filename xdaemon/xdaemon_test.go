@@ -3,6 +3,7 @@ package xdaemon
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -45,7 +46,7 @@ func TestNewSysProcAttr(t *testing.T) {
 }
 
 // TestStartProcWithLog 使用真实测试二进制启动子进程, 验证 stdout 和 stderr
-// 会追加到同一日志文件. 子进程必须等待结束且父进程文件句柄必须显式关闭.
+// 会追加到同一日志文件. startProc 成功后仍由调用方持有日志句柄.
 func TestStartProcWithLog(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "daemon.log")
 	cmd, err := startProc(xdaemonHelperArgs(), xdaemonHelperEnvironment(), logFile)
@@ -53,22 +54,34 @@ func TestStartProcWithLog(t *testing.T) {
 	assert.NotNil(t, cmd)
 
 	waitErr := cmd.Wait()
-	logWriter, ok := cmd.Stdout.(*os.File)
-	var closeErr error
-	if ok {
-		closeErr = logWriter.Close()
-	}
+	_, ok := cmd.Stdout.(*os.File)
 	assert.Nil(t, waitErr)
 	assert.True(t, ok, "startProc must keep the opened log file on stdout")
 	assert.Equal(t, cmd.Stdout, cmd.Stderr)
-	assert.Nil(t, closeErr)
 	assert.NotNil(t, cmd.ProcessState)
 	assert.True(t, cmd.ProcessState.Success())
+	closeCmdLog(cmd)
+	closeCmdLog(cmd)
 
 	output, err := os.ReadFile(logFile)
 	assert.Nil(t, err)
 	assert.True(t, strings.Contains(string(output), xdaemonHelperStdout))
 	assert.True(t, strings.Contains(string(output), xdaemonHelperStderr))
+	assert.Nil(t, os.Remove(logFile))
+}
+
+// TestCloseCmdLog 验证无日志、空指针和重复关闭都是安全 no-op,
+// 且关闭后父进程不再占用该日志文件.
+func TestCloseCmdLog(t *testing.T) {
+	closeCmdLog(nil)
+	closeCmdLog(&exec.Cmd{})
+
+	logFile := filepath.Join(t.TempDir(), "close.log")
+	file, err := os.Create(logFile)
+	assert.Nil(t, err)
+	closeCmdLog(&exec.Cmd{Stdout: file, Stderr: file})
+	closeCmdLog(&exec.Cmd{Stdout: file, Stderr: file})
+	assert.Nil(t, os.Remove(logFile))
 }
 
 // TestStartProcWithoutLog 验证空日志路径仍会真实启动并等待子进程,
@@ -98,6 +111,16 @@ func TestStartProcErrors(t *testing.T) {
 		cmd, err := startProc([]string{missingBinary}, os.Environ(), "")
 		assert.Nil(t, cmd)
 		assert.NotNil(t, err)
+	})
+
+	t.Run("start failure closes log file", func(t *testing.T) {
+		logFile := filepath.Join(t.TempDir(), "start-fail.log")
+		missingBinary := filepath.Join(t.TempDir(), "missing-binary")
+		cmd, err := startProc([]string{missingBinary}, os.Environ(), logFile)
+		assert.Nil(t, cmd)
+		assert.NotNil(t, err)
+		// Windows 上若父进程仍持有该文件, Remove 会失败, 用来证明 Start 失败已关闭句柄.
+		assert.Nil(t, os.Remove(logFile))
 	})
 }
 

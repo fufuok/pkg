@@ -33,7 +33,7 @@ func TestNewRollerValidation(t *testing.T) {
 }
 
 // TestRollerOptionNormalization 通过真实 Roller 验证默认值、最小值和显式选项.
-// nil Options 的既有异常状态不属于公开契约, 不在一期测试中固化.
+// nil Options 与空 Options 走同一套默认值, 不得再触发零间隔 ticker panic.
 func TestRollerOptionNormalization(t *testing.T) {
 	root := t.TempDir()
 	defaults, closeDefaults := newXFileTestRoller(t, filepath.Join(root, "defaults.log"), &Options{})
@@ -68,6 +68,19 @@ func TestRollerOptionNormalization(t *testing.T) {
 	assert.Equal(t, MinFlushSizeLimit+512, explicit.flushSizeLimit)
 	assert.Equal(t, 2*MinFlushInterval, explicit.flushInterval)
 	closeExplicit()
+
+	nilOpts, closeNilOpts := newXFileTestRoller(t, filepath.Join(root, "nil-options.log"), nil)
+	_, nilMaker := nilOpts.maker.(*DefaultFilename)
+	_, nilLogger := nilOpts.logger.(*stdLogger)
+	assert.True(t, nilMaker)
+	assert.True(t, nilLogger)
+	assert.False(t, nilOpts.rebuild)
+	assert.Equal(t, DefaultFlushSizeLimit, nilOpts.flushSizeLimit)
+	assert.Equal(t, DefaultFlushInterval, nilOpts.flushInterval)
+	_, err := nilOpts.WriteString("nil-options")
+	assert.Nil(t, err)
+	closeNilOpts()
+	assert.Equal(t, "nil-options", readXFileTestFile(t, filepath.Join(root, "nil-options.log")))
 }
 
 // TestRollerWriteAndClose 验证 Write 和 WriteString 追加到已有文件,
@@ -180,6 +193,37 @@ func TestRollerRollover(t *testing.T) {
 	assert.Nil(t, err)
 	closeRoller()
 	assert.Equal(t, "second", readXFileTestFile(t, secondFile))
+}
+
+// TestRollerRebuildDeletesOnRollover 验证 Rebuild 首次打开追加已有文件,
+// 后续滚动会删除新目标后再重建, 旧文件内容保持不变.
+func TestRollerRebuildDeletesOnRollover(t *testing.T) {
+	root := t.TempDir()
+	firstFile := filepath.Join(root, "first.log")
+	secondFile := filepath.Join(root, "second.log")
+	writeXFileTestFile(t, firstFile, "keep-first\n")
+	writeXFileTestFile(t, secondFile, "stale-second\n")
+	maker := &scriptedFilenameMaker{next: secondFile}
+	roller, closeRoller := newXFileTestRoller(t, firstFile, &Options{
+		FilenameMaker: maker,
+		Rebuild:       true,
+		FlushInterval: time.Hour,
+	})
+	assert.True(t, roller.rebuild)
+	assert.False(t, roller.firstOpen)
+	assert.Equal(t, "keep-first\n", readXFileTestFile(t, firstFile))
+
+	_, err := roller.WriteString("first-new")
+	assert.Nil(t, err)
+	roller.flush()
+	assert.Equal(t, "keep-first\nfirst-new", readXFileTestFile(t, firstFile))
+	assert.Equal(t, "", readXFileTestFile(t, secondFile))
+
+	_, err = roller.WriteString("second-new")
+	assert.Nil(t, err)
+	closeRoller()
+	assert.Equal(t, "keep-first\nfirst-new", readXFileTestFile(t, firstFile))
+	assert.Equal(t, "second-new", readXFileTestFile(t, secondFile))
 }
 
 // TestRollerReportsIOErrors 验证刷新失败和滚动目标无法创建时调用配置的 Logger,

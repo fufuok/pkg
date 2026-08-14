@@ -108,6 +108,8 @@ func (d *Daemon) Run() {
 
 		// 父进程: 等待子进程退出
 		err = cmd.Wait()
+		// 子进程结束后释放父进程持有的日志句柄, 避免重启循环泄漏 fd
+		closeCmdLog(cmd)
 		dat := time.Now().Unix() - t // 子进程运行秒数
 		if dat < d.MinExitTime {     // 异常退出
 			errNum++
@@ -118,6 +120,8 @@ func (d *Daemon) Run() {
 	}
 }
 
+// startProc 启动子进程, 可选把 stdout/stderr 追加到同一日志文件.
+// 日志打开成功但 Start 失败时必须关闭该文件, 避免父进程泄漏 fd.
 func startProc(args, env []string, logFile string) (*exec.Cmd, error) {
 	cmd := &exec.Cmd{
 		Path:        args[0],
@@ -138,8 +142,22 @@ func startProc(args, env []string, logFile string) (*exec.Cmd, error) {
 
 	err := cmd.Start()
 	if err != nil {
+		closeCmdLog(cmd)
 		return nil, err
 	}
 
 	return cmd, nil
+}
+
+// closeCmdLog 关闭 startProc 为子进程打开的日志文件.
+// 无日志、非 *os.File 或空指针时是 no-op, 可重复调用.
+func closeCmdLog(cmd *exec.Cmd) {
+	if cmd == nil {
+		return
+	}
+	file, ok := cmd.Stdout.(*os.File)
+	if !ok || file == nil {
+		return
+	}
+	_ = file.Close()
 }
