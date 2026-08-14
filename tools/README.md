@@ -118,13 +118,35 @@ testGetenv: REDIS_AUTH = redis12345
 - MD5 只是把任意 `secret` 映射成 32 字节, 不是口令 KDF
 - DataRouter tunnel 也复用这组函数, 相同报文会暴露重复
 
-以后若需要会话加密, 必须新增符号 (例如 `EncryptV2`: 随机 IV + AES-GCM + `crypto/rand`), 不能改旧函数.
+通用加密请使用 `xcrypto.Seal` / `Open` / `SealString` / `OpenString`, 不要改旧函数, 也不要把配置密文交给 `Open`.
 
 ```go
 // 程序中要使用上面示例中的 REDIS_AUTH 一般是:
 redisAuth := xcrypto.GetenvDecrypt("REDIS_AUTH", config.Config().SYSConf.BaseSecretValue)
 fmt.Println(redisAuth) // redis12345
 ```
+
+## 通用 AEAD
+
+`Seal` / `Open` 是新程序的推荐加密入口, 与上面的配置包装完全独立.
+
+- 算法: AES-GCM
+- 密钥: 调用方提供 16 或 32 字节原始密钥, 推荐 32 字节; 不要传口令, 也不要 `MD5Hex(secret)`
+- 输出: `nonce(12) || ciphertext || tag(16)`; 文本层再套 `base64.RawURLEncoding`
+- 同一明文 + 同一密钥每次密文不同, 同一密钥都能解回同一明文
+- 认证失败、密钥长度非法、密文过短都返回 error, 不吞错
+
+```go
+key := make([]byte, xcrypto.AES256KeySize)
+_, err := rand.Read(key)
+sealed, err := xcrypto.Seal([]byte("payload"), key)
+plain, err := xcrypto.Open(sealed, key)
+
+text, err := xcrypto.SealString("redis-password", key)
+plainText, err := xcrypto.OpenString(text, key)
+```
+
+不要用这组函数处理 `BASE_SECRET_KEY` 或现有 env 密文. 需要绑定租户、路由等上下文时再考虑后续 `WithAD`, 不要把上下文拼进 key.
 
 ## 用户名密码编码
 
