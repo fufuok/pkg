@@ -9,7 +9,7 @@ import (
 func TestMerge(t *testing.T) {
 	s1 := make([]int, 0, 10)
 	s2 := make([]int, 0, 10)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		s1 = append(s1, i)
 	}
 	for i := 5; i < 10; i++ {

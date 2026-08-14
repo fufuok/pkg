@@ -89,12 +89,12 @@ func TestRegisterPipelineFrameworkOrder(t *testing.T) {
 	mainItems := getPipelines(MainStage)
 	assert.Equal(t, 3, len(configItems))
 	assert.Equal(t, 3, len(mainItems))
-	assert.True(t, reflect.TypeOf(configItems[0]) == reflect.TypeOf(&config.M{}))
-	assert.True(t, reflect.TypeOf(configItems[1]) == reflect.TypeOf(&common.M{}))
+	assert.True(t, reflect.TypeOf(configItems[0]) == reflect.TypeFor[*config.M]())
+	assert.True(t, reflect.TypeOf(configItems[1]) == reflect.TypeFor[*common.M]())
 	assert.True(t, configItems[2] == businessConfig)
-	assert.True(t, reflect.TypeOf(mainItems[0]) == reflect.TypeOf(&crontab.M{}))
+	assert.True(t, reflect.TypeOf(mainItems[0]) == reflect.TypeFor[*crontab.M]())
 	assert.True(t, mainItems[1] == businessMain)
-	assert.True(t, reflect.TypeOf(mainItems[2]) == reflect.TypeOf(&addons{}))
+	assert.True(t, reflect.TypeOf(mainItems[2]) == reflect.TypeFor[*addons]())
 }
 
 // TestPipelineExecutionOrder 验证启动、两类 Runtime 和整体逆序 Stop 的真实执行顺序.
@@ -241,7 +241,8 @@ func TestStartRemotePipelinesRunsApplicationStages(t *testing.T) {
 	prepareMasterConfig(t)
 	ctx := context.WithValue(context.Background(), masterContextKey{}, "value")
 	var events []string
-	RegisterWithContext(RemoteStage,
+	RegisterWithContext(
+		RemoteStage,
 		func(got context.Context) {
 			assert.Equal(t, "value", got.Value(masterContextKey{}))
 			events = append(events, "first")

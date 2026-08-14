@@ -7,12 +7,12 @@ import (
 
 func BenchmarkGenJsonStandard(b *testing.B) {
 	b.StopTimer()
-	m := make(map[string]interface{})
+	m := make(map[string]any)
 
-	var raw map[string]interface{}
+	var raw map[string]any
 	_ = json.Unmarshal([]byte(jsStr), &raw)
 
-	m1 := make(map[string]interface{})
+	m1 := make(map[string]any)
 	m1["uintkey"] = 123
 	m1["intkey"] = -45
 	m1["floatkey"] = 12.34
@@ -22,11 +22,11 @@ func BenchmarkGenJsonStandard(b *testing.B) {
 	m1["stringkey3"] = `string with "`
 	m1["raw_string"] = raw
 	m1["raw_bytes"] = raw
-	m1["raw_sarr"] = []map[string]interface{}{raw, raw}
-	m1["raw_barr"] = []map[string]interface{}{raw, raw}
+	m1["raw_sarr"] = []map[string]any{raw, raw}
+	m1["raw_barr"] = []map[string]any{raw, raw}
 	m["map1"] = m1
 
-	m2 := make(map[string]interface{})
+	m2 := make(map[string]any)
 	m2["uintarray"] = []uint64{123, 456, 789}
 	m2["intarray"] = []int64{-23, -45, -89}
 	m2["floatarray"] = []float64{12.34, -56.78, 90}
@@ -34,19 +34,19 @@ func BenchmarkGenJsonStandard(b *testing.B) {
 	m2["stringarray"] = []string{"test string", `string with \`, `string with "`}
 	m["map2"] = m2
 
-	m3 := make(map[string]interface{})
+	m3 := make(map[string]any)
 	{
-		a1 := []interface{}{123, -45, 12.34, true, "test string", `string with \`, `string with "`}
-		a2 := []interface{}{[]uint64{123, 456, 789}, []int64{-12, -45, -78}, []float64{12.34, -56.78, 9.0}, []bool{true, false, true}}
-		a3 := []interface{}{
-			map[string]interface{}{
+		a1 := []any{123, -45, 12.34, true, "test string", `string with \`, `string with "`}
+		a2 := []any{[]uint64{123, 456, 789}, []int64{-12, -45, -78}, []float64{12.34, -56.78, 9.0}, []bool{true, false, true}}
+		a3 := []any{
+			map[string]any{
 				"uintkey":   123,
 				"intkey":    -456,
 				"floatkey":  12.34,
 				"boolkey":   true,
 				"stringkey": "test string",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"uintkey":   455,
 				"intkey":    -789,
 				"floatkey":  56.78,
@@ -59,17 +59,17 @@ func BenchmarkGenJsonStandard(b *testing.B) {
 		m3["array3"] = a3
 	}
 	{
-		a1 := []interface{}{123, -45, 12.34, true, "test string", `string with \`, `string with "`}
-		a2 := []interface{}{[]uint64{123, 456, 789}, []int64{-12, -45, -78}, []float64{12.34, -56.78, 9.0}, []bool{true, false, true}}
-		a3 := []interface{}{
-			map[string]interface{}{
+		a1 := []any{123, -45, 12.34, true, "test string", `string with \`, `string with "`}
+		a2 := []any{[]uint64{123, 456, 789}, []int64{-12, -45, -78}, []float64{12.34, -56.78, 9.0}, []bool{true, false, true}}
+		a3 := []any{
+			map[string]any{
 				"uintkey":   123,
 				"intkey":    -456,
 				"floatkey":  12.34,
 				"boolkey":   true,
 				"stringkey": "test string",
 			},
-			map[string]interface{}{
+			map[string]any{
 				"uintkey":   455,
 				"intkey":    -789,
 				"floatkey":  56.78,
@@ -77,7 +77,7 @@ func BenchmarkGenJsonStandard(b *testing.B) {
 				"stringkey": `string with \`,
 			},
 		}
-		m3["array4"] = []interface{}{a1, a2, a3}
+		m3["array4"] = []any{a1, a2, a3}
 	}
 	m["map3"] = m3
 

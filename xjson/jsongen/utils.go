@@ -90,7 +90,8 @@ func AppendJSONString(dst []byte, s string) []byte {
 }
 
 func appendHex16(dst []byte, x uint16) []byte {
-	return append(dst,
+	return append(
+		dst,
 		hexchars[x>>12&0xF], hexchars[x>>8&0xF],
 		hexchars[x>>4&0xF], hexchars[x>>0&0xF],
 	)

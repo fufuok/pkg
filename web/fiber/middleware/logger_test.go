@@ -18,7 +18,6 @@ func TestWebLoggerPropagatesRouteNotFound(t *testing.T) {
 
 	req := httptest.NewRequest(fiber.MethodGet, "/api/missing", nil)
 	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
-
 	if err != nil {
 		t.Fatalf("app.Test() error = %v", err)
 	}
@@ -38,7 +37,6 @@ func TestWebLoggerPropagatesMethodNotAllowed(t *testing.T) {
 
 	req := httptest.NewRequest(fiber.MethodPost, "/api/ok", nil)
 	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
-
 	if err != nil {
 		t.Fatalf("app.Test() error = %v", err)
 	}
@@ -62,7 +60,6 @@ func TestWebLoggerPropagatesHandlerError(t *testing.T) {
 
 	req := httptest.NewRequest(fiber.MethodGet, "/err", nil)
 	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
-
 	if err != nil {
 		t.Fatalf("app.Test() error = %v", err)
 	}

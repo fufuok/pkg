@@ -231,7 +231,6 @@ func (reg *registry[T, M]) sendNoWait(topic T, msg M) {
 			}
 		default:
 		}
-
 	}
 }
 

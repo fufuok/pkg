@@ -62,10 +62,7 @@ func Chunk[T any, S ~[]T](ss S, size int) []S {
 
 	res := make([]S, 0, num)
 	for i := 0; i < num; i++ {
-		last := (i + 1) * size
-		if last > length {
-			last = length
-		}
+		last := min((i+1)*size, length)
 		res = append(res, ss[i*size:last:last])
 	}
 	return res

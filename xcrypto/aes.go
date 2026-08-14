@@ -138,21 +138,25 @@ func AesCBCDePKCS7B64(s string, key []byte) []byte {
 	return AesCBCDecrypt(true, utils.B64UrlDecode(s), key)
 }
 
-// AesCBCEncrypt AES-CBC 加密
+// AesCBCEncrypt AES-CBC 加密, 忽略底层错误.
+// Encrypt 走 Zeros padding 且不传 IV, 失败时返回空切片.
 func AesCBCEncrypt(asPKCS7 bool, plaintext, key []byte, ivs ...[]byte) (ciphertext []byte) {
 	ciphertext, _ = AesCBCEncryptE(asPKCS7, plaintext, key, ivs...)
 	return
 }
 
-// AesCBCDecrypt AES-CBC 解密
+// AesCBCDecrypt AES-CBC 解密, 忽略底层错误.
+// Decrypt 走 Zeros padding 且不传 IV, 失败时返回空切片.
 func AesCBCDecrypt(asPKCS7 bool, ciphertext, key []byte, ivs ...[]byte) (plaintext []byte) {
 	plaintext, _ = AesCBCDecryptE(asPKCS7, ciphertext, key, ivs...)
 	return
 }
 
-// AesCBCEncryptE AES-CBC 加密, 密码分组链接模式 (Cipher Block Chaining (CBC))
-// key 长度分别是 16 (AES-128), 24 (AES-192?), 32 (AES-256?)
-// asPKCS7: false (ZerosPadding), true (Pkcs7Padding)
+// AesCBCEncryptE AES-CBC 加密, 密码分组链接模式 (Cipher Block Chaining (CBC)).
+// key 长度必须是 16 / 24 / 32; 非法长度返回错误.
+// asPKCS7: false 为 ZerosPadding, true 为 Pkcs7Padding.
+// 未传 IV 或 IV 长度不等于 BlockSize 时使用 key[:blockSize].
+// Encrypt 固定走 ZerosPadding 且不传 IV, 该默认值是已发布密文契约.
 func AesCBCEncryptE(asPKCS7 bool, plaintext, key []byte, ivs ...[]byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -184,7 +188,9 @@ func AesCBCEncryptE(asPKCS7 bool, plaintext, key []byte, ivs ...[]byte) ([]byte,
 	return ciphertext, nil
 }
 
-// AesCBCDecryptE AES-CBC 解密, 密码分组链接模式 (Cipher Block Chaining (CBC))
+// AesCBCDecryptE AES-CBC 解密, 密码分组链接模式 (Cipher Block Chaining (CBC)).
+// IV 规则与 AesCBCEncryptE 相同. Zeros padding 去不掉明文末尾的 0x00;
+// 全零块依赖 recover 避免 UnPadding 越界, 调用方仍应把空结果当失败.
 func AesCBCDecryptE(asPKCS7 bool, ciphertext, key []byte, ivs ...[]byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -215,7 +221,8 @@ func AesCBCDecryptE(asPKCS7 bool, ciphertext, key []byte, ivs ...[]byte) ([]byte
 	return plaintext, nil
 }
 
-// Padding 填充
+// Padding 按块大小填充.
+// Encrypt 使用 ZerosPadding: 已对齐时不追加整块, 明文末尾 0x00 解密后无法区分.
 func Padding(b []byte, bSize int, pkcs7 bool) []byte {
 	if pkcs7 {
 		n := bSize - len(b)%bSize
@@ -231,7 +238,8 @@ func Padding(b []byte, bSize int, pkcs7 bool) []byte {
 	}
 }
 
-// UnPadding 去除填充
+// UnPadding 去掉填充.
+// ZerosPadding 从末尾剥离 0x00, 全零输入会越界, 由上层 recover 转成空结果.
 func UnPadding(b []byte, pkcs7 bool) []byte {
 	if pkcs7 {
 		l := len(b)

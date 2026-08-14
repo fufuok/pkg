@@ -77,7 +77,7 @@ func TestIsNil(t *testing.T) {
 	Nil(t, slice3)
 	NotNil(t, slice4)
 
-	var iface1 interface{}
+	var iface1 any
 	Nil(t, iface1)
 	iface1 = nil
 	Nil(t, iface1)
@@ -85,20 +85,20 @@ func TestIsNil(t *testing.T) {
 	Nil(t, iface1)
 	iface1 = map2
 	NotNil(t, iface1)
-	var iface2 interface{} = (*int)(nil)
+	var iface2 any = (*int)(nil)
 	Nil(t, iface2)
 
 	var eface1 error
 	Nil(t, eface1)
 	eface2 := new(error)
 	NotNil(t, eface2)
-	var iface3 interface{} = eface1
+	var iface3 any = eface1
 	Nil(t, iface3)
 
 	var ptr *int
 	Nil(t, ptr)
 
-	var iface4 interface{} = ptr
+	var iface4 any = ptr
 	Nil(t, iface4)
 	// Equal(t, false, iface4 == nil) // go1.16.4
 
@@ -122,7 +122,7 @@ func TestIsNil(t *testing.T) {
 
 	var s string
 	NotNil(t, s)
-	var iface5 interface{} = s
+	var iface5 any = s
 	NotNil(t, iface5)
 
 	var n unsafe.Pointer = nil

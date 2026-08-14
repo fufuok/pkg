@@ -11,9 +11,9 @@ import (
 	"time"
 )
 
-func j(js interface{}) string {
-	var v interface{}
-	if err := json.Unmarshal([]byte(fmt.Sprintf("%s", js)), &v); err != nil {
+func j(js any) string {
+	var v any
+	if err := json.Unmarshal(fmt.Appendf(nil, "%s", js), &v); err != nil {
 		fmt.Printf(">>%s<<\n", js)
 		panic(err)
 	}
@@ -44,7 +44,7 @@ var example1 = []byte(`
 
 var example2 = `[ 0, 10, 10.10, true, false, null, "hello \" "]`
 
-func assertEqual(t *testing.T, a, b interface{}) {
+func assertEqual(t *testing.T, a, b any) {
 	t.Helper()
 	if !reflect.DeepEqual(a, b) {
 		t.Fatalf("Not equal\n\t'%v'\n\t'%v'", a, b)
@@ -80,13 +80,14 @@ func TestUgly(t *testing.T) {
 
 func TestRandom(t *testing.T) {
 	rand.Seed(time.Now().UnixNano())
-	for i := 0; i < 100000; i++ {
+	for range 100000 {
 		b := make([]byte, 1024)
 		rand.Read(b)
 		Pretty(b)
 		Ugly(b)
 	}
 }
+
 func TestBig(t *testing.T) {
 	json := `[
   {
@@ -404,6 +405,7 @@ func BenchmarkPrettySortKeys(t *testing.B) {
 		PrettyOptions(example1, &opts)
 	}
 }
+
 func BenchmarkUgly(t *testing.B) {
 	t.ReportAllocs()
 	t.ResetTimer()

@@ -1,7 +1,7 @@
 package myip
 
 import (
-	"io/ioutil"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -107,7 +107,7 @@ func getAPI(u string) (string, bool) {
 		_ = resp.Body.Close()
 	}()
 
-	b, err := ioutil.ReadAll(resp.Body)
+	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", false
 	}

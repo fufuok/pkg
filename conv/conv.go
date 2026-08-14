@@ -50,7 +50,7 @@ func Ttoa(t bool) string {
 }
 
 // Ttov converts bool to any
-func Ttov(t bool) interface{} {
+func Ttov(t bool) any {
 	return t
 }
 
@@ -135,7 +135,7 @@ func Ftoa(f float64) string {
 }
 
 // Ftov converts float64 to any
-func Ftov(f float64) interface{} {
+func Ftov(f float64) any {
 	return f
 }
 
@@ -167,7 +167,7 @@ func Itoa(i int64) string {
 }
 
 // Itov converts int64 to any
-func Itov(i int64) interface{} {
+func Itov(i int64) any {
 	return i
 }
 
@@ -199,7 +199,7 @@ func Utoa(u uint64) string {
 }
 
 // Utov converts uint64 to any
-func Utov(u uint64) interface{} {
+func Utov(u uint64) any {
 	return u
 }
 
@@ -277,7 +277,7 @@ func Atou(a string) uint64 {
 }
 
 // Atov converts string to any
-func Atov(a string) interface{} {
+func Atov(a string) any {
 	return a
 }
 
@@ -286,7 +286,7 @@ func Atov(a string) interface{} {
 // /////////////////////////////////////////
 
 // Vtot converts any to bool
-func Vtot(v interface{}) bool {
+func Vtot(v any) bool {
 	switch v := v.(type) {
 	case bool:
 		return v
@@ -336,7 +336,7 @@ func Vtot(v interface{}) bool {
 }
 
 // Vtof converts any to float64
-func Vtof(v interface{}) float64 {
+func Vtof(v any) float64 {
 	switch v := v.(type) {
 	case bool:
 		return Ttof(v)
@@ -386,7 +386,7 @@ func Vtof(v interface{}) float64 {
 }
 
 // Vtoi converts any to int64
-func Vtoi(v interface{}) int64 {
+func Vtoi(v any) int64 {
 	switch v := v.(type) {
 	case bool:
 		return Ttoi(v)
@@ -436,7 +436,7 @@ func Vtoi(v interface{}) int64 {
 }
 
 // Vtou converts any to uint64
-func Vtou(v interface{}) uint64 {
+func Vtou(v any) uint64 {
 	switch v := v.(type) {
 	case bool:
 		return Ttou(v)
@@ -486,7 +486,7 @@ func Vtou(v interface{}) uint64 {
 }
 
 // Vtoa converts any to string
-func Vtoa(v interface{}) string {
+func Vtoa(v any) string {
 	switch v := v.(type) {
 	case bool:
 		return Ttoa(v)

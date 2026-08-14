@@ -67,7 +67,7 @@ func TestGenJSON(t *testing.T) {
 	js.PutString("zh", "中　\n > < & %  Fufu \r \t 文\\u2728->?\\n*\\U0001F63A   \"")
 	bs := js.Serialize(nil)
 	t.Log("==", string(bs), "==")
-	var v map[string]interface{}
+	var v map[string]any
 	if err := json.Unmarshal(bs, &v); err != nil {
 		t.Fatal("Invalid JSON")
 	}
@@ -170,7 +170,7 @@ func TestArrayValue(t *testing.T) {
 			t.Errorf("array name:%s buf size error, actual:%d, expected:%d", c.name, len(data), c.value.Size())
 		}
 
-		var obj []interface{}
+		var obj []any
 		if err := json.Unmarshal(data, &obj); err != nil {
 			t.Errorf("array name:%s unmarshal error:%v", c.name, err)
 		}
@@ -271,7 +271,7 @@ func TestMapValue(t *testing.T) {
 			t.Errorf("map name:%s buf size error, actual:%d, expected:%d", c.name, len(data), c.value.Size())
 		}
 
-		var obj map[string]interface{}
+		var obj map[string]any
 		if err := json.Unmarshal(data, &obj); err != nil {
 			t.Errorf("map name:%s unmarshal error:%v", c.name, err)
 		}
@@ -299,7 +299,7 @@ func TestBoundaryMapArray(t *testing.T) {
 	if string(bs) != want {
 		t.Fatalf("actual(%s) != expected(%s)", string(bs), want)
 	}
-	var s []interface{}
+	var s []any
 	if err := json.Unmarshal(bs, &s); err != nil {
 		t.Fatal("Invalid JSON")
 	}
@@ -326,7 +326,7 @@ func TestNestedMapArray(t *testing.T) {
 	// [[3.14,-1],["\"中",[true,"b"]],{"n":"1","a":["\"中",[true,"b"]]}]
 	bs := arr.Serialize(nil)
 	t.Log(string(bs))
-	var s []interface{}
+	var s []any
 	if err := json.Unmarshal(bs, &s); err != nil {
 		t.Fatal("Invalid JSON")
 	}
@@ -337,7 +337,7 @@ func TestNestedMapArray(t *testing.T) {
 	m.PutMap("m", m5)
 	m.PutArray("a", arr)
 	bs = m.Serialize(nil)
-	var v map[string]interface{}
+	var v map[string]any
 	if err := json.Unmarshal(bs, &v); err != nil {
 		t.Fatal("Invalid JSON")
 	}

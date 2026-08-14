@@ -11,7 +11,7 @@
 
 这个环境变量存放经过加密的基础密钥.
 
-程序运行时, 由程序固化的密钥解密环境变量得到您设定的原始密钥, 其他加密变量都使用解密后的原始密钥再加密. 如: 
+程序运行时, 由程序固化的密钥解密环境变量得到您设定的原始密钥, 其他加密变量都使用解密后的原始密钥再加密. 如:
 
 ```go
 # go run main.go -base="FF~~666" -appname="FF.YourAPP"
@@ -97,6 +97,28 @@ testGetenv: REDIS_AUTH = redis12345
 ```
 
 **注意: 先要把加密后的基础密钥设置到环境变量中, 然后观察结果第一行显示的基础密钥是否与您预想的一致.**
+
+## 现有加解密边界
+
+`xcrypto.Encrypt` / `Decrypt` / `GetenvDecrypt` / `SetenvEncrypt` 是 pkg 和应用初始化密钥的唯一底层实现. 现有输出已冻结, 不要改算法、IV、padding 或编码.
+
+实现路径:
+
+1. `secret` 做 `MD5Hex`, 得到 32 字节 AES-256 密钥
+2. AES-CBC, Zeros padding
+3. 未传 IV 时使用 `key[:16]`
+4. 输出 base58
+5. `secret` 为空时原样返回明文
+
+已知边界:
+
+- 这是确定性配置包装, 不是通用加密, 也不是 AEAD. 同一明文+同一密钥永远同一密文
+- 密文被改或密钥错误时不会明确报错, 通常得到空串或不可用明文; `config` 只拒绝解出空的 `BASE_SECRET_KEY`
+- Zeros padding 去不掉明文末尾的 `0x00`
+- MD5 只是把任意 `secret` 映射成 32 字节, 不是口令 KDF
+- DataRouter tunnel 也复用这组函数, 相同报文会暴露重复
+
+以后若需要会话加密, 必须新增符号 (例如 `EncryptV2`: 随机 IV + AES-GCM + `crypto/rand`), 不能改旧函数.
 
 ```go
 // 程序中要使用上面示例中的 REDIS_AUTH 一般是:

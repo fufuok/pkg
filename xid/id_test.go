@@ -64,11 +64,11 @@ func TestIDPartsExtraction(t *testing.T) {
 }
 
 func TestPadding(t *testing.T) {
-	for i := 0; i < 100000; i++ {
+	for range 100000 {
 		wantBytes := make([]byte, 20)
 		wantBytes[19] = encoding[0]                       // 0
 		copy(wantBytes[0:13], []byte("c6e52g2mrqcjl")[:]) // c6e52g2mrqcjl44hf170
-		for j := 0; j < 6; j++ {
+		for j := range 6 {
 			wantBytes[13+j] = encoding[rand.Intn(32)]
 		}
 		want := string(wantBytes)
@@ -83,7 +83,7 @@ func TestPadding(t *testing.T) {
 func TestNew(t *testing.T) {
 	// Generate 10 ids
 	ids := make([]ID, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		ids[i] = New()
 	}
 	for i := 1; i < 10; i++ {
@@ -362,7 +362,6 @@ func TestID_IsNil(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			if got, want := tt.id.IsNil(), tt.want; got != want {
 				t.Errorf("IsNil() = %v, want %v", got, want)

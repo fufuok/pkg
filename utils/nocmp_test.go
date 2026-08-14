@@ -30,7 +30,7 @@ import (
 func TestNoCmpComparability(t *testing.T) {
 	tests := []struct {
 		desc       string
-		give       interface{}
+		give       any
 		comparable bool
 	}{
 		{
@@ -63,14 +63,14 @@ func TestNoCmpComparability(t *testing.T) {
 func TestNoCmpSize(t *testing.T) {
 	type x struct{ _ int }
 
-	before := reflect.TypeOf(x{}).Size()
+	before := reflect.TypeFor[x]().Size()
 
 	type y struct {
 		_ NoCmp
 		_ x
 	}
 
-	after := reflect.TypeOf(y{}).Size()
+	after := reflect.TypeFor[y]().Size()
 
 	assert.Equal(t, before, after,
 		"expected NoCmp to have no effect on struct size")

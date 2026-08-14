@@ -12,7 +12,7 @@ import (
 	"text/tabwriter"
 )
 
-func True(tb testing.TB, value bool, msgAndArgs ...interface{}) {
+func True(tb testing.TB, value bool, msgAndArgs ...any) {
 	if tb != nil {
 		tb.Helper()
 	}
@@ -23,7 +23,7 @@ func True(tb testing.TB, value bool, msgAndArgs ...interface{}) {
 	assertLog(tb, nil, value, "True", result, msgAndArgs...)
 }
 
-func False(tb testing.TB, value bool, msgAndArgs ...interface{}) {
+func False(tb testing.TB, value bool, msgAndArgs ...any) {
 	if tb != nil {
 		tb.Helper()
 	}
@@ -34,7 +34,7 @@ func False(tb testing.TB, value bool, msgAndArgs ...interface{}) {
 	assertLog(tb, nil, value, "False", result, msgAndArgs...)
 }
 
-func NotNil(tb testing.TB, value interface{}, msgAndArgs ...interface{}) {
+func NotNil(tb testing.TB, value any, msgAndArgs ...any) {
 	if tb != nil {
 		tb.Helper()
 	}
@@ -45,7 +45,7 @@ func NotNil(tb testing.TB, value interface{}, msgAndArgs ...interface{}) {
 	assertLog(tb, nil, value, "NotNil", result, msgAndArgs...)
 }
 
-func Nil(tb testing.TB, value interface{}, msgAndArgs ...interface{}) {
+func Nil(tb testing.TB, value any, msgAndArgs ...any) {
 	if tb != nil {
 		tb.Helper()
 	}
@@ -56,7 +56,7 @@ func Nil(tb testing.TB, value interface{}, msgAndArgs ...interface{}) {
 	assertLog(tb, nil, value, "Nil", result, msgAndArgs...)
 }
 
-func NotEmpty(tb testing.TB, value interface{}, msgAndArgs ...interface{}) {
+func NotEmpty(tb testing.TB, value any, msgAndArgs ...any) {
 	if tb != nil {
 		tb.Helper()
 	}
@@ -67,7 +67,7 @@ func NotEmpty(tb testing.TB, value interface{}, msgAndArgs ...interface{}) {
 	assertLog(tb, nil, value, "NotEmpty", result, msgAndArgs...)
 }
 
-func Empty(tb testing.TB, value interface{}, msgAndArgs ...interface{}) {
+func Empty(tb testing.TB, value any, msgAndArgs ...any) {
 	if tb != nil {
 		tb.Helper()
 	}
@@ -90,7 +90,7 @@ func Contains(tb testing.TB, value string, msgAndArgs ...string) {
 	}
 }
 
-func NotEqual(tb testing.TB, expected, actual interface{}, msgAndArgs ...interface{}) {
+func NotEqual(tb testing.TB, expected, actual any, msgAndArgs ...any) {
 	if tb != nil {
 		tb.Helper()
 	}
@@ -103,7 +103,7 @@ func NotEqual(tb testing.TB, expected, actual interface{}, msgAndArgs ...interfa
 
 // Equal checks if values are equal
 // Ref: gofiber/utils
-func Equal(tb testing.TB, expected, actual interface{}, msgAndArgs ...interface{}) {
+func Equal(tb testing.TB, expected, actual any, msgAndArgs ...any) {
 	if tb != nil {
 		tb.Helper()
 	}
@@ -113,7 +113,7 @@ func Equal(tb testing.TB, expected, actual interface{}, msgAndArgs ...interface{
 	assertLog(tb, expected, actual, "Equal", "", msgAndArgs...)
 }
 
-func assertLog(tb testing.TB, a, b interface{}, testType, result string, msgAndArgs ...interface{}) {
+func assertLog(tb testing.TB, a, b any, testType, result string, msgAndArgs ...any) {
 	if tb != nil {
 		testType = fmt.Sprintf("%s(%s)", tb.Name(), testType)
 	}
@@ -159,7 +159,7 @@ func assertLog(tb testing.TB, a, b interface{}, testType, result string, msgAndA
 }
 
 // Ref: stretchr/testify
-func messageFromMsgAndArgs(msgAndArgs ...interface{}) string {
+func messageFromMsgAndArgs(msgAndArgs ...any) string {
 	if len(msgAndArgs) == 0 || msgAndArgs == nil {
 		return ""
 	}
@@ -191,7 +191,7 @@ func Panics(t *testing.T, title string, f func()) {
 }
 
 // DeepEqual Ref: stretchr/testify
-func DeepEqual(expected, actual interface{}) bool {
+func DeepEqual(expected, actual any) bool {
 	if expected == nil || actual == nil {
 		return expected == actual
 	}
@@ -230,7 +230,7 @@ func DeepEqual(expected, actual interface{}) bool {
 //	判断 data 指针为 0 即为 nil, 初始化后即非 0
 //
 // Ref: stretchr/testify
-func IsNil(o interface{}) bool {
+func IsNil(o any) bool {
 	if o == nil {
 		return true
 	}
@@ -241,9 +241,10 @@ func IsNil(o interface{}) bool {
 		[]reflect.Kind{
 			reflect.Chan, reflect.Func,
 			reflect.Interface, reflect.Map,
-			reflect.Ptr, reflect.Slice, reflect.UnsafePointer,
+			reflect.Pointer, reflect.Slice, reflect.UnsafePointer,
 		},
-		kind)
+		kind,
+	)
 
 	if isNilableKind && value.IsNil() {
 		return true
@@ -255,7 +256,7 @@ func IsNil(o interface{}) bool {
 // containsKind checks if a specified kind in the slice of kinds.
 // Ref: stretchr/testify
 func containsKind(kinds []reflect.Kind, kind reflect.Kind) bool {
-	for i := 0; i < len(kinds); i++ {
+	for i := range kinds {
 		if kind == kinds[i] {
 			return true
 		}
@@ -266,7 +267,7 @@ func containsKind(kinds []reflect.Kind, kind reflect.Kind) bool {
 
 // IsEmpty gets whether the specified object is considered empty or not.
 // Ref: stretchr/testify
-func IsEmpty(o interface{}) bool {
+func IsEmpty(o any) bool {
 	// get nil case out of the way
 	if o == nil {
 		return true
@@ -278,7 +279,7 @@ func IsEmpty(o interface{}) bool {
 	case reflect.Chan, reflect.Map, reflect.Slice:
 		return v.Len() == 0
 	// pointers are empty if nil or if the value they point to is empty
-	case reflect.Ptr:
+	case reflect.Pointer:
 		if v.IsNil() {
 			return true
 		}

@@ -379,3 +379,33 @@ func TestAesCBCDecryptPKCS7(t *testing.T) {
 	)
 	assert.Equal(t, expected, utils.B2S(actual))
 }
+
+// BenchmarkEnDeAesCBC 保留 Zeros padding 往返基准, 不作为公开契约.
+func BenchmarkEnDeAesCBC(b *testing.B) {
+	src := make([]byte, len(tmpB)*10)
+	for i := range 10 {
+		copy(src[i*len(tmpB):], tmpB)
+	}
+	key := tmpK
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		res := AesCBCEncrypt(false, src, key)
+		AesCBCDecrypt(false, res, key)
+	}
+}
+
+// BenchmarkEnDeAesCBCB64 保留 URL-safe Base64 包装往返基准, 不作为公开契约.
+func BenchmarkEnDeAesCBCB64(b *testing.B) {
+	src := make([]byte, len(tmpB)*10)
+	for i := range 10 {
+		copy(src[i*len(tmpB):], tmpB)
+	}
+	key := tmpK
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		res := AesCBCEnB64(src, key)
+		AesCBCDeB64(res, key)
+	}
+}

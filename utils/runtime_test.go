@@ -11,7 +11,7 @@ import (
 
 func TestSafeGo(t *testing.T) {
 	type recoveryResult struct {
-		err   interface{}
+		err   any
 		trace []byte
 	}
 
@@ -19,7 +19,7 @@ func TestSafeGo(t *testing.T) {
 	assertRecovery := func(start func(RecoveryCallback)) {
 		t.Helper()
 		result := make(chan recoveryResult, 1)
-		start(func(err interface{}, trace []byte) {
+		start(func(err any, trace []byte) {
 			result <- recoveryResult{err: err, trace: trace}
 		})
 
@@ -48,7 +48,7 @@ var (
 	testFn3 = func(ctx context.Context) {
 		testFn1()
 	}
-	testFn4 = func(args interface{}) {
+	testFn4 = func(args any) {
 		testFn1()
 	}
 )

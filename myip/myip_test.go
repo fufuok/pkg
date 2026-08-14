@@ -57,7 +57,8 @@ func TestGetAPI(t *testing.T) {
 // TestExternalIPSelection 验证严格地址族过滤、默认 IPv4 和显式 IPv6 分派.
 func TestExternalIPSelection(t *testing.T) {
 	server := newIPFixtureServer(t, nil)
-	setExternalIPAPIs(t,
+	setExternalIPAPIs(
+		t,
 		[]string{server.URL + "/ipv6", server.URL + "/invalid", server.URL + "/ipv4"},
 		[]string{server.URL + "/ipv4", server.URL + "/invalid", server.URL + "/ipv6"},
 	)

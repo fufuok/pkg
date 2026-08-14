@@ -8,7 +8,7 @@ import (
 )
 
 func TestBufferPool(t *testing.T) {
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		want := fmt.Sprintf("test%d", i)
 		buf := Get()
 		buf.WriteString("test")

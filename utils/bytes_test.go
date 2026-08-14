@@ -10,7 +10,7 @@ import (
 
 func TestGetBytes(t *testing.T) {
 	for _, v := range []struct {
-		in  interface{}
+		in  any
 		def []byte
 		out []byte
 	}{

@@ -9,7 +9,7 @@ import (
 
 func TestUUIDString(t *testing.T) {
 	m := make(map[string]bool)
-	for i := 0; i < 10000; i++ {
+	for range 10000 {
 		id := UUIDString()
 		if m[id] {
 			t.Error("duplicated UUID:", id)

@@ -36,7 +36,7 @@ func NewRand(seed ...int64) *rand.Rand {
 	}
 	src := &rngSource{
 		p: sync.Pool{
-			New: func() interface{} {
+			New: func() any {
 				return rand.NewSource(n)
 			},
 		},

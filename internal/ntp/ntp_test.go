@@ -407,11 +407,7 @@ func TestOfflineMinError(t *testing.T) {
 						error1 = xmt - dst
 					}
 					var minError time.Duration
-					if error0 > error1 {
-						minError = error0
-					} else {
-						minError = error1
-					}
+					minError = max(error0, error1)
 					assert.Equal(t, r.MinError, minError)
 				}
 			}
@@ -532,7 +528,7 @@ func TestOfflineTimeConversions(t *testing.T) {
 	nowNtp := toNtpTime(time.Now())
 	now := nowNtp.Time()
 	startNow := now
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		nowNtp = toNtpTime(now)
 		now = nowNtp.Time()
 	}

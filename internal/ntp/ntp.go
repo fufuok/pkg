@@ -572,10 +572,7 @@ func getTime(address string, opt *QueryOptions) (*header, ntpTime, error) {
 	// Keep track of the time the response was received. As of go 1.9, the
 	// time package uses a monotonic clock, so delta will never be less than
 	// zero for go version 1.9 or higher.
-	delta := time.Since(xmitTime)
-	if delta < 0 {
-		delta = 0
-	}
+	delta := max(time.Since(xmitTime), 0)
 	recvTime := xmitTime.Add(delta)
 
 	// Parse the response header.
@@ -738,10 +735,7 @@ func generateResponse(h *header, recvTime ntpTime, authErr error) *Response {
 func rtt(org, rec, xmt, dst ntpTime) time.Duration {
 	a := int64(dst - org)
 	b := int64(xmt - rec)
-	rtt := a - b
-	if rtt < 0 {
-		rtt = 0
-	}
+	rtt := max(a-b, 0)
 	return ntpTime(rtt).Duration()
 }
 

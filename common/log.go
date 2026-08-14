@@ -167,7 +167,8 @@ func newLogger() (err error) {
 				MaxBackups: cfg.MaxBackups,
 				LocalTime:  true,
 				Compress:   true,
-			})
+			},
+		)
 		if err != nil {
 			return err
 		}

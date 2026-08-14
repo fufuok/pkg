@@ -25,7 +25,7 @@ const (
 )
 
 // GetString 获取字符串结果, 可选指定默认值
-func GetString(v interface{}, defaultVal ...string) string {
+func GetString(v any, defaultVal ...string) string {
 	s := MustString(v)
 	if s == "" && len(defaultVal) > 0 {
 		return defaultVal[0]
@@ -163,7 +163,7 @@ func TrimSlice(ss []string) []string {
 func ToLower(b string) string {
 	res := make([]byte, len(b))
 	copy(res, b)
-	for i := 0; i < len(res); i++ {
+	for i := range res {
 		res[i] = toLowerTable[res[i]]
 	}
 
@@ -175,7 +175,7 @@ func ToLower(b string) string {
 func ToUpper(b string) string {
 	res := make([]byte, len(b))
 	copy(res, b)
-	for i := 0; i < len(res); i++ {
+	for i := range res {
 		res[i] = toUpperTable[res[i]]
 	}
 
@@ -240,8 +240,8 @@ func EqualFold(b, s string) bool {
 // If sep does not appear in s, cut returns s, "", false.
 // Ref: go1.18
 func CutString(s, sep string) (before, after string, found bool) {
-	if i := strings.Index(s, sep); i >= 0 {
-		return s[:i], s[i+len(sep):], true
+	if before0, after0, ok := strings.Cut(s, sep); ok {
+		return before0, after0, true
 	}
 	return s, "", false
 }
@@ -378,9 +378,9 @@ func LastString(s, sep string, defaultStr ...string) string {
 
 // FirstString 获取文本内容第一个分隔符(单字节: sep[0])前的内容
 func FirstString(s, sep string, defaultStr ...string) string {
-	idx := strings.Index(s, sep)
-	if idx != -1 {
-		return s[:idx]
+	before, _, ok := strings.Cut(s, sep)
+	if ok {
+		return before
 	}
 	if len(defaultStr) > 0 {
 		return defaultStr[0]

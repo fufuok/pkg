@@ -16,7 +16,7 @@ var (
 
 func TestGetString(t *testing.T) {
 	for _, v := range []struct {
-		in  interface{}
+		in  any
 		def string
 		out string
 	}{

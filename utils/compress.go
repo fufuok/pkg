@@ -3,7 +3,7 @@ package utils
 import (
 	"compress/gzip"
 	"compress/zlib"
-	"io/ioutil"
+	"io"
 	"sync"
 
 	"github.com/fufuok/pkg/pools/bufferpool"
@@ -14,7 +14,7 @@ var (
 	gzipWritePool  = newGzipWriterPool()
 	zlibWritePool  = newZlibWriterPool()
 	gzipReaderPool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return new(gzip.Reader)
 		},
 	}
@@ -67,7 +67,7 @@ func Ungzip(data []byte) (src []byte, err error) {
 		_ = zr.Close()
 	}()
 
-	src, err = ioutil.ReadAll(zr)
+	src, err = io.ReadAll(zr)
 	if err != nil {
 		return
 	}
@@ -116,7 +116,7 @@ func Unzip(data []byte) (src []byte, err error) {
 		_ = zr.Close()
 	}()
 
-	src, err = ioutil.ReadAll(zr)
+	src, err = io.ReadAll(zr)
 	if err != nil {
 		return
 	}
@@ -124,10 +124,10 @@ func Unzip(data []byte) (src []byte, err error) {
 }
 
 func newZlibWriterPool() (pools []*sync.Pool) {
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		level := i - 2
 		pools = append(pools, &sync.Pool{
-			New: func() interface{} {
+			New: func() any {
 				zw, _ := zlib.NewWriterLevel(nil, level)
 				return zw
 			},
@@ -137,10 +137,10 @@ func newZlibWriterPool() (pools []*sync.Pool) {
 }
 
 func newGzipWriterPool() (pools []*sync.Pool) {
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		level := i - 2
 		pools = append(pools, &sync.Pool{
-			New: func() interface{} {
+			New: func() any {
 				zw, _ := gzip.NewWriterLevel(nil, level)
 				return zw
 			},

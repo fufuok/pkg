@@ -49,7 +49,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
-	"io/ioutil"
 	"os"
 	"sort"
 	"sync/atomic"
@@ -88,17 +87,17 @@ var (
 )
 
 func init() {
-	for i := 0; i < len(dec); i++ {
+	for i := range len(dec) {
 		dec[i] = 0xFF
 	}
-	for i := 0; i < len(encoding); i++ {
+	for i := range len(encoding) {
 		dec[encoding[i]] = byte(i)
 	}
 
 	// If /proc/self/cpuset exists and is not /, we can assume that we are in a
 	// form of container and use the content of cpuset xor-ed with the PID in
 	// order get a reasonable machine global unique PID.
-	b, err := ioutil.ReadFile("/proc/self/cpuset")
+	b, err := os.ReadFile("/proc/self/cpuset")
 	if err == nil && len(b) > 1 {
 		pid ^= int(crc32.ChecksumIEEE(b))
 	}
@@ -318,7 +317,7 @@ func (id ID) Value() (driver.Value, error) {
 }
 
 // Scan implements the sql.Scanner interface.
-func (id *ID) Scan(value interface{}) (err error) {
+func (id *ID) Scan(value any) (err error) {
 	switch val := value.(type) {
 	case string:
 		return id.UnmarshalText([]byte(val))

@@ -5,7 +5,7 @@ import (
 )
 
 // GetBytes 先转为字符串再转为 []byte, 可选指定默认值
-func GetBytes(v interface{}, defaultVal ...[]byte) []byte {
+func GetBytes(v any, defaultVal ...[]byte) []byte {
 	switch b := v.(type) {
 	default:
 		bs := S2B(MustString(v))
@@ -59,7 +59,7 @@ func JoinBytes(b ...[]byte) []byte {
 // ToLowerBytes converts ascii slice to lower-case
 // Ref: fiber
 func ToLowerBytes(b []byte) []byte {
-	for i := 0; i < len(b); i++ {
+	for i := range b {
 		b[i] = toLowerTable[b[i]]
 	}
 	return b
@@ -68,7 +68,7 @@ func ToLowerBytes(b []byte) []byte {
 // ToUpperBytes converts ascii slice to upper-case
 // Ref: fiber
 func ToUpperBytes(b []byte) []byte {
-	for i := 0; i < len(b); i++ {
+	for i := range b {
 		b[i] = toUpperTable[b[i]]
 	}
 	return b
@@ -134,8 +134,8 @@ func EqualFoldBytes(b, s []byte) bool {
 // Cut returns slices of the original slice s, not copies.
 // Ref: go1.18
 func CutBytes(s, sep []byte) (before, after []byte, found bool) {
-	if i := bytes.Index(s, sep); i >= 0 {
-		return s[:i], s[i+len(sep):], true
+	if before0, after0, ok := bytes.Cut(s, sep); ok {
+		return before0, after0, true
 	}
 	return s, nil, false
 }

@@ -147,22 +147,22 @@ func TestHashStringToInt(t *testing.T) {
 	assert.Equal(t, uint32(475021159), FnvHash32(testString))
 
 	v := MemHash(testString)
-	for i := 0; i < 100000; i++ {
+	for range 100000 {
 		assert.Equal(t, v, MemHash(testString))
 	}
 
 	v = MemHashb(testBytes)
-	for i := 0; i < 100000; i++ {
+	for range 100000 {
 		assert.Equal(t, v, MemHashb(testBytes))
 	}
 
 	v32 := MemHash32(testString)
-	for i := 0; i < 100000; i++ {
+	for range 100000 {
 		assert.Equal(t, v32, MemHash32(testString))
 	}
 
 	v32 = Djb33(testString)
-	for i := 0; i < 100000; i++ {
+	for range 100000 {
 		assert.Equal(t, v32, Djb33(testString))
 	}
 }
@@ -170,7 +170,7 @@ func TestHashStringToInt(t *testing.T) {
 func TestHashSeedString(t *testing.T) {
 	const numEntries = 1000
 	m := make(map[uint64]uint64)
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		k := HashSeedString(seed, strconv.Itoa(i))
 		if _, ok := m[k]; ok {
 			t.Fatalf("expect key %d to not exist", k)
@@ -185,7 +185,7 @@ func TestHashSeedString(t *testing.T) {
 func TestHashSeedUint64(t *testing.T) {
 	const numEntries = 1000
 	m := make(map[uint64]uint64)
-	for i := 0; i < numEntries; i++ {
+	for i := range numEntries {
 		k := HashSeedUint64(seed, uint64(i))
 		if _, ok := m[k]; ok {
 			t.Fatalf("expect key %d to not exist", k)

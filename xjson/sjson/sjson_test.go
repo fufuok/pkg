@@ -25,7 +25,7 @@ func sortJSON(json string) string {
 	return string(pretty.Ugly(pretty.PrettyOptions([]byte(json), &opts)))
 }
 
-func testRaw(t *testing.T, kind int, expect, json, path string, value interface{}) {
+func testRaw(t *testing.T, kind int, expect, json, path string, value any) {
 	t.Helper()
 	expect = sortJSON(expect)
 	var json2 string
@@ -62,6 +62,7 @@ func testRaw(t *testing.T, kind int, expect, json, path string, value interface{
 		t.Fatalf("expected '%v', got '%v'", expect, string(json3))
 	}
 }
+
 func TestBasic(t *testing.T) {
 	testRaw(t, setRaw, `[{"hiw":"planet","hi":"world"}]`, `[{"hi":"world"}]`, "0.hiw", `"planet"`)
 	testRaw(t, setRaw, `[true]`, ``, "0", `true`)
@@ -146,7 +147,7 @@ func TestRandomData(t *testing.T) {
 	}()
 	rand.Seed(time.Now().UnixNano())
 	b := make([]byte, 200)
-	for i := 0; i < 2000000; i++ {
+	for range 2000000 {
 		n, err := rand.Read(b[:rand.Int()%len(b)])
 		if err != nil {
 			t.Fatal(err)
@@ -190,7 +191,7 @@ func TestDeleteIssue21(t *testing.T) {
 	expectedForLenBefore309AsBytes := `{"1":"","0":"01234567890123456789012345678901234567890123456789012345678901234567890123456","2":""}`
 	// ---------------------------
 
-	var data = []struct {
+	data := []struct {
 		desc     string
 		input    string
 		expected string
@@ -214,7 +215,6 @@ func TestDeleteIssue21(t *testing.T) {
 
 	for i, d := range data {
 		result, err := Delete(d.input, "to_delete")
-
 		if err != nil {
 			t.Error(fmtErrorf(testError{
 				unexpected: "error",
@@ -245,9 +245,9 @@ type testError struct {
 	desc       string
 	i          int
 	lenInput   int
-	input      interface{}
-	expected   interface{}
-	result     interface{}
+	input      any
+	expected   any
+	result     any
 }
 
 func fmtErrorf(e testError) string {
@@ -270,6 +270,7 @@ func TestSetDotKeyIssue10(t *testing.T) {
 		t.Fatalf("expected '%v', got '%v'", `{"app.token":"cde"}`, json)
 	}
 }
+
 func TestDeleteDotKeyIssue19(t *testing.T) {
 	json := []byte(`{"data":{"key1":"value1","key2.something":"value2"}}`)
 	json, _ = DeleteBytes(json, `data.key2\.something`)
@@ -279,12 +280,12 @@ func TestDeleteDotKeyIssue19(t *testing.T) {
 }
 
 func TestIssue36(t *testing.T) {
-	var json = `
+	json := `
 	{
 	    "size": 1000
     }
 `
-	var raw = `
+	raw := `
 	{
 	    "sample": "hello"
 	}

@@ -128,11 +128,9 @@ func startRESPFixture(t *testing.T, dbSize int64, info string) *respFixture {
 		t.Fatalf("listen for Redis fixture: %v", err)
 	}
 	fixture := &respFixture{listener: listener, dbSize: dbSize, info: info}
-	fixture.wg.Add(1)
-	go func() {
-		defer fixture.wg.Done()
+	fixture.wg.Go(func() {
 		fixture.accept()
-	}()
+	})
 	t.Cleanup(func() {
 		if err := fixture.listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			t.Errorf("close Redis fixture listener: %v", err)
@@ -149,11 +147,9 @@ func (f *respFixture) accept() {
 		if err != nil {
 			return
 		}
-		f.wg.Add(1)
-		go func() {
-			defer f.wg.Done()
+		f.wg.Go(func() {
 			f.serve(conn)
-		}()
+		})
 	}
 }
 

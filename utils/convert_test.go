@@ -10,7 +10,7 @@ import (
 
 func TestS2B(t *testing.T) {
 	t.Parallel()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		s := RandString(64)
 		expected := []byte(s)
 		actual := S2B(s)
@@ -28,7 +28,7 @@ func TestS2B(t *testing.T) {
 
 func TestB2S(t *testing.T) {
 	t.Parallel()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		b := RandBytes(64)
 		assert.Equal(t, string(b), B2S(b))
 	}
@@ -43,7 +43,7 @@ func TestB2S(t *testing.T) {
 
 func TestMustJSONString(t *testing.T) {
 	t.Parallel()
-	js := map[string]interface{}{
+	js := map[string]any{
 		"_c": "中 文",
 		"a":  true,
 		"b":  1.23,
@@ -61,7 +61,7 @@ func TestMustJSONString(t *testing.T) {
 func TestMustString(t *testing.T) {
 	now := time.Date(2022, 1, 2, 3, 4, 5, 0, time.UTC)
 	for _, v := range []struct {
-		in  interface{}
+		in  any
 		out string
 	}{
 		{"Is string?", "Is string?"},
@@ -72,7 +72,7 @@ func TestMustString(t *testing.T) {
 		{false, "false"},
 		{[]byte(testString), testString},
 		{[]int{0, 2, 1}, "[0 2 1]"},
-		{map[string]interface{}{"a": 0, "b": true, "C": []byte("c")}, "map[C:[99] a:0 b:true]"},
+		{map[string]any{"a": 0, "b": true, "C": []byte("c")}, "map[C:[99] a:0 b:true]"},
 		{now, "2022-01-02 03:04:05"},
 		{&Bool{}, "false"},
 	} {
@@ -83,7 +83,7 @@ func TestMustString(t *testing.T) {
 
 func TestMustInt(t *testing.T) {
 	for _, v := range []struct {
-		in  interface{}
+		in  any
 		out int
 	}{
 		{"2", 2},
@@ -109,7 +109,7 @@ func TestMustInt(t *testing.T) {
 
 func TestMustBool(t *testing.T) {
 	for _, v := range []struct {
-		in  interface{}
+		in  any
 		out bool
 	}{
 		{"1", true},

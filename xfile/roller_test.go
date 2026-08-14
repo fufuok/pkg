@@ -114,9 +114,7 @@ func TestRollerConcurrentWrites(t *testing.T) {
 	var wg sync.WaitGroup
 	writeErrors := make(chan error, writers)
 	for writerID := range writers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for lineID := range lines {
 				_, err := roller.WriteString(fmt.Sprintf("%02d-%02d\n", writerID, lineID))
 				if err != nil {
@@ -124,7 +122,7 @@ func TestRollerConcurrentWrites(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	close(writeErrors)
@@ -333,7 +331,7 @@ type recordingXFileLogger struct {
 }
 
 // Errorf 实现 Logger, 将格式化后的错误消息安全追加到内存.
-func (l *recordingXFileLogger) Errorf(format string, values ...interface{}) {
+func (l *recordingXFileLogger) Errorf(format string, values ...any) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.messages = append(l.messages, fmt.Sprintf(format, values...))

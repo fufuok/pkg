@@ -19,7 +19,7 @@ const (
 var StackTraceBufferSize = 4 << 10
 
 // RecoveryCallback 自定义恢复信息回调
-type RecoveryCallback func(err interface{}, trace []byte)
+type RecoveryCallback func(err any, trace []byte)
 
 // CallPath 运行时路径, 编译目录
 // 假如: mklink E:\tmp\linkapp.exe D:\Fufu\Test\abc\app.exe
@@ -98,7 +98,7 @@ func SafeGoWithContext(ctx context.Context, fn func(ctx context.Context), cb ...
 }
 
 // SafeGoCommonFunc 带 Recover 的 goroutine 运行
-func SafeGoCommonFunc(args interface{}, fn func(args interface{}), cb ...RecoveryCallback) {
+func SafeGoCommonFunc(args any, fn func(args any), cb ...RecoveryCallback) {
 	go func() {
 		defer Recover(cb...)
 		fn(args)

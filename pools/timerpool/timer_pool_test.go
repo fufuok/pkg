@@ -69,11 +69,11 @@ func TestConcurrentNewAndRelease(t *testing.T) {
 
 	var wg sync.WaitGroup
 	errors := make(chan error, workers)
-	for worker := 0; worker < workers; worker++ {
+	for worker := range workers {
 		wg.Add(1)
 		go func(worker int) {
 			defer wg.Done()
-			for round := 0; round < rounds; round++ {
+			for round := range rounds {
 				start := time.Now()
 				timer := New(delay)
 				select {

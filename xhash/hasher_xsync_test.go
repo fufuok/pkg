@@ -92,7 +92,7 @@ func TestCollision_MakeHasher(t *testing.T) {
 	iHasher := MakeHasher[int]()
 	ms := make(map[uint64]string)
 	mi := make(map[uint64]int)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		s := strconv.Itoa(i)
 		hs := sHasher(s)
 		hi := iHasher(i)

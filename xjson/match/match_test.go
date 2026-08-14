@@ -372,7 +372,7 @@ func TestRandomInput(t *testing.T) {
 	rand.Seed(time.Now().UnixNano())
 	b1 := make([]byte, 100)
 	b2 := make([]byte, 100)
-	for i := 0; i < 1000000; i++ {
+	for range 1000000 {
 		if _, err := rand.Read(b1); err != nil {
 			t.Fatal(err)
 		}
@@ -495,7 +495,8 @@ func TestSuffix(t *testing.T) {
 		if rstr != exstr || rpat != expat || rok != exok {
 			t.Fatalf(
 				"for '%s' '%s', expected '%s' '%s' '%t', got '%s' '%s' '%t'",
-				str, pat, exstr, expat, exok, rstr, rpat, rok)
+				str, pat, exstr, expat, exok, rstr, rpat, rok,
+			)
 		}
 	}
 	sufmatch(t, "hello", "*hello", "", "*", true)

@@ -333,14 +333,14 @@ func (t Result) Get(path string) Result {
 
 type arrayOrMapResult struct {
 	a  []Result
-	ai []interface{}
+	ai []any
 	o  map[string]Result
-	oi map[string]interface{}
+	oi map[string]any
 	vc byte
 }
 
 func (t Result) arrayOrMap(vc byte, valueize bool) (r arrayOrMapResult) {
-	var json = t.Raw
+	json := t.Raw
 	var i int
 	var value Result
 	var count int
@@ -370,13 +370,13 @@ func (t Result) arrayOrMap(vc byte, valueize bool) (r arrayOrMapResult) {
 	}
 	if r.vc == '{' {
 		if valueize {
-			r.oi = make(map[string]interface{})
+			r.oi = make(map[string]any)
 		} else {
 			r.o = make(map[string]Result)
 		}
 	} else {
 		if valueize {
-			r.ai = make([]interface{}, 0)
+			r.ai = make([]any, 0)
 		} else {
 			r.a = make([]Result, 0)
 		}
@@ -667,7 +667,7 @@ func (t Result) Exists() bool {
 //	nil, for JSON null
 //	map[string]interface{}, for JSON objects
 //	[]interface{}, for JSON arrays
-func (t Result) Value() interface{} {
+func (t Result) Value() any {
 	if t.Type == String {
 		return t.Str
 	}
@@ -692,7 +692,7 @@ func (t Result) Value() interface{} {
 }
 
 func parseString(json string, i int) (int, string, bool, bool) {
-	var s = i
+	s := i
 	for ; i < len(json); i++ {
 		if json[i] > '\\' {
 			continue
@@ -730,7 +730,7 @@ func parseString(json string, i int) (int, string, bool, bool) {
 }
 
 func parseNumber(json string, i int) (int, string) {
-	var s = i
+	s := i
 	i++
 	for ; i < len(json); i++ {
 		if json[i] <= ' ' || json[i] == ',' || json[i] == ']' ||
@@ -742,7 +742,7 @@ func parseNumber(json string, i int) (int, string) {
 }
 
 func parseLiteral(json string, i int) (int, string) {
-	var s = i
+	s := i
 	i++
 	for ; i < len(json); i++ {
 		if json[i] < 'a' || json[i] > 'z' {
@@ -799,8 +799,7 @@ func parseArrayPath(path string) (r arrayPathResult) {
 				} else if path[1] == '[' || path[1] == '(' {
 					// query
 					r.query.on = true
-					qpath, op, value, _, fi, vesc, ok :=
-						parseQuery(path[i:])
+					qpath, op, value, _, fi, vesc, ok := parseQuery(path[i:])
 					if !ok {
 						// bad query, end now
 						break
@@ -1207,7 +1206,7 @@ func parseObject(c *parseContext, i int, path string) (int, bool) {
 				// this is slightly different from getting s string value
 				// because we don't need the outer quotes.
 				i++
-				var s = i
+				s := i
 				for ; i < len(c.json); i++ {
 					if c.json[i] > '\\' {
 						continue
@@ -1504,6 +1503,7 @@ func queryMatches(rp *arrayPathResult, value Result) bool {
 	}
 	return false
 }
+
 func parseArray(c *parseContext, i int, path string) (int, bool) {
 	var pmatch, vesc, ok, hit bool
 	var val string
@@ -1723,8 +1723,8 @@ func parseArray(c *parseContext, i int, path string) (int, bool) {
 							c.pipe = right
 							c.piped = true
 						}
-						var indexes = make([]int, 0, 64)
-						var jsons = make([]byte, 0, 64)
+						indexes := make([]int, 0, 64)
+						jsons := make([]byte, 0, 64)
 						jsons = append(jsons, '[')
 						for j, k := 0, 0; j < len(alog); j++ {
 							idx := alog[j]
@@ -2015,7 +2015,8 @@ var hexchars = [...]byte{
 }
 
 func appendHex16(dst []byte, x uint16) []byte {
-	return append(dst,
+	return append(
+		dst,
 		hexchars[x>>12&0xF], hexchars[x>>8&0xF],
 		hexchars[x>>4&0xF], hexchars[x>>0&0xF],
 	)
@@ -2210,7 +2211,7 @@ func Get(json, path string) Result {
 		}
 	}
 	var i int
-	var c = &parseContext{json: json}
+	c := &parseContext{json: json}
 	if len(path) >= 2 && path[0] == '.' && path[1] == '.' {
 		c.lines = true
 		parseArray(c, 0, path[2:])
@@ -2251,7 +2252,7 @@ func runeit(json string) rune {
 
 // unescape unescapes a string
 func unescape(json string) string {
-	var str = make([]byte, 0, len(json))
+	str := make([]byte, 0, len(json))
 	for i := 0; i < len(json); i++ {
 		switch {
 		default:
@@ -2492,6 +2493,7 @@ func validpayload(data []byte, i int) (outi int, ok bool) {
 	}
 	return i, false
 }
+
 func validany(data []byte, i int) (outi int, ok bool) {
 	for ; i < len(data); i++ {
 		switch data[i] {
@@ -2517,6 +2519,7 @@ func validany(data []byte, i int) (outi int, ok bool) {
 	}
 	return i, false
 }
+
 func validobject(data []byte, i int) (outi int, ok bool) {
 	for ; i < len(data); i++ {
 		switch data[i] {
@@ -2559,6 +2562,7 @@ func validobject(data []byte, i int) (outi int, ok bool) {
 	}
 	return i, false
 }
+
 func validcolon(data []byte, i int) (outi int, ok bool) {
 	for ; i < len(data); i++ {
 		switch data[i] {
@@ -2572,6 +2576,7 @@ func validcolon(data []byte, i int) (outi int, ok bool) {
 	}
 	return i, false
 }
+
 func validcomma(data []byte, i int, end byte) (outi int, ok bool) {
 	for ; i < len(data); i++ {
 		switch data[i] {
@@ -2587,6 +2592,7 @@ func validcomma(data []byte, i int, end byte) (outi int, ok bool) {
 	}
 	return i, false
 }
+
 func validarray(data []byte, i int) (outi int, ok bool) {
 	for ; i < len(data); i++ {
 		switch data[i] {
@@ -2610,6 +2616,7 @@ func validarray(data []byte, i int) (outi int, ok bool) {
 	}
 	return i, false
 }
+
 func validstring(data []byte, i int) (outi int, ok bool) {
 	for ; i < len(data); i++ {
 		if data[i] < ' ' {
@@ -2624,7 +2631,7 @@ func validstring(data []byte, i int) (outi int, ok bool) {
 				return i, false
 			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
 			case 'u':
-				for j := 0; j < 4; j++ {
+				for range 4 {
 					i++
 					if i >= len(data) {
 						return i, false
@@ -2642,6 +2649,7 @@ func validstring(data []byte, i int) (outi int, ok bool) {
 	}
 	return i, false
 }
+
 func validnumber(data []byte, i int) (outi int, ok bool) {
 	i--
 	// sign
@@ -2724,6 +2732,7 @@ func validtrue(data []byte, i int) (outi int, ok bool) {
 	}
 	return i, false
 }
+
 func validfalse(data []byte, i int) (outi int, ok bool) {
 	if i+4 <= len(data) && data[i] == 'a' && data[i+1] == 'l' &&
 		data[i+2] == 's' && data[i+3] == 'e' {
@@ -2731,6 +2740,7 @@ func validfalse(data []byte, i int) (outi int, ok bool) {
 	}
 	return i, false
 }
+
 func validnull(data []byte, i int) (outi int, ok bool) {
 	if i+3 <= len(data) && data[i] == 'u' && data[i+1] == 'l' &&
 		data[i+2] == 'l' {
@@ -3348,7 +3358,7 @@ func getBytes(json []byte, path string) Result {
 func fillIndex(json string, c *parseContext) {
 	if len(c.value.Raw) > 0 && !c.calcd {
 		jhdr := *(*stringHeader)(unsafe.Pointer(&json))
-		rhdr := *(*stringHeader)(unsafe.Pointer(&(c.value.Raw)))
+		rhdr := *(*stringHeader)(unsafe.Pointer(&c.value.Raw))
 		c.value.Index = int(uintptr(rhdr.data) - uintptr(jhdr.data))
 		if c.value.Index < 0 || c.value.Index >= len(json) {
 			c.value.Index = 0

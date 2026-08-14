@@ -16,7 +16,7 @@ func BenchmarkOrderedMap_Set(b *testing.B) {
 
 func BenchmarkOrderedMap_Get(b *testing.B) {
 	o := New()
-	for i := 0; i < count; i++ {
+	for i := range count {
 		o.Set(strconv.Itoa(i), i)
 	}
 	b.ResetTimer()
@@ -27,7 +27,7 @@ func BenchmarkOrderedMap_Get(b *testing.B) {
 
 func BenchmarkOrderedMap_Iterate(b *testing.B) {
 	o := New()
-	for i := 0; i < count; i++ {
+	for i := range count {
 		o.Set(strconv.Itoa(i), i)
 	}
 	b.ResetTimer()

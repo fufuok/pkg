@@ -117,7 +117,7 @@ func installSampledLogger(t *testing.T) *bytes.Buffer {
 func decodeSampleRecords(t *testing.T, buffer *bytes.Buffer) map[string]map[string]any {
 	t.Helper()
 	records := make(map[string]map[string]any)
-	for _, line := range bytes.Split(bytes.TrimSpace(buffer.Bytes()), []byte("\n")) {
+	for line := range bytes.SplitSeq(bytes.TrimSpace(buffer.Bytes()), []byte("\n")) {
 		if len(line) == 0 {
 			continue
 		}

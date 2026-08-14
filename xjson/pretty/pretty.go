@@ -88,7 +88,7 @@ func ugly(dst, src []byte) []byte {
 }
 
 func isNaNOrInf(src []byte) bool {
-	return src[0] == 'i' || //Inf
+	return src[0] == 'i' || // Inf
 		src[0] == 'I' || // inf
 		src[0] == '+' || // +Inf
 		src[0] == 'N' || // Nan
@@ -140,6 +140,7 @@ type byKeyVal struct {
 func (arr *byKeyVal) Len() int {
 	return len(arr.pairs)
 }
+
 func (arr *byKeyVal) Less(i, j int) bool {
 	if arr.isLess(i, j, byKey) {
 		return true
@@ -149,6 +150,7 @@ func (arr *byKeyVal) Less(i, j int) bool {
 	}
 	return arr.isLess(i, j, byVal)
 }
+
 func (arr *byKeyVal) Swap(i, j int) {
 	arr.pairs[i], arr.pairs[j] = arr.pairs[j], arr.pairs[i]
 	arr.sorted = true
@@ -228,7 +230,6 @@ func (arr *byKeyVal) isLess(i, j int, kind byKind) bool {
 		return n1 < n2
 	}
 	return string(v1) < string(v2)
-
 }
 
 func parsestr(s []byte) []byte {
@@ -345,6 +346,7 @@ func appendPrettyObject(buf, json []byte, i int, open, close byte, pretty bool, 
 	}
 	return buf, i, nl, open != '{'
 }
+
 func sortPairs(json, buf []byte, pairs []pair) []byte {
 	if len(pairs) == 0 {
 		return buf
@@ -406,11 +408,11 @@ func appendTabs(buf []byte, prefix, indent string, tabs int) []byte {
 		buf = append(buf, prefix...)
 	}
 	if len(indent) == 2 && indent[0] == ' ' && indent[1] == ' ' {
-		for i := 0; i < tabs; i++ {
+		for range tabs {
 			buf = append(buf, ' ', ' ')
 		}
 	} else {
-		for i := 0; i < tabs; i++ {
+		for range tabs {
 			buf = append(buf, indent...)
 		}
 	}
@@ -452,7 +454,7 @@ func init() {
 			if c < ' ' && (c != '\r' && c != '\n' && c != '\t' && c != '\v') {
 				dst = append(dst, "\\u00"...)
 				dst = append(dst, hexp((c>>4)&0xF))
-				return append(dst, hexp((c)&0xF))
+				return append(dst, hexp(c&0xF))
 			}
 			return append(dst, c)
 		},

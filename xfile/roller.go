@@ -26,7 +26,7 @@ type FilenameMaker interface {
 
 type stdLogger struct{}
 
-func (s *stdLogger) Errorf(format string, v ...interface{}) {
+func (s *stdLogger) Errorf(format string, v ...any) {
 	log.Printf(format, v...)
 }
 
@@ -47,7 +47,7 @@ type Options struct {
 }
 
 type Logger interface {
-	Errorf(format string, v ...interface{})
+	Errorf(format string, v ...any)
 }
 
 type Roller struct {

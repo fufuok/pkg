@@ -144,7 +144,8 @@ func newCustomFileLogger(opts ...CustomLoggerOption) (*CustomLogger, error) {
 			MaxBackups: options.maxBackups,
 			LocalTime:  true,
 			Compress:   true,
-		})
+		},
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create lumberjack roller: %w", err)
 	}

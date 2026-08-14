@@ -36,15 +36,15 @@ func TestOrderedMapOf(t *testing.T) {
 		t.Error("Set strings second index")
 	}
 	// mixed slice
-	o.Set("mixed", []interface{}{
+	o.Set("mixed", []any{
 		1,
 		"1",
 	})
 	v, _ = o.Get("mixed")
-	if v.([]interface{})[0].(int) != 1 {
+	if v.([]any)[0].(int) != 1 {
 		t.Error("Set mixed int")
 	}
-	if v.([]interface{})[1].(string) != "1" {
+	if v.([]any)[1].(string) != "1" {
 		t.Error("Set mixed string")
 	}
 	// overriding existing key
@@ -68,11 +68,11 @@ func TestOrderedMapOf(t *testing.T) {
 	}
 	// Values method
 	values := o.Values()
-	expectedValues := map[string]interface{}{
+	expectedValues := map[string]any{
 		"number":  4,
 		"string":  "x",
 		"strings": []string{"t", "u"},
-		"mixed":   []interface{}{1, "1"},
+		"mixed":   []any{1, "1"},
 	}
 	if !reflect.DeepEqual(values, expectedValues) {
 		t.Error("Values method returned unexpected map")
@@ -176,7 +176,7 @@ func TestOrderedMapOf_MarshalJSON(t *testing.T) {
 	o.Set("a", 2)
 	o.Set("b", 3)
 	// slice
-	o.Set("slice", []interface{}{
+	o.Set("slice", []any{
 		"1",
 		1,
 	})

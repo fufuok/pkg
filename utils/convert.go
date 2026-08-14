@@ -11,29 +11,29 @@ import (
 )
 
 // MustJSONIndent 转 json 返回 []byte
-func MustJSONIndent(v interface{}) []byte {
+func MustJSONIndent(v any) []byte {
 	js, _ := json.MarshalIndent(v, "", "  ")
 	return js
 }
 
 // MustJSONIndentString 转 json Indent 返回 string
-func MustJSONIndentString(v interface{}) string {
+func MustJSONIndentString(v any) string {
 	return B2S(MustJSONIndent(v))
 }
 
 // MustJSON 转 json 返回 []byte
-func MustJSON(v interface{}) []byte {
+func MustJSON(v any) []byte {
 	js, _ := json.Marshal(v)
 	return js
 }
 
 // MustJSONString 转 json 返回 string
-func MustJSONString(v interface{}) string {
+func MustJSONString(v any) string {
 	return B2S(MustJSON(v))
 }
 
 // MustString 强制转为字符串
-func MustString(v interface{}, timeLayout ...string) string {
+func MustString(v any, timeLayout ...string) string {
 	switch s := v.(type) {
 	default:
 		return fmt.Sprint(v)
@@ -84,7 +84,7 @@ func MustString(v interface{}, timeLayout ...string) string {
 }
 
 // MustInt 强制转为整数 (int)
-func MustInt(v interface{}) int {
+func MustInt(v any) int {
 	switch i := v.(type) {
 	default:
 		d, ok := i.(int)
@@ -133,7 +133,7 @@ func MustInt(v interface{}) int {
 }
 
 // MustBool 强制转为 bool
-func MustBool(v interface{}) bool {
+func MustBool(v any) bool {
 	switch t := v.(type) {
 	default:
 		if MustInt(v) != 0 {

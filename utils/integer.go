@@ -35,7 +35,7 @@ func SumInt(v ...int) int {
 }
 
 // GetInt 获取 int 结果, 可选指定默认值(若给定了默认值,则返回正整数或 0)
-func GetInt(v interface{}, defaultInt ...int) int {
+func GetInt(v any, defaultInt ...int) int {
 	i := MustInt(v)
 	if i <= 0 && len(defaultInt) > 0 {
 		return defaultInt[0]
@@ -173,8 +173,8 @@ func ParseInts(s string) ([]int, error) {
 		e error
 	)
 	set := make(map[int]struct{})
-	blocks := strings.Split(s, ",")
-	for _, v := range blocks {
+	blocks := strings.SplitSeq(s, ",")
+	for v := range blocks {
 		ss := strings.Split(v, "-")
 		if len(ss) == 1 {
 			i, err := strconv.Atoi(strings.TrimSpace(ss[0]))

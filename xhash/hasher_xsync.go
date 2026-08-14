@@ -37,7 +37,7 @@ import (
 func MakeHasher[T comparable]() func(T) uint64 {
 	var zero T
 	seed := MakeSeed()
-	if reflect.TypeOf(&zero).Elem().Kind() == reflect.Interface {
+	if reflect.TypeFor[T]().Kind() == reflect.Interface {
 		return func(value T) uint64 {
 			iValue := any(value)
 			i := (*iface)(unsafe.Pointer(&iValue))
