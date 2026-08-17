@@ -85,7 +85,7 @@ func runtimeTimeSync() error {
 
 func stopTimeSync() error {
 	// 只取消父 ctx, 不等待旧循环退出.
-	// 生产 NTP/Redis 通道在 ticker 等待期间不响应取消, 等待会卡住 Runtime/Stop.
+	// NTP/Redis 通道在 ticker 等待和发送时观察 ctx, 取消后应自行关闭; 这里仍不 Join, 避免查询 RTT 把 Stop 拉长.
 	ntpMu.Lock()
 	cancel := ntpCancel
 	ntpCancel = nil

@@ -10,6 +10,63 @@ import (
 	"time"
 )
 
+// TestClockOffsetChanClosesDuringTickerWait 取消必须打断 NTP ticker 等待.
+// 生产周期默认 2h; 当前实现在 <-ticker.C 上阻塞, stopTimeSync 无法即时退出循环.
+func TestClockOffsetChanClosesDuringTickerWait(t *testing.T) {
+	host, done := startLocalNTPServer(t, 0, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := ClockOffsetChan(ctx, time.Hour, host)
+	// 等首次查询结束并进入 ticker 等待, 再取消; 200ms 远小于 1h.
+	time.Sleep(50 * time.Millisecond)
+	started := time.Now()
+	cancel()
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatal("NTP clock channel emitted after cancellation during ticker wait")
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("NTP clock channel stayed open during ticker wait after cancel")
+	}
+	if elapsed := time.Since(started); elapsed >= 200*time.Millisecond {
+		t.Fatalf("NTP clock channel close after cancel took %s", elapsed)
+	}
+	awaitLocalNTPServer(t, done)
+}
+
+// TestTimeChanClosesDuringTickerWait TimeChan 与 ClockOffsetChan 共用 ticker 等待, 取消同样必须即时关闭.
+func TestTimeChanClosesDuringTickerWait(t *testing.T) {
+	host, done := startLocalNTPServer(t, 0, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := TimeChan(ctx, time.Hour, host)
+	// TimeChan 首次查询就会发送, 先读走缓冲再取消, 才能证明后续卡在 ticker 等待.
+	select {
+	case sample, ok := <-ch:
+		if !ok {
+			t.Fatal("NTP time channel closed before the first sample")
+		}
+		if sample.IsZero() {
+			t.Fatal("NTP time channel emitted a zero sample")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("NTP time channel did not emit the first sample")
+	}
+	started := time.Now()
+	cancel()
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatal("NTP time channel emitted after cancellation during ticker wait")
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("NTP time channel stayed open during ticker wait after cancel")
+	}
+	if elapsed := time.Since(started); elapsed >= 200*time.Millisecond {
+		t.Fatalf("NTP time channel close after cancel took %s", elapsed)
+	}
+	awaitLocalNTPServer(t, done)
+}
+
 // TestHostPreferredWithLocalServers 使用真实 UDP 报文验证并发查询会忽略无效响应,
 // 并从有效响应中选择往返时间最短的 Host.
 func TestHostPreferredWithLocalServers(t *testing.T) {

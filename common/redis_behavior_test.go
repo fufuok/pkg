@@ -135,3 +135,28 @@ func TestClockOffsetChanRedisContract(t *testing.T) {
 		t.Fatal("clock channel did not close after cancellation")
 	}
 }
+
+// TestClockOffsetChanRedisClosesDuringTickerWait 取消必须打断 ticker 等待.
+// 生产周期是 ClockOffsetInterval (默认 2h); 若只在下一拍才看 ctx, Runtime/Stop 会卡住.
+func TestClockOffsetChanRedisClosesDuringTickerWait(t *testing.T) {
+	preserveCommonPackageState(t)
+	ClockOffsetMinInterval = 20 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := ClockOffsetChanRedis(ctx, time.Hour, &redisBehaviorStub{timeOffset: time.Millisecond})
+	// 让循环进入 <-ticker.C, 再取消; 200ms 远小于 1h, 当前实现会失败.
+	time.Sleep(30 * time.Millisecond)
+	started := time.Now()
+	cancel()
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatal("clock channel emitted after cancellation during ticker wait")
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("clock channel stayed open during ticker wait after cancel")
+	}
+	if elapsed := time.Since(started); elapsed >= 200*time.Millisecond {
+		t.Fatalf("clock channel close after cancel took %s", elapsed)
+	}
+}

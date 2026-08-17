@@ -33,7 +33,8 @@ type HostResponse struct {
 	Resp *Response
 }
 
-// ClockOffsetChan 启动 Simple NTP (SNTP), 周期性获取时钟偏移值
+// ClockOffsetChan 启动 Simple NTP (SNTP), 周期性获取时钟偏移值.
+// interval 等待和向容量 1 通道发送都会观察 ctx, 取消后关闭通道并退出.
 func ClockOffsetChan(ctx context.Context, interval time.Duration, hosts ...string) chan time.Duration {
 	if interval == 0 {
 		interval = defaultInterval
@@ -50,9 +51,7 @@ func ClockOffsetChan(ctx context.Context, interval time.Duration, hosts ...strin
 			close(ch)
 		}()
 		for {
-			select {
-			default:
-			case <-ctx.Done():
+			if ctx.Err() != nil {
 				return
 			}
 			offset := invalidClockOffset
@@ -70,19 +69,25 @@ func ClockOffsetChan(ctx context.Context, interval time.Duration, hosts ...strin
 			if offset != invalidClockOffset {
 				offsets = append(offsets, int(offset))
 				if len(offsets) == 3 {
-					// 去头尾, 取中间值
+					// 去头尾, 取中间值; 发送也观察 ctx, 避免容量 1 通道无人消费时卡住退出.
 					sort.Ints(offsets)
-					ch <- time.Duration(offsets[1])
+					if !sendClockOffset(ctx, ch, time.Duration(offsets[1])) {
+						return
+					}
 					offsets = offsets[:0]
 				}
 			}
-			<-ticker.C
+			// ticker 等待必须可取消, 生产周期默认 2h, 否则 stopTimeSync 只能干等下一拍.
+			if !waitTickerOrDone(ctx, ticker.C) {
+				return
+			}
 		}
 	}()
 	return ch
 }
 
-// TimeChan 启动 Simple NTP (SNTP), 周期性获取最新时间
+// TimeChan 启动 Simple NTP (SNTP), 周期性获取最新时间.
+// interval 等待和发送都会观察 ctx, 取消后关闭通道并退出.
 func TimeChan(ctx context.Context, interval time.Duration, hosts ...string) chan time.Time {
 	if interval == 0 {
 		interval = defaultInterval
@@ -98,23 +103,26 @@ func TimeChan(ctx context.Context, interval time.Duration, hosts ...string) chan
 			close(ch)
 		}()
 		for {
-			select {
-			default:
-			case <-ctx.Done():
+			if ctx.Err() != nil {
 				return
 			}
 			if host == "" {
 				hs := HostPreferred(hosts)
 				if hs != nil {
 					host = hs.Host
-					ch <- hs.Resp.Time
+					if !sendTimeSample(ctx, ch, hs.Resp.Time) {
+						return
+					}
 				}
-			} else {
-				if resp := GetResponse(host); resp != nil {
-					ch <- resp.Time
+			} else if resp := GetResponse(host); resp != nil {
+				if !sendTimeSample(ctx, ch, resp.Time) {
+					return
 				}
 			}
-			<-ticker.C
+			// ticker 等待必须可取消, 与 ClockOffsetChan 保持同一退出语义.
+			if !waitTickerOrDone(ctx, ticker.C) {
+				return
+			}
 		}
 	}()
 	return ch
@@ -166,4 +174,36 @@ func GetResponse(host string) *Response {
 		return resp
 	}
 	return nil
+}
+
+// sendClockOffset 向容量 1 的偏移通道发送一次结果.
+// 消费方未读取时不能无限阻塞, 取消后必须立刻放弃发送并退出.
+func sendClockOffset(ctx context.Context, ch chan<- time.Duration, offset time.Duration) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case ch <- offset:
+		return true
+	}
+}
+
+// sendTimeSample 向容量 1 的时间通道发送一次结果, 语义与 sendClockOffset 相同.
+func sendTimeSample(ctx context.Context, ch chan<- time.Time, sample time.Time) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case ch <- sample:
+		return true
+	}
+}
+
+// waitTickerOrDone 等待下一拍或 ctx 取消.
+// 只读 ticker.C 会让热更新/Stop 卡在整个 interval 上.
+func waitTickerOrDone(ctx context.Context, tickerC <-chan time.Time) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-tickerC:
+		return true
+	}
 }
