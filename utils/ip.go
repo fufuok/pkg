@@ -41,8 +41,12 @@ func IsPrivateIPString(ip string) bool {
 	return IsPrivateIP(net.ParseIP(ip))
 }
 
-// IsInternalIPv4 是否为内网 IPv4, 包含 NAT 专用网段 RFC6598, 比如华为云 ELB 的 100.125.0.0/16
+// IsInternalIPv4 是否为内网 IPv4, 包含 NAT 专用网段 RFC6598, 比如华为云 ELB 的 100.125.0.0/16.
+// 100.64.0.0/10 上界是 100.127.255.255; 100.128.0.0/9 是公网, 不能当内网.
 func IsInternalIPv4(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
 	if ip.IsLoopback() {
 		return true
 	}
@@ -53,7 +57,7 @@ func IsInternalIPv4(ip net.IP) bool {
 	}
 
 	return ip4[0] == 10 ||
-		ip4[0] == 100 && ip4[1] >= 64 ||
+		ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 ||
 		ip4[0] == 169 && ip4[1] == 254 ||
 		ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31 ||
 		ip4[0] == 192 && ip4[1] == 168

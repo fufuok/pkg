@@ -27,6 +27,37 @@ func TestIsPrivateIPString(t *testing.T) {
 	}
 }
 
+// TestIsInternalIPv4 验证 RFC1918、链路本地、回环和 RFC6598 100.64/10 边界.
+// Fiber tproxy 用该判断决定是否写入 X-Proxy-Client-IP, 100.128/9 是公网不能当内网.
+func TestIsInternalIPv4(t *testing.T) {
+	for _, v := range []struct {
+		ip   string
+		want bool
+	}{
+		{"10.0.0.1", true},
+		{"10.255.255.255", true},
+		{"100.63.255.255", false},
+		{"100.64.0.0", true},
+		{"100.125.1.1", true},
+		{"100.127.255.255", true},
+		{"100.128.0.1", false},
+		{"100.255.255.255", false},
+		{"127.0.0.1", true},
+		{"169.254.1.1", true},
+		{"172.15.255.255", false},
+		{"172.16.0.0", true},
+		{"172.31.255.255", true},
+		{"172.32.0.1", false},
+		{"192.168.1.1", true},
+		{"192.169.0.1", false},
+		{"1.2.3.4", false},
+		{"::1", true},
+		{"not-an-ip", false},
+	} {
+		assert.Equal(t, v.want, IsInternalIPv4String(v.ip), v.ip)
+	}
+}
+
 func TestGetNotInternalIPv4(t *testing.T) {
 	defIP4 := "7.7.7.7"
 
@@ -42,6 +73,7 @@ func TestGetNotInternalIPv4(t *testing.T) {
 		{"10.0.0.1", defIP4, defIP4, true},
 		{"100.125.1.1", defIP4, defIP4, false},
 		{"100.125.1.1", defIP4, defIP4, true},
+		{"100.128.0.1", "100.128.0.1", defIP4, false},
 		{"127.0.0.1", defIP4, defIP4, false},
 		{"127.0.0.1", defIP4, defIP4, true},
 		{"169.254.1.1", defIP4, defIP4, false},
