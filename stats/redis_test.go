@@ -108,6 +108,48 @@ func TestRedisStatsWithRESPFixture(t *testing.T) {
 	}
 }
 
+// TestRedisInfoSkipsMalformedLines 验证 INFO 夹杂无冒号行时不 panic, 正常键仍保留.
+func TestRedisInfoSkipsMalformedLines(t *testing.T) {
+	preserveRedisState(t)
+	fixture := startRESPFixture(t, 1, strings.Join([]string{
+		"# Server",
+		"redis_version:7.2.0",
+		"broken-without-colon",
+		"",
+		"# Clients",
+		"connected_clients:5",
+		"empty_value:",
+	}, "\r\n")+"\r\n")
+	client := redis.NewClient(&redis.Options{
+		Addr:            fixture.listener.Addr().String(),
+		Protocol:        2,
+		DisableIdentity: true,
+		MaintNotificationsConfig: &maintnotifications.Config{
+			Mode: maintnotifications.ModeDisabled,
+		},
+		DialerRetries: 1,
+		ReadTimeout:   100 * time.Millisecond,
+		WriteTimeout:  100 * time.Millisecond,
+	})
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Errorf("close Redis fixture client: %v", err)
+		}
+	})
+	common.InitRedisDB(client)
+
+	info := RedisInfo()
+	if info["redis_version"] != "7.2.0" || info["connected_clients"] != "5" {
+		t.Fatalf("Redis INFO = %#v", info)
+	}
+	if info["empty_value"] != "" {
+		t.Fatalf("empty INFO value = %#v", info["empty_value"])
+	}
+	if _, ok := info["broken-without-colon"]; ok {
+		t.Fatalf("malformed INFO line was stored: %#v", info)
+	}
+}
+
 // preserveRedisState 保存 common Redis 全局状态并在测试结束时恢复.
 // stats 测试会串行替换客户端, 不支持与其他 Redis 状态测试并行执行.
 func preserveRedisState(t *testing.T) {

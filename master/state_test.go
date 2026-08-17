@@ -41,7 +41,9 @@ func preserveMasterPackageState(t *testing.T) {
 	oldVersion := Version
 	oldNTPName := ntpName
 	oldNTPCancel := ntpCancel
+	oldNTPDone := ntpDone
 	oldNTPFirstDoneChan := ntpFirstDoneChan
+	oldClockOffsetChanOf := clockOffsetChanOf
 	oldDebInstalling := debInstalling.Load()
 	oldCommonFuncs := common.Funcs
 	oldInternalIPv4 := common.InternalIPv4
@@ -58,6 +60,7 @@ func preserveMasterPackageState(t *testing.T) {
 	Version = false
 	ntpName = ""
 	ntpCancel = nil
+	ntpDone = nil
 	ntpFirstDoneChan = make(chan struct{})
 	debInstalling.Store(false)
 	common.Funcs = xsync.NewMap[string, common.Func]()
@@ -88,7 +91,9 @@ func preserveMasterPackageState(t *testing.T) {
 		Version = oldVersion
 		ntpName = oldNTPName
 		ntpCancel = oldNTPCancel
+		ntpDone = oldNTPDone
 		ntpFirstDoneChan = oldNTPFirstDoneChan
+		clockOffsetChanOf = oldClockOffsetChanOf
 		debInstalling.Store(oldDebInstalling)
 		common.Funcs = oldCommonFuncs
 		common.InternalIPv4 = oldInternalIPv4

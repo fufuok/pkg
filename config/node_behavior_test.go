@@ -93,6 +93,46 @@ func TestParseNodeInfoUsesLocalIPAPI(t *testing.T) {
 	assert.Equal(t, "198.51.100.8", cfg.NodeConf.NodeInfo.NodeIP)
 }
 
+// TestNodeIPFetcherDoesNotMutatePublishedMainConf 验证出口 IP 回填不会改已发布配置指针.
+// NodeAgent / DataRouter / DataPlugins 热更新后 Config() 仍可能被其他 goroutine 读取.
+func TestNodeIPFetcherDoesNotMutatePublishedMainConf(t *testing.T) {
+	prepareConfigBehaviorTest(t)
+	oldSleep := nodeIPFetcherSleep
+	oldTimeout := ReqTimeoutDuration
+	t.Cleanup(func() {
+		nodeIPFetcherSleep = oldSleep
+		ReqTimeoutDuration = oldTimeout
+	})
+	nodeIPFetcherSleep = func(time.Duration) {}
+	ReqTimeoutDuration = time.Second
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("203.0.113.10"))
+	}))
+	t.Cleanup(server.Close)
+
+	published := &MainConf{
+		SYSConf: SYSConf{DebVersion: "published"},
+		NodeConf: NodeConf{
+			IPAPI:    server.URL,
+			NodeInfo: NodeInfo{NodeIP: net.IPv4zero.String(), NodeName: "edge"},
+		},
+	}
+	mainConf.Store(published)
+
+	nodeIPFetcher(server.URL)
+
+	assert.Equal(t, net.IPv4zero.String(), published.NodeConf.NodeInfo.NodeIP)
+	assert.Equal(t, "edge", published.NodeConf.NodeInfo.NodeName)
+	assert.Equal(t, "published", published.SYSConf.DebVersion)
+	got := Config()
+	assert.True(t, got != published)
+	assert.Equal(t, "203.0.113.10", got.NodeConf.NodeInfo.NodeIP)
+	assert.Equal(t, "edge", got.NodeConf.NodeInfo.NodeName)
+	assert.Equal(t, "published", got.SYSConf.DebVersion)
+	assert.Equal(t, "203.0.113.10", NodeIPFromAPI)
+}
+
 // TestSaveNodeInfoBackupSkipsZeroIP 验证无效节点不会覆盖已有 backup.
 func TestSaveNodeInfoBackupSkipsZeroIP(t *testing.T) {
 	prepareConfigBehaviorTest(t)

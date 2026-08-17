@@ -26,6 +26,10 @@ import (
 var (
 	mainProcess *process.Process
 	mainOnce    sync.Once
+
+	// memoryInfoOf 读取当前进程内存信息.
+	// 默认走 gopsutil Process.MemoryInfo; 包内测试可替换以覆盖失败和 nil 返回, 不支持并行改写.
+	memoryInfoOf = (*process.Process).MemoryInfo
 )
 
 // SYSStats 系统信息
@@ -401,7 +405,8 @@ func BytesPoolStats(topN int, ps ...*bytespool.CapacityPools) map[string]any {
 	return ms
 }
 
-// MainStats 主程序系统指标
+// MainStats 主程序系统指标.
+// MemoryInfo 失败时省略 MemRSS/MemVMS/MemSwap, 其余字段仍返回; 进程句柄不可用时返回 nil.
 func MainStats() map[string]any {
 	mainOnce.Do(func() {
 		if p, err := process.NewProcess(int32(os.Getpid())); err == nil {
@@ -414,7 +419,8 @@ func MainStats() map[string]any {
 
 	numThreads, _ := mainProcess.NumThreads()
 	cpuPercent, _ := mainProcess.Percent(0)
-	memInfo, _ := mainProcess.MemoryInfo()
+	// 失败时 memInfo 可能为 nil, 后续组装必须判空, 不能忽略错误后直接解引用.
+	memInfo, _ := memoryInfoOf(mainProcess)
 	memPercent, _ := mainProcess.MemoryPercent()
 
 	// 网络连接数统计
@@ -434,14 +440,17 @@ func MainStats() map[string]any {
 		"NumThreads":     numThreads,
 		"CPUPercent":     fmt.Sprintf("%.2f%%", cpuPercent),
 		"MemPercent":     fmt.Sprintf("%.2f%%", memPercent),
-		"MemRSS":         utils.HumanIBytes(memInfo.RSS),
-		"MemVMS":         utils.HumanIBytes(memInfo.VMS),
-		"MemSwap":        utils.HumanIBytes(memInfo.Swap),
 		"NumGoroutine":   runtime.NumGoroutine(),
 		"NumCgoCall":     utils.Comma(runtime.NumCgoCall()),
 		"GoMaxProcs":     runtime.GOMAXPROCS(0),
 		"NumConnections": connCount,
 		"NumOpenFiles":   fdCount,
+	}
+	// MemoryInfo 失败时只省略三块内存字段, 其余进程指标仍返回.
+	if memInfo != nil {
+		stats["MemRSS"] = utils.HumanIBytes(memInfo.RSS)
+		stats["MemVMS"] = utils.HumanIBytes(memInfo.VMS)
+		stats["MemSwap"] = utils.HumanIBytes(memInfo.Swap)
 	}
 	return stats
 }

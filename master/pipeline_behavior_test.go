@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -255,7 +256,6 @@ func TestStartRemotePipelinesRunsApplicationStages(t *testing.T) {
 }
 
 // TestGetRemoteConfStopsAfterCancellation 验证远端循环最终观察 context 取消并停止调用.
-// 当前实现的 sleep 不可中断, 因此测试只要求在一个短周期后收敛, 不断言即时退出.
 func TestGetRemoteConfStopsAfterCancellation(t *testing.T) {
 	prepareMasterConfig(t)
 	called := make(chan struct{})
@@ -276,6 +276,132 @@ func TestGetRemoteConfStopsAfterCancellation(t *testing.T) {
 	case <-called:
 		t.Fatal("remote config callback continued after cancellation window")
 	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+// TestGetRemoteConfExitsDuringIntervalSleep 验证周期等待期间取消后不再调用配置方法.
+// 热更新会立刻再起一组 fetcher, 旧协程若睡死仍会写同一配置文件.
+func TestGetRemoteConfExitsDuringIntervalSleep(t *testing.T) {
+	prepareMasterConfig(t)
+	preserveRemoteWait(t)
+	waitEntered := make(chan struct{})
+	release := make(chan struct{})
+	remoteRandomWaitSeconds = func(int) int { return 0 }
+	remoteWait = gatedCancelableRemoteWait(waitEntered, release)
+
+	var n atomic.Int32
+	common.Funcs.Store("test-remote-interval", func(any) error {
+		n.Add(1)
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	GetRemoteConf(ctx, config.FilesConf{
+		Method:          "test-remote-interval",
+		Path:            "local",
+		RandomWait:      0,
+		GetConfDuration: time.Second,
+	})
+
+	// 放行首次随机等待 (0s) , 让配置方法先执行一次.
+	waitForRemoteWait(t, waitEntered)
+	releaseOneWait(release)
+	deadline := time.Now().Add(time.Second)
+	for n.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n.Load() == 0 {
+		t.Fatal("remote config callback was not invoked before interval wait")
+	}
+
+	// 进入周期等待后取消, 再放行这次等待. 不可取消实现会继续下一轮拉取.
+	waitForRemoteWait(t, waitEntered)
+	cancel()
+	releaseOneWait(release)
+	if waitForRemoteWaitOK(waitEntered, 200*time.Millisecond) {
+		t.Fatalf("remote config callback count = %d, want no extra wait after cancel during interval wait", n.Load())
+	}
+	if got := n.Load(); got != 1 {
+		t.Fatalf("remote config callback count = %d, want 1 after cancel during interval wait", got)
+	}
+}
+
+// TestGetRemoteConfExitsDuringRandomWait 验证首次随机等待期间取消后不会调用配置方法.
+func TestGetRemoteConfExitsDuringRandomWait(t *testing.T) {
+	prepareMasterConfig(t)
+	preserveRemoteWait(t)
+	waitEntered := make(chan struct{})
+	release := make(chan struct{})
+	remoteRandomWaitSeconds = func(int) int { return 1 }
+	remoteWait = gatedCancelableRemoteWait(waitEntered, release)
+
+	var n atomic.Int32
+	common.Funcs.Store("test-remote-wait", func(any) error {
+		n.Add(1)
+		return nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	GetRemoteConf(ctx, config.FilesConf{
+		Method:          "test-remote-wait",
+		Path:            "local",
+		RandomWait:      2,
+		GetConfDuration: time.Second,
+	})
+	waitForRemoteWait(t, waitEntered)
+	cancel()
+	releaseOneWait(release)
+	if waitForRemoteWaitOK(waitEntered, 200*time.Millisecond) {
+		t.Fatal("fetcher continued after cancel during random wait")
+	}
+	if got := n.Load(); got != 0 {
+		t.Fatalf("remote config callback count = %d, want 0 after cancel during random wait", got)
+	}
+}
+
+// preserveRemoteWait 保存远端等待函数并在测试结束时恢复.
+func preserveRemoteWait(t *testing.T) {
+	t.Helper()
+	oldWait := remoteWait
+	oldRandom := remoteRandomWaitSeconds
+	t.Cleanup(func() {
+		remoteWait = oldWait
+		remoteRandomWaitSeconds = oldRandom
+	})
+}
+
+// waitForRemoteWait 等待 fetcher 进入下一次 remoteWait.
+func waitForRemoteWait(t *testing.T, waitEntered <-chan struct{}) {
+	t.Helper()
+	if !waitForRemoteWaitOK(waitEntered, time.Second) {
+		t.Fatal("remote waiter was not entered")
+	}
+}
+
+// waitForRemoteWaitOK 在超时前等待 fetcher 进入下一次 remoteWait.
+func waitForRemoteWaitOK(waitEntered <-chan struct{}, timeout time.Duration) bool {
+	select {
+	case <-waitEntered:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
+// releaseOneWait 放行一次被测试卡住的等待.
+func releaseOneWait(release chan struct{}) {
+	release <- struct{}{}
+}
+
+// gatedCancelableRemoteWait 按次卡住等待, 放行后若 ctx 已取消则结束循环.
+func gatedCancelableRemoteWait(waitEntered chan struct{}, release <-chan struct{}) func(context.Context, time.Duration) bool {
+	return func(ctx context.Context, _ time.Duration) bool {
+		waitEntered <- struct{}{}
+		<-release
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+			return true
+		}
 	}
 }
 

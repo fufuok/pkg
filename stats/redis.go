@@ -44,7 +44,8 @@ func RedisDBSize() int {
 	return int(n)
 }
 
-// RedisInfo Redis 运行状态信息
+// RedisInfo Redis 运行状态信息.
+// 未初始化返回 nil; INFO 中空行、注释和无冒号行会被跳过, 不因此 panic.
 func RedisInfo() map[string]any {
 	if !common.RedisDBInited.Load() {
 		return nil
@@ -58,6 +59,10 @@ func RedisInfo() map[string]any {
 			continue
 		}
 		items := strings.SplitN(v, ":", 2)
+		// Redis INFO 偶发无冒号行, 缺 value 时跳过, 避免公开 /sys 接口 panic.
+		if len(items) != 2 {
+			continue
+		}
 		ret[items[0]] = items[1]
 	}
 	return ret

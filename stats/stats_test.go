@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"errors"
 	"math"
 	"runtime"
 	"runtime/metrics"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fufuok/bytespool"
+	"github.com/shirou/gopsutil/v3/process"
 
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/json"
@@ -188,6 +190,67 @@ func TestRuntimeStatsContracts(t *testing.T) {
 	if _, ok := combined["BytesPool"].(map[string]any); !ok {
 		t.Fatalf("combined bytes pool stats = %#v", combined["BytesPool"])
 	}
+}
+
+// TestMainStatsOmitsMemoryFieldsWhenMemoryInfoFails 验证 MemoryInfo 失败时不 panic.
+// 四个项目的 /sys/stats 都走 MetricStats -> MainStats, 这里同时钉住两条入口.
+func TestMainStatsOmitsMemoryFieldsWhenMemoryInfoFails(t *testing.T) {
+	preserveMemoryInfoOf(t)
+	memoryInfoOf = func(*process.Process) (*process.MemoryInfoStat, error) {
+		return nil, errors.New("fixture memory info failed")
+	}
+
+	main := MainStats()
+	if main == nil {
+		t.Fatal("MainStats returned nil after MemoryInfo failure")
+	}
+	if pid, ok := main["ProcessPid"].(int32); !ok || pid <= 0 {
+		t.Fatalf("process pid = %#v", main["ProcessPid"])
+	}
+	if _, ok := main["NumGoroutine"].(int); !ok {
+		t.Fatalf("goroutine count = %#v", main["NumGoroutine"])
+	}
+	for _, key := range []string{"MemRSS", "MemVMS", "MemSwap"} {
+		if _, ok := main[key]; ok {
+			t.Fatalf("MainStats kept %s after MemoryInfo failure: %#v", key, main[key])
+		}
+	}
+
+	metricsStats := MetricStats()
+	gotMain, ok := metricsStats["Main"].(map[string]any)
+	if !ok || gotMain == nil {
+		t.Fatalf("MetricStats Main = %#v", metricsStats["Main"])
+	}
+	if _, ok := gotMain["MemRSS"]; ok {
+		t.Fatalf("MetricStats kept MemRSS after MemoryInfo failure: %#v", gotMain)
+	}
+}
+
+// TestMainStatsKeepsMemoryFieldsWhenMemoryInfoSucceeds 验证成功路径仍输出三块内存字段.
+func TestMainStatsKeepsMemoryFieldsWhenMemoryInfoSucceeds(t *testing.T) {
+	preserveMemoryInfoOf(t)
+	memoryInfoOf = func(*process.Process) (*process.MemoryInfoStat, error) {
+		return &process.MemoryInfoStat{RSS: 1024, VMS: 2048, Swap: 0}, nil
+	}
+
+	main := MainStats()
+	if main == nil {
+		t.Fatal("MainStats returned nil on MemoryInfo success")
+	}
+	assertMapValues(t, main, map[string]any{
+		"MemRSS":  utils.HumanIBytes(1024),
+		"MemVMS":  utils.HumanIBytes(2048),
+		"MemSwap": utils.HumanIBytes(0),
+	})
+}
+
+// preserveMemoryInfoOf 保存进程内存查询函数并在测试结束时恢复.
+func preserveMemoryInfoOf(t *testing.T) {
+	t.Helper()
+	old := memoryInfoOf
+	t.Cleanup(func() {
+		memoryInfoOf = old
+	})
 }
 
 // TestWebAndDescriptionStats 验证 Web 开关映射及三类描述入口的稳定锚点.

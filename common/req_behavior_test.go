@@ -2,6 +2,7 @@ package common
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/imroc/req/v3"
+	"github.com/rs/zerolog"
 
 	"github.com/fufuok/pkg/config"
 )
@@ -127,6 +129,34 @@ func TestRequestClientContract(t *testing.T) {
 	}
 	if calls := retryCalls.Load(); calls != 3 {
 		t.Fatalf("retry calls = %d, want 3", calls)
+	}
+}
+
+// TestRetryHookDoesNotLogResponseBody 验证重试 hook 不把响应正文写入抽样日志.
+// NodeAgent / DataRouter / DataPlugins 默认客户端走 loadReq, 当前 hook 直接打 resp.String().
+func TestRetryHookDoesNotLogResponseBody(t *testing.T) {
+	_ = prepareCommonConfig(t)
+	var logs lockedBuffer
+	installCommonTestLoggers(&logs, zerolog.WarnLevel)
+
+	retryRequestHook(nil, errors.New("nil response"))
+	if got := logs.String(); !strings.Contains(got, "Retrying request") || strings.Contains(got, "RETRY_SECRET_TOKEN") {
+		t.Fatalf("nil response retry log = %s", got)
+	}
+
+	resp := &req.Response{
+		Response: &http.Response{StatusCode: http.StatusBadGateway},
+		Request:  &req.Request{RawURL: "http://127.0.0.1/retry"},
+	}
+	resp.SetBodyString("RETRY_SECRET_TOKEN")
+	retryRequestHook(resp, errors.New("temporary failure"))
+
+	got := logs.String()
+	if !strings.Contains(got, "Retrying request") || !strings.Contains(got, `"status":502`) || !strings.Contains(got, "http://127.0.0.1/retry") {
+		t.Fatalf("retry hook omitted status or url: %s", got)
+	}
+	if strings.Contains(got, "RETRY_SECRET_TOKEN") {
+		t.Fatalf("retry hook logged response body: %s", got)
 	}
 }
 

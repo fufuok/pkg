@@ -37,6 +37,7 @@ func preserveConfigPackageState(t *testing.T) {
 	defaultRandomWait := DefaultRandomWait
 	reqTimeoutDuration := ReqTimeoutDuration
 	reqTimeoutShortDuration := ReqTimeoutShortDuration
+	oldNodeIPFetcherSleep := nodeIPFetcherSleep
 	chanxInitCap := ChanxInitCap
 	chanxMaxBufCap := ChanxMaxBufCap
 	webServerAddr := WebServerAddr
@@ -105,6 +106,7 @@ func preserveConfigPackageState(t *testing.T) {
 		DefaultRandomWait = defaultRandomWait
 		ReqTimeoutDuration = reqTimeoutDuration
 		ReqTimeoutShortDuration = reqTimeoutShortDuration
+		nodeIPFetcherSleep = oldNodeIPFetcherSleep
 		ChanxInitCap = chanxInitCap
 		ChanxMaxBufCap = chanxMaxBufCap
 		WebServerAddr = webServerAddr

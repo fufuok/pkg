@@ -28,9 +28,7 @@ func loadReq() {
 	cfg := config.Config().SYSConf
 	req.SetTimeout(cfg.ReqTimeoutDuration).
 		SetCommonRetryCount(cfg.ReqMaxRetries).
-		SetCommonRetryHook(func(resp *req.Response, err error) {
-			LogSampled().Warn().Err(err).Str("resp", resp.String()).Msg("Retrying request")
-		})
+		SetCommonRetryHook(retryRequestHook)
 	if reqDebug == cfg.ReqDebug {
 		return
 	}
@@ -65,4 +63,19 @@ func newReq() {
 		SetJsonMarshal(json.Marshal).
 		SetJsonUnmarshal(json.Unmarshal).
 		SetLogger(NewAppLogger())
+}
+
+// retryRequestHook 在默认客户端重试前记录状态码和 URL, 不写请求或响应正文.
+// resp 在网络错误时可能没有底层 http.Response; 正文可能含密钥, 不能打进日志.
+func retryRequestHook(resp *req.Response, err error) {
+	ev := LogSampled().Warn().Err(err)
+	if resp != nil {
+		if resp.Response != nil {
+			ev = ev.Int("status", resp.StatusCode)
+		}
+		if resp.Request != nil && resp.Request.RawURL != "" {
+			ev = ev.Str("url", resp.Request.RawURL)
+		}
+	}
+	ev.Msg("Retrying request")
 }

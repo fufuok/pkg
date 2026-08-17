@@ -35,6 +35,10 @@ var (
 
 	// NodeIPFromAPI 已获取成功的节点 IP
 	NodeIPFromAPI = ""
+
+	// nodeIPFetcherSleep 控制重试间隔.
+	// 默认 time.Sleep; 包内测试可替换, 避免 10s 起步等待, 不支持并行改写.
+	nodeIPFetcherSleep = time.Sleep
 )
 
 type NodeConf struct {
@@ -219,7 +223,7 @@ func nodeIPFetcher(api string) {
 	}()
 
 	for i := 1; i <= 10; i++ {
-		time.Sleep(time.Duration(i*10) * time.Second)
+		nodeIPFetcherSleep(time.Duration(i*10) * time.Second)
 
 		if Config().NodeConf.NodeInfo.NodeIP != net.IPv4zero.String() {
 			NodeIPFromAPI = Config().NodeConf.NodeInfo.NodeIP
@@ -240,11 +244,15 @@ func nodeIPFetcher(api string) {
 			continue
 		}
 
-		// 从 IPAPI 获取到出口 IP, 更新到全局配置项
+		// 从 IPAPI 获取到出口 IP, 发布新配置指针, 不改已发布的 MainConf.
 		NodeIPFromAPI = nodeIP.String()
 		cfg := mainConf.Load()
-		cfg.NodeConf.NodeInfo.NodeIP = NodeIPFromAPI
-		mainConf.Store(cfg)
+		if cfg == nil {
+			return
+		}
+		next := *cfg
+		next.NodeConf.NodeInfo.NodeIP = NodeIPFromAPI
+		mainConf.Store(&next)
 		return
 	}
 }
