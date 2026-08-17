@@ -63,8 +63,8 @@ func SetClientIP(c fiber.Ctx) {
 
 // GetClientIP 获取客户端 IP
 // 1. 上下文存储中获取
-// 2. 下游代理头信息中获取
-// 3. TCP 协议 RemoteIP()
+// 2. 下游代理头: 令牌仍是 HashString(xip, xtime, WebTokenSalt), 且 xtime 在 SignTTL 窗口内
+// 3. TCP 协议 RemoteIP(), 空则 0.0.0.0
 // immutable
 func GetClientIP(c fiber.Ctx) string {
 	clientIP, _ := c.Locals(HeaderXProxyClientIP).(string)
@@ -76,7 +76,7 @@ func GetClientIP(c fiber.Ctx) string {
 	if xip != "" {
 		xtoken := c.Get(HeaderXProxyToken)
 		xtime := c.Get(HeaderXProxyTime)
-		if xtoken == xhash.HashString(xip, xtime, config.WebTokenSalt) {
+		if validProxyClientIP(xip, xtoken, xtime) {
 			c.Locals(HeaderXProxyClientIP, xip)
 			return xip
 		}
@@ -88,4 +88,29 @@ func GetClientIP(c fiber.Ctx) string {
 	}
 	c.Locals(HeaderXProxyClientIP, clientIP)
 	return clientIP
+}
+
+// validProxyClientIP 校验下游代理头: 令牌仍是 HashString(xip, xtime, WebTokenSalt),
+// 且 xtime 必须是 RFC3339, 与 GTimeNow 的绝对差不超过 SignTTL.
+// SignTTL<=0 或 Config 未就绪时回退 WebSignTTLDefault, 避免热加载空窗把合法近时令牌全部打回.
+func validProxyClientIP(xip, xtoken, xtime string) bool {
+	if xip == "" || xtoken == "" || xtime == "" {
+		return false
+	}
+	if xtoken != xhash.HashString(xip, xtime, config.WebTokenSalt) {
+		return false
+	}
+	issued, err := time.Parse(time.RFC3339, xtime)
+	if err != nil {
+		return false
+	}
+	ttl := int64(config.WebSignTTLDefault)
+	if cfg := config.Config(); cfg != nil && cfg.WebConf.SignTTL > 0 {
+		ttl = cfg.WebConf.SignTTL
+	}
+	delta := common.GTimeNow().Sub(issued)
+	if delta < 0 {
+		delta = -delta
+	}
+	return delta <= time.Duration(ttl)*time.Second
 }
