@@ -2,9 +2,15 @@ package common
 
 import (
 	"github.com/imroc/req/v3"
+	"github.com/rs/zerolog"
 
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/json"
+)
+
+const (
+	// reqDebugBodyMaxLen ReqDebug 重试日志中请求/响应正文的最大打印字节数.
+	reqDebugBodyMaxLen = 2048
 )
 
 var (
@@ -38,7 +44,8 @@ func loadReq() {
 	ReqUpload.SetLogger(NewAppLogger())
 	ReqDownload.SetLogger(NewAppLogger())
 	if reqDebug {
-		req.EnableDumpAll().EnableDebugLog().EnableTraceAll()
+		// 默认客户端只 dump 头; 正文改由重试 hook 限长打印, 避免 EnableDumpAll 无上限且与 hook 重复.
+		req.EnableDumpAllWithoutBody().EnableDebugLog().EnableTraceAll()
 		ReqUpload.EnableDumpAllWithoutRequestBody().EnableDebugLog().EnableTraceAll()
 		ReqDownload.EnableDumpAllWithoutResponseBody().EnableDebugLog().EnableTraceAll()
 	} else {
@@ -65,17 +72,46 @@ func newReq() {
 		SetLogger(NewAppLogger())
 }
 
-// retryRequestHook 在默认客户端重试前记录状态码和 URL, 不写请求或响应正文.
-// resp 在网络错误时可能没有底层 http.Response; 正文可能含密钥, 不能打进日志.
+// retryRequestHook 在默认客户端重试前记录状态码和 URL.
+// 非 ReqDebug 不写正文, 避免密钥进入抽样 Warn 日志; ReqDebug 时用无级别日志附截断正文.
+// resp 在网络错误时可能没有底层 http.Response, 此时只保留 error 和已有 URL.
 func retryRequestHook(resp *req.Response, err error) {
-	ev := LogSampled().Warn().Err(err)
+	ev := newRetryLogEvent().Err(err)
 	if resp != nil {
 		if resp.Response != nil {
 			ev = ev.Int("status", resp.StatusCode)
 		}
-		if resp.Request != nil && resp.Request.RawURL != "" {
-			ev = ev.Str("url", resp.Request.RawURL)
+		if resp.Request != nil {
+			if resp.Request.RawURL != "" {
+				ev = ev.Str("url", resp.Request.RawURL)
+			}
+			if body := reqDebugBody(resp.Request.Body); body != "" {
+				ev = ev.Str("req_body", body)
+			}
+		}
+		if body := reqDebugBody(resp.Bytes()); body != "" {
+			ev = ev.Str("resp_body", body)
 		}
 	}
 	ev.Msg("Retrying request")
+}
+
+// newRetryLogEvent 选择重试日志通道.
+// ReqDebug 用无级别事件, 不受默认 Warn 级别过滤; 生产仍走抽样 Warn.
+func newRetryLogEvent() *zerolog.Event {
+	if reqDebug {
+		return Log().Log()
+	}
+	return LogSampled().Warn()
+}
+
+// reqDebugBody 仅在 ReqDebug 时返回截断后的正文, 空体或关闭调试时返回空串.
+func reqDebugBody(body []byte) string {
+	if !reqDebug || len(body) == 0 {
+		return ""
+	}
+	if len(body) > reqDebugBodyMaxLen {
+		body = body[:reqDebugBodyMaxLen]
+	}
+	return string(body)
 }

@@ -81,6 +81,12 @@ func TestRequestClientContract(t *testing.T) {
 	if !strings.Contains(regularDump.String(), "POST /echo") || !strings.Contains(regularDump.String(), "200 OK") {
 		t.Fatalf("regular debug dump omitted request or response metadata: %s", regularDump.String())
 	}
+	if strings.Contains(regularDump.String(), "regular request body") {
+		t.Fatal("regular debug dump exposed the request body")
+	}
+	if strings.Contains(regularDump.String(), "DOWNLOAD_SECRET") {
+		t.Fatal("regular debug dump exposed the response body")
+	}
 	if strings.Contains(uploadDump.String(), "UPLOAD_SECRET") {
 		t.Fatal("upload debug dump exposed the request body")
 	}
@@ -132,10 +138,10 @@ func TestRequestClientContract(t *testing.T) {
 	}
 }
 
-// TestRetryHookDoesNotLogResponseBody 验证重试 hook 不把响应正文写入抽样日志.
-// NodeAgent / DataRouter / DataPlugins 默认客户端走 loadReq, 当前 hook 直接打 resp.String().
+// TestRetryHookDoesNotLogResponseBody 验证关闭 ReqDebug 时重试 hook 不写请求或响应正文.
 func TestRetryHookDoesNotLogResponseBody(t *testing.T) {
 	_ = prepareCommonConfig(t)
+	reqDebug = false
 	var logs lockedBuffer
 	installCommonTestLoggers(&logs, zerolog.WarnLevel)
 
@@ -146,7 +152,7 @@ func TestRetryHookDoesNotLogResponseBody(t *testing.T) {
 
 	resp := &req.Response{
 		Response: &http.Response{StatusCode: http.StatusBadGateway},
-		Request:  &req.Request{RawURL: "http://127.0.0.1/retry"},
+		Request:  &req.Request{RawURL: "http://127.0.0.1/retry", Body: []byte("REQ_SECRET_TOKEN")},
 	}
 	resp.SetBodyString("RETRY_SECRET_TOKEN")
 	retryRequestHook(resp, errors.New("temporary failure"))
@@ -155,8 +161,40 @@ func TestRetryHookDoesNotLogResponseBody(t *testing.T) {
 	if !strings.Contains(got, "Retrying request") || !strings.Contains(got, `"status":502`) || !strings.Contains(got, "http://127.0.0.1/retry") {
 		t.Fatalf("retry hook omitted status or url: %s", got)
 	}
-	if strings.Contains(got, "RETRY_SECRET_TOKEN") {
-		t.Fatalf("retry hook logged response body: %s", got)
+	if strings.Contains(got, "RETRY_SECRET_TOKEN") || strings.Contains(got, "REQ_SECRET_TOKEN") {
+		t.Fatalf("retry hook logged request or response body: %s", got)
+	}
+}
+
+// TestRetryHookLogsTruncatedBodyWhenReqDebug 验证 ReqDebug 下重试 hook 打印截断正文.
+// 成功请求不走 hook; 超长正文只保留前 reqDebugBodyMaxLen 字节.
+func TestRetryHookLogsTruncatedBodyWhenReqDebug(t *testing.T) {
+	_ = prepareCommonConfig(t)
+	reqDebug = true
+	var logs lockedBuffer
+	installCommonTestLoggers(&logs, zerolog.WarnLevel)
+
+	reqTail := "REQ_SECRET_TAIL"
+	respTail := "RETRY_SECRET_TAIL"
+	resp := &req.Response{
+		Response: &http.Response{StatusCode: http.StatusBadGateway},
+		Request: &req.Request{
+			RawURL: "http://127.0.0.1/retry",
+			Body:   []byte(strings.Repeat("B", reqDebugBodyMaxLen) + reqTail),
+		},
+	}
+	resp.SetBodyString(strings.Repeat("A", reqDebugBodyMaxLen) + respTail)
+	retryRequestHook(resp, errors.New("temporary failure"))
+
+	got := logs.String()
+	if !strings.Contains(got, "Retrying request") || !strings.Contains(got, `"status":502`) || !strings.Contains(got, "http://127.0.0.1/retry") {
+		t.Fatalf("req debug retry hook omitted status or url: %s", got)
+	}
+	if !strings.Contains(got, `"req_body"`) || !strings.Contains(got, `"resp_body"`) {
+		t.Fatalf("req debug retry hook omitted truncated bodies: %s", got)
+	}
+	if strings.Contains(got, reqTail) || strings.Contains(got, respTail) {
+		t.Fatalf("req debug retry hook did not truncate bodies: %s", got)
 	}
 }
 
