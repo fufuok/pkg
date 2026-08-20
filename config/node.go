@@ -191,6 +191,7 @@ func GetNodeIPFromAPIs(ipapi string, timeout ...time.Duration) string {
 	ipChan := make(chan string, len(apis))
 	for _, api := range apis {
 		go func() {
+			// Clone 只拷当时默认客户端, 再覆盖为短超时; 本次探测不跟随后续 loadReq 热更新.
 			resp, err := req.DefaultClient().Clone().SetTimeout(dur).R().SetContext(ctx).Get(api)
 			if err == nil && resp.IsSuccessState() {
 				ip := strings.TrimSpace(resp.String())

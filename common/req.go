@@ -29,6 +29,9 @@ func initReq() {
 	loadReq()
 }
 
+// loadReq 热更新默认客户端超时、重试和 ReqDebug.
+// DefaultClient().Clone() 是快照, 本函数不会回写已有克隆体; 调用方要跟随配置变化必须重新 Clone.
+//
 //go:norace
 func loadReq() {
 	cfg := config.Config().SYSConf
@@ -45,9 +48,13 @@ func loadReq() {
 	ReqDownload.SetLogger(NewAppLogger())
 	if reqDebug {
 		// 默认客户端只 dump 头; 正文改由重试 hook 限长打印, 避免 EnableDumpAll 无上限且与 hook 重复.
-		req.EnableDumpAllWithoutBody().EnableDebugLog().EnableTraceAll()
-		ReqUpload.EnableDumpAllWithoutRequestBody().EnableDebugLog().EnableTraceAll()
-		ReqDownload.EnableDumpAllWithoutResponseBody().EnableDebugLog().EnableTraceAll()
+		// dump 必须进 logger, 不能落到 stdout; 热开 ReqDebug 时生产进程标准输出通常无人收.
+		applyReqDebugDump(req.DefaultClient(), false, false)
+		applyReqDebugDump(ReqUpload, false, true)
+		applyReqDebugDump(ReqDownload, true, false)
+		req.EnableDebugLog().EnableTraceAll()
+		ReqUpload.EnableDebugLog().EnableTraceAll()
+		ReqDownload.EnableDebugLog().EnableTraceAll()
 	} else {
 		req.DisableDumpAll().DisableDebugLog().DisableTraceAll()
 		ReqUpload.DisableDumpAll().DisableDebugLog().DisableTraceAll()
@@ -55,6 +62,8 @@ func loadReq() {
 	}
 }
 
+// newReq 重建默认客户端和上传/下载专用客户端.
+// 调用方对 DefaultClient().Clone() 得到的是当时快照, 之后 loadReq 热更新超时、重试和 ReqDebug 不会回写到克隆体.
 func newReq() {
 	req.SetUserAgent(config.ReqUserAgent).
 		SetJsonMarshal(json.Marshal).
@@ -70,6 +79,19 @@ func newReq() {
 		SetJsonMarshal(json.Marshal).
 		SetJsonUnmarshal(json.Unmarshal).
 		SetLogger(NewAppLogger())
+}
+
+// applyReqDebugDump 打开指定客户端的 dump, 输出接到无级别 logger.
+// requestBody/responseBody 为 false 时隐藏对应正文, 供上传/下载客户端复用.
+func applyReqDebugDump(client *req.Client, requestBody, responseBody bool) {
+	client.SetCommonDumpOptions(&req.DumpOptions{
+		Output:         NewAppLoggerWriter(false),
+		RequestHeader:  true,
+		RequestBody:    requestBody,
+		ResponseHeader: true,
+		ResponseBody:   responseBody,
+	})
+	client.EnableDumpAll()
 }
 
 // retryRequestHook 在默认客户端重试前记录状态码和 URL.

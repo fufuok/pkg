@@ -25,10 +25,11 @@ func TestRequestClientContract(t *testing.T) {
 	cfg.SYSConf.ReqMaxRetries = 0
 	var regularDump, uploadDump, downloadDump bytes.Buffer
 	newReq()
-	setRequestDumpOptions(req.DefaultClient(), &regularDump)
-	setRequestDumpOptions(ReqUpload, &uploadDump)
-	setRequestDumpOptions(ReqDownload, &downloadDump)
 	loadReq()
+	// 生产路径会把 dump Output 接到 logger; EnableDumpAllTo 只换输出目标, 保留 loadReq 设好的头/体开关.
+	req.DefaultClient().EnableDumpAllTo(&regularDump)
+	ReqUpload.EnableDumpAllTo(&uploadDump)
+	ReqDownload.EnableDumpAllTo(&downloadDump)
 
 	if ReqUpload == nil || ReqDownload == nil {
 		t.Fatal("specialized request clients were not initialized")
@@ -198,13 +199,60 @@ func TestRetryHookLogsTruncatedBodyWhenReqDebug(t *testing.T) {
 	}
 }
 
-// setRequestDumpOptions 把 req 调试输出定向到内存, 保留四类 header/body 开关.
-func setRequestDumpOptions(client *req.Client, output *bytes.Buffer) {
-	client.SetCommonDumpOptions(&req.DumpOptions{
-		Output:         output,
-		RequestHeader:  true,
-		RequestBody:    true,
-		ResponseHeader: true,
-		ResponseBody:   true,
-	})
+// TestReqDebugDumpWritesToLogger 验证 ReqDebug dump 写入 logger, 不落到 stdout.
+func TestReqDebugDumpWritesToLogger(t *testing.T) {
+	cfg := prepareCommonConfig(t)
+	cfg.SYSConf.ReqDebug = true
+	cfg.SYSConf.ReqMaxRetries = 0
+	var logs lockedBuffer
+	installCommonTestLoggers(&logs, zerolog.WarnLevel)
+	AppLoggerUseSampler = false
+
+	newReq()
+	loadReq()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	t.Cleanup(server.Close)
+
+	if _, err := req.Get(server.URL + "/dump-logger"); err != nil {
+		t.Fatalf("request dump logger fixture: %v", err)
+	}
+	got := logs.String()
+	if !strings.Contains(got, "GET /dump-logger") || !strings.Contains(got, "200 OK") {
+		t.Fatalf("req debug dump did not write headers to logger: %s", got)
+	}
+	if strings.Contains(got, "\nok\n") || strings.Contains(got, "\"ok\"") {
+		t.Fatalf("req debug dump exposed the response body: %s", got)
+	}
+}
+
+// TestClonedDefaultClientKeepsSnapshotAfterReload 验证 Clone 只拷当时配置, loadReq 热更新不会回写克隆体.
+func TestClonedDefaultClientKeepsSnapshotAfterReload(t *testing.T) {
+	cfg := prepareCommonConfig(t)
+	cfg.SYSConf.ReqTimeoutDuration = 40 * time.Millisecond
+	cfg.SYSConf.ReqMaxRetries = 0
+	cfg.SYSConf.ReqDebug = false
+	newReq()
+	loadReq()
+
+	cloned := req.DefaultClient().Clone()
+	if got := cloned.GetClient().Timeout; got != 40*time.Millisecond {
+		t.Fatalf("cloned timeout = %s, want 40ms", got)
+	}
+
+	cfg.SYSConf.ReqTimeoutDuration = 80 * time.Millisecond
+	cfg.SYSConf.ReqDebug = true
+	loadReq()
+	if got := req.DefaultClient().GetClient().Timeout; got != 80*time.Millisecond {
+		t.Fatalf("default timeout after reload = %s, want 80ms", got)
+	}
+	if got := cloned.GetClient().Timeout; got != 40*time.Millisecond {
+		t.Fatalf("cloned timeout followed loadReq: %s", got)
+	}
+	if cloned.DebugLog {
+		t.Fatal("cloned client unexpectedly inherited later ReqDebug")
+	}
 }
