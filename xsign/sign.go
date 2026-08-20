@@ -5,8 +5,8 @@ package xsign
 
 import (
 	"strconv"
-	"time"
 
+	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/xhash"
 )
 
@@ -27,10 +27,9 @@ func GenSignString(ts, key string) string {
 	return ts + sign
 }
 
-// GenSignNow 以当前本地 Unix 秒生成签名.
-// 需要 NTP 校正时间的调用方应继续走 common.GenSignNow.
+// GenSignNow 以 NTP 校正后的当前时间戳生成签名.
 func GenSignNow(key string) (int64, string) {
-	ts := time.Now().Unix()
+	ts := common.GTimestamp()
 	return ts, GenSign(ts, key)
 }
 
@@ -44,11 +43,10 @@ func VerifySign(key, sign string) bool {
 
 // VerifySignTTL 校验签名及签名有效期(当前时间 **秒 范围内有效)
 func VerifySignTTL(key, sign string, second int64) bool {
-	return VerifySignTTLAt(key, sign, second, time.Now().Unix())
+	return VerifySignTTLAt(key, sign, second, common.GTimestamp())
 }
 
-// VerifySignTTLAt 按给定 Unix 秒校验签名有效期.
-// common.VerifySignTTL 传入 GTimestamp, 以保留 NTP 校正时间.
+// VerifySignTTLAt 按给定 Unix 秒校验签名有效期, 供测试注入时钟.
 func VerifySignTTLAt(key, sign string, second, now int64) bool {
 	if ok := VerifySign(key, sign); !ok {
 		return false
