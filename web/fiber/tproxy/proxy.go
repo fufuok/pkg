@@ -63,7 +63,7 @@ func SetClientIP(c fiber.Ctx) {
 
 // GetClientIP 获取客户端 IP
 // 1. 上下文存储中获取
-// 2. 下游代理头: 令牌仍是 HashString(xip, xtime, WebTokenSalt), 且 xtime 在 SignTTL 窗口内
+// 2. 下游代理头: 令牌仍是 HashString(xip, xtime, WebTokenSalt), 且 xtime 落在 SignTTL 闭区间内
 // 3. TCP 协议 RemoteIP(), 空则 0.0.0.0
 // immutable
 func GetClientIP(c fiber.Ctx) string {
@@ -91,7 +91,7 @@ func GetClientIP(c fiber.Ctx) string {
 }
 
 // validProxyClientIP 校验下游代理头: 令牌仍是 HashString(xip, xtime, WebTokenSalt),
-// 且 xtime 必须是 RFC3339, 与 GTimeNow 的绝对差不超过 SignTTL.
+// 且 xtime 必须是 RFC3339, 落在 GTimeNow 前后 SignTTL 的闭区间内.
 // SignTTL<=0 或 Config 未就绪时回退 WebSignTTLDefault, 避免热加载空窗把合法近时令牌全部打回.
 func validProxyClientIP(xip, xtoken, xtime string) bool {
 	if xip == "" || xtoken == "" || xtime == "" {
@@ -108,9 +108,11 @@ func validProxyClientIP(xip, xtoken, xtime string) bool {
 	if cfg := config.Config(); cfg != nil && cfg.WebConf.SignTTL > 0 {
 		ttl = cfg.WebConf.SignTTL
 	}
-	delta := common.GTimeNow().Sub(issued)
-	if delta < 0 {
-		delta = -delta
-	}
-	return delta <= time.Duration(ttl)*time.Second
+	now := common.GTimeNow()
+	window := time.Duration(ttl) * time.Second
+	// 用 now±TTL 做闭区间比较, 避免极远未来时间让 Time.Sub 饱和为 MinInt64,
+	// 取绝对值后仍为负并误判在窗口内.
+	earliest := now.Add(-window)
+	latest := now.Add(window)
+	return !issued.Before(earliest) && !issued.After(latest)
 }

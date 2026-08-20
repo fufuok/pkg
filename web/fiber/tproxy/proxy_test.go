@@ -96,6 +96,24 @@ func TestGetClientIPRejectsFutureProxyToken(t *testing.T) {
 	}
 }
 
+// TestGetClientIPRejectsFarFutureProxyToken 年份 9999 即使哈希正确也不能绕过 SignTTL 窗口.
+func TestGetClientIPRejectsFarFutureProxyToken(t *testing.T) {
+	restoreWebTokenSalt(t, "test-salt")
+
+	xip := "118.118.8.8"
+	xtime := "9999-12-31T23:59:59Z"
+	xtoken := xhash.HashString(xip, xtime, config.WebTokenSalt)
+
+	got := getClientIPFromRequest(t, map[string]string{
+		HeaderXProxyClientIP: xip,
+		HeaderXProxyToken:    xtoken,
+		HeaderXProxyTime:     xtime,
+	})
+	if got == xip {
+		t.Fatalf("year 9999 proxy token accepted, GetClientIP() = %q", got)
+	}
+}
+
 // TestGetClientIPRejectsInvalidProxyTime 非法 RFC3339 即使按原文算出令牌也不能信头.
 func TestGetClientIPRejectsInvalidProxyTime(t *testing.T) {
 	restoreWebTokenSalt(t, "test-salt")
@@ -152,6 +170,13 @@ func TestValidProxyClientIPWindow(t *testing.T) {
 	futureToken := xhash.HashString(xip, futureTime, config.WebTokenSalt)
 	if validProxyClientIP(xip, futureToken, futureTime) {
 		t.Fatal("future HashString token should be rejected")
+	}
+
+	// 年份 9999 会让 Time.Sub 饱和为 MinInt64, 取绝对值后仍为负, 旧实现会误判在窗口内.
+	farFutureTime := "9999-12-31T23:59:59Z"
+	farFutureToken := xhash.HashString(xip, farFutureTime, config.WebTokenSalt)
+	if validProxyClientIP(xip, farFutureToken, farFutureTime) {
+		t.Fatal("year 9999 proxy time should be rejected")
 	}
 
 	if validProxyClientIP(xip, xhash.HashString(xip, "not-rfc3339", config.WebTokenSalt), "not-rfc3339") {
