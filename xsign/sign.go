@@ -1,147 +1,58 @@
-// Package xsign 提供微服务请求参数拼串 MD5 签名.
+// Package xsign 提供两类签名, 都不是加密, 也不能替换 xcrypto.Encrypt / Seal.
 //
-// 算法来自生产侧 microservice/common: md5(k1=v1&k2=v2&token).
-// 这不是加密, 也不是 common.GenSign 的 ts+key 签名, 更不能替换 xcrypto.Encrypt / Seal.
+// GenSign 是 pkg 通用 ts+key MD5; MSGenSign 是微服务拼串 MD5.
 package xsign
 
 import (
-	"bytes"
-	"fmt"
-	"net/url"
-	"reflect"
-	"sort"
-	"strings"
+	"strconv"
+	"time"
 
-	"github.com/fufuok/pkg/json"
-	"github.com/fufuok/pkg/utils"
 	"github.com/fufuok/pkg/xhash"
 )
 
-const (
-	// SignFieldName 参数中的签名字段名, 拼串时抽出, 不进入摘要.
-	SignFieldName = "sign"
-)
-
-// GenSign 按参数拼串后追加 token 做 MD5.
-// 空值、非对象和无法转成 map 的输入得到 md5(token), 与历史金值一致.
-func GenSign(params any, token string) (raw, sign string) {
-	raw, _ = GetSignRaw(params)
-	sign = GenSignWithRaw(raw, token)
-	return
+// GenSign 使用时间戳和密钥生成简单签名字符串
+// 算法: md5(ts+key)
+// 结果: ts+sign
+func GenSign(ts int64, key string) string {
+	tss := strconv.FormatInt(ts, 10)
+	return GenSignString(tss, key)
 }
 
-// GenSignWithRaw 对已拼好的 raw 追加 token 后做 MD5Hex.
-func GenSignWithRaw(raw, token string) string {
-	return xhash.MD5Hex(raw + token)
+// GenSignString 字符串类型的时间戳生成签名
+func GenSignString(ts, key string) string {
+	if len(ts) != 10 || key == "" {
+		return ""
+	}
+	sign := xhash.MD5Hex(ts + key)
+	return ts + sign
 }
 
-// GetSignRaw 拼接待签名字符串, 形如 k1=v1&k2=v2&.
-// 空字符串和 nil 不进拼串; 名为 sign 的字段只抽出到第二个返回值.
-func GetSignRaw(params any) (raw, sign string) {
-	if isEmpty(params) {
-		return
-	}
-
-	switch val := params.(type) {
-	case map[string]string:
-		return buildMapString(val)
-	case map[string]any:
-		return buildMapAny(val)
-	case url.Values:
-		tm := make(map[string]string, len(val))
-		for k, vs := range val {
-			tm[k] = strings.Join(vs, ",")
-		}
-		return buildMapString(tm)
-	}
-
-	// 结构体等非 map 输入先 JSON 再解成 map, 数字保持 json.Number, 避免 float 精度漂移.
-	m := make(map[string]any)
-	bs := json.MustJSON(params)
-	dec := json.NewDecoder(bytes.NewReader(bs))
-	dec.UseNumber()
-	if err := dec.Decode(&m); err != nil {
-		return
-	}
-	return GetSignRaw(m)
+// GenSignNow 以当前本地 Unix 秒生成签名.
+// 需要 NTP 校正时间的调用方应继续走 common.GenSignNow.
+func GenSignNow(key string) (int64, string) {
+	ts := time.Now().Unix()
+	return ts, GenSign(ts, key)
 }
 
-// VerifySign 用参数中的 sign 字段校验拼串 MD5, 十六进制大小写不敏感.
-// 缺少 sign 时 match 为 false.
-func VerifySign(params any, token string) (raw string, match bool) {
-	raw, signValue := GetSignRaw(params)
-	if signValue == "" {
-		return
+// VerifySign 校验签名
+func VerifySign(key, sign string) bool {
+	if key == "" || len(sign) != 42 {
+		return false
 	}
-	match = strings.EqualFold(signValue, xhash.MD5Hex(raw+token))
-	return
+	return sign == GenSignString(sign[:10], key)
 }
 
-// buildMapString 按 key 排序拼接 map[string]string, 空值和 sign 字段不进 raw.
-func buildMapString(m map[string]string) (raw, sign string) {
-	keys := make([]string, 0, len(m))
-	for k, v := range m {
-		if v == "" {
-			continue
-		}
-		if k == SignFieldName {
-			sign = v
-			continue
-		}
-		keys = append(keys, k)
-	}
-
-	sort.Strings(keys)
-
-	var s strings.Builder
-	for i := range keys {
-		fmt.Fprintf(&s, "%s=%s&", keys[i], m[keys[i]])
-	}
-	raw = s.String()
-	return
+// VerifySignTTL 校验签名及签名有效期(当前时间 **秒 范围内有效)
+func VerifySignTTL(key, sign string, second int64) bool {
+	return VerifySignTTLAt(key, sign, second, time.Now().Unix())
 }
 
-// buildMapAny 按 key 排序拼接 map[string]any, nil 和空字符串跳过, 其余用 %v.
-func buildMapAny(m map[string]any) (raw, sign string) {
-	keys := make([]string, 0, len(m))
-	for k, v := range m {
-		if v == "" || v == nil {
-			continue
-		}
-		if k == SignFieldName {
-			sign = utils.MustString(v)
-			continue
-		}
-		keys = append(keys, k)
+// VerifySignTTLAt 按给定 Unix 秒校验签名有效期.
+// common.VerifySignTTL 传入 GTimestamp, 以保留 NTP 校正时间.
+func VerifySignTTLAt(key, sign string, second, now int64) bool {
+	if ok := VerifySign(key, sign); !ok {
+		return false
 	}
-
-	sort.Strings(keys)
-
-	var s strings.Builder
-	for i := range keys {
-		fmt.Fprintf(&s, "%s=%v&", keys[i], m[keys[i]])
-	}
-	raw = s.String()
-	return
-}
-
-// isEmpty 判断签名输入是否视为空. 空输入不拼串, 最终摘要为 md5(token).
-func isEmpty(o any) bool {
-	if o == nil {
-		return true
-	}
-
-	v := reflect.ValueOf(o)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Map, reflect.Slice:
-		return v.Len() == 0
-	case reflect.Pointer:
-		if v.IsNil() {
-			return true
-		}
-		return isEmpty(v.Elem().Interface())
-	default:
-		zero := reflect.Zero(v.Type())
-		return reflect.DeepEqual(o, zero.Interface())
-	}
+	ts, _ := strconv.ParseInt(sign[:10], 10, 64)
+	return ts >= now-second && ts <= now+second
 }
