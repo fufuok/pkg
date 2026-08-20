@@ -2599,16 +2599,77 @@ func goJSONMarshal(i any) ([]byte, error) {
 }
 
 func testJSONString(t *testing.T, str string) {
+	t.Helper()
 	gjsonString := string(AppendJSONString(nil, str))
 	data, err := goJSONMarshal(str)
 	if err != nil {
 		panic(123)
 	}
 	goString := string(data)
-	if gjsonString != goString {
-		t.Fatal(strconv.Quote(str) + "\n\t" +
-			gjsonString + "\n\t" +
-			goString + "\n\t<<< MISMATCH >>>")
+	if gjsonString == goString {
+		return
+	}
+	// Go 1.27 json v2 把非法 UTF-8 编成 U+FFFD 字节, gjson 仍写 \ufffd.
+	// 只接受这一处历史编码差异, HTML / \u2028 等其余转义仍须与标准库逐字节一致.
+	if jsonStringEncodingsCompatible(gjsonString, goString) {
+		return
+	}
+	t.Fatal(strconv.Quote(str) + "\n\t" +
+		gjsonString + "\n\t" +
+		goString + "\n\t<<< MISMATCH >>>")
+}
+
+// jsonStringEncodingsCompatible 判断两段 JSON 字符串字面量是否表示同一值,
+// 且文本差异仅来自 \ufffd 与字面 U+FFFD 的等价写法.
+func jsonStringEncodingsCompatible(gjsonEnc, stdEnc string) bool {
+	var got, want string
+	if err := json.Unmarshal([]byte(gjsonEnc), &got); err != nil {
+		return false
+	}
+	if err := json.Unmarshal([]byte(stdEnc), &want); err != nil {
+		return false
+	}
+	if got != want {
+		return false
+	}
+	return normalizeJSONReplacement(gjsonEnc) == normalizeJSONReplacement(stdEnc)
+}
+
+// normalizeJSONReplacement 把 JSON 文本中未转义的 \ufffd 收成 U+FFFD 字节, 便于跨 Go 版本比较.
+// 只消费完整的 \u 转义, 避免把 \\ufffd 这种字面反斜杠误改成替换符.
+func normalizeJSONReplacement(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] == '\\' {
+			if strings.HasPrefix(s[i:], `\ufffd`) {
+				b.WriteString("\ufffd")
+				i += len(`\ufffd`)
+				continue
+			}
+			b.WriteByte(s[i])
+			i++
+			if i < len(s) {
+				b.WriteByte(s[i])
+				i++
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+func TestJSONStringEncodingsCompatible(t *testing.T) {
+	if !jsonStringEncodingsCompatible(`"R\ufffd"`, "\"R\ufffd\"") {
+		t.Fatal("\\ufffd and literal U+FFFD must be treated as equivalent JSON encodings")
+	}
+	if jsonStringEncodingsCompatible(`"R\\ufffd"`, "\"R\ufffd\"") {
+		t.Fatal("escaped backslash plus ufffd must not match a replacement rune")
+	}
+	if jsonStringEncodingsCompatible(`"a\u003cb"`, `"a<b"`) {
+		t.Fatal("HTML escape differences must still be treated as a mismatch")
 	}
 }
 
@@ -2627,6 +2688,26 @@ func TestJSONString(t *testing.T) {
 	testJSONString(t, s)
 	testJSONString(t, "R\xfd\xfc\a!\x82eO\x16?_\x0f\x9ab\x1dr")
 	testJSONString(t, "_\xb9\v\xad\xb3|X!\xb6\xd9U&\xa4\x1a\x95\x04")
+	// 非法 UTF-8 必须仍是合法 JSON, 且 gjson 继续输出历史 \ufffd, 不跟随 Go 1.27 json v2 的 U+FFFD 字节.
+	invalidUTF8 := "R\xfd\xfc\a!\x82eO\x16?_\x0f\x9ab\x1dr"
+	gjsonInvalid := string(AppendJSONString(nil, invalidUTF8))
+	if !strings.Contains(gjsonInvalid, `\ufffd`) {
+		t.Fatalf("AppendJSONString must keep \\ufffd for invalid UTF-8, got %s", gjsonInvalid)
+	}
+	var got, want string
+	if err := json.Unmarshal([]byte(gjsonInvalid), &got); err != nil {
+		t.Fatal(err)
+	}
+	stdInvalid, err := goJSONMarshal(invalidUTF8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(stdInvalid, &want); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("invalid UTF-8 round-trip mismatch: gjson=%q std=%q", got, want)
+	}
 	data, _ := json.Marshal("\b\f")
 	if string(data) == "\"\\b\\f\"" {
 		// Go version 1.22+ encodes "\b" and "\f" correctly.

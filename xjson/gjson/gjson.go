@@ -2070,6 +2070,8 @@ func AppendJSONString(dst []byte, s string) []byte {
 				break
 			}
 			if r == utf8.RuneError && n == 1 {
+				// 非法 UTF-8 统一写成 \ufffd, 与历史 gjson / Go 1.26 encoding/json v1 一致.
+				// Go 1.27 默认 json v2 会改写为 U+FFFD 字节, 两者都是合法 JSON 且反序列化结果相同.
 				dst = append(dst, `\ufffd`...)
 			} else if r == '\u2028' || r == '\u2029' {
 				dst = append(dst, `\u202`...)
