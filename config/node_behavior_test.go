@@ -13,30 +13,49 @@ import (
 	"github.com/fufuok/pkg/json"
 )
 
-// TestParseNodeInfoFileFormats 验证新旧 node_info 文件的节点类型和字段映射.
+// TestParseNodeInfoFileFormats 验证真实 node_info 字段顺序和项目扩展字段不影响通用节点信息.
 func TestParseNodeInfoFileFormats(t *testing.T) {
 	tests := []struct {
-		name     string
-		body     string
-		wantType int
+		name string
+		body string
 	}{
-		{name: "new node type", body: `{"node_id":7,"service_ip":"127.0.0.7","node_name":"new","inter_node_type":"edge","inter_node_code":9}`, wantType: 9},
-		{name: "legacy normal node", body: `{"node_id":8,"service_ip":"127.0.0.8","node_name":"legacy","inter_node":"普通节点"}`, wantType: 0},
-		{name: "legacy overseas node", body: `{"node_id":9,"service_ip":"127.0.0.9","inter_node":"海外版_海外用户接入"}`, wantType: 4},
+		{name: "TOS node", body: `{"hostname":"spoofed","host_ip":"192.0.2.1","node_id":11067,"node_name":"北京接入-11067(test)","node_desc":"腾讯云北京-环网","node_type":"xunyou","service_ip":"36.110.143.182","inter_node_code":8,"tos_node":1}`},
+		{name: "non-TOS node", body: `{"node_id":12691,"node_name":"东南亚接入-12691","node_desc":"腾讯云新加坡-环网","node_type":"xunyou","service_ip":"43.134.41.156","inter_node_code":4,"tos_node":0}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			prepareConfigBehaviorTest(t)
 			file := filepath.Join(t.TempDir(), "node_info.json")
 			assert.Nil(t, os.WriteFile(file, []byte(tt.body), 0o600))
-			cfg := &MainConf{NodeConf: NodeConf{NodeInfoFile: file}}
+			cfg := &MainConf{NodeConf: NodeConf{
+				NodeInfoFile: file,
+				NodeInfo: NodeInfo{
+					Hostname: "runtime-host",
+					HostIP:   "10.0.0.1",
+				},
+			}}
 
-			parseNodeInfoJson(cfg)
-			assert.Equal(t, tt.wantType, cfg.NodeConf.NodeInfo.NodeType)
+			assert.Nil(t, parseNodeInfoJSON(cfg))
+			assert.Equal(t, "xunyou", cfg.NodeConf.NodeInfo.NodeType)
 			assert.True(t, cfg.NodeConf.NodeInfo.NodeID > 0)
+			assert.Equal(t, "runtime-host", cfg.NodeConf.NodeInfo.Hostname)
+			assert.Equal(t, "10.0.0.1", cfg.NodeConf.NodeInfo.HostIP)
 			assert.Equal(t, file, NodeInfoFile)
 		})
 	}
+}
+
+// TestParseNodeInfoRejectsInvalidNodeType 验证类型错误不会把临时解析出的部分字段发布到配置.
+func TestParseNodeInfoRejectsInvalidNodeType(t *testing.T) {
+	prepareConfigBehaviorTest(t)
+	file := filepath.Join(t.TempDir(), "node_info.json")
+	assert.Nil(t, os.WriteFile(file, []byte(`{"node_id":99,"node_name":"partial","node_type":8,"service_ip":"127.0.0.99"}`), 0o600))
+	want := NodeInfo{Hostname: "runtime-host", HostIP: "10.0.0.1", NodeID: 7, NodeIP: "127.0.0.7", NodeName: "stable", NodeType: "xunyou"}
+	cfg := &MainConf{NodeConf: NodeConf{NodeInfoFile: file, NodeInfo: want}}
+
+	err := parseNodeInfoJSON(cfg)
+	assert.True(t, err != nil)
+	assert.Equal(t, want, cfg.NodeConf.NodeInfo)
 }
 
 // TestParseNodeInfoBackupContract 验证 backup 默认关闭, 显式启用后才读取并回写有效节点信息.
@@ -44,7 +63,7 @@ func TestParseNodeInfoBackupContract(t *testing.T) {
 	prepareConfigBehaviorTest(t)
 	backupFile := filepath.Join(t.TempDir(), "node_info.backup")
 	NodeInfoBackupFile = backupFile
-	want := NodeInfo{Hostname: "saved-host", HostIP: "10.0.0.1", NodeID: 11, NodeIP: "127.0.0.11", NodeName: "saved", NodeType: 2}
+	want := NodeInfo{Hostname: "saved-host", HostIP: "10.0.0.1", NodeID: 11, NodeIP: "127.0.0.11", NodeName: "saved", NodeType: "xunyou"}
 	assert.Nil(t, os.WriteFile(backupFile, json.MustJSON(want), 0o600))
 
 	disabled := &MainConf{}
@@ -63,6 +82,21 @@ func TestParseNodeInfoBackupContract(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Nil(t, json.Unmarshal(body, &persisted))
 	assert.Equal(t, want.NodeIP, persisted.NodeIP)
+	assert.Equal(t, want.NodeType, persisted.NodeType)
+}
+
+// TestParseNodeInfoBackupRejectsInvalidNodeType 验证 backup 同样严格遵循字符串节点类型契约.
+func TestParseNodeInfoBackupRejectsInvalidNodeType(t *testing.T) {
+	prepareConfigBehaviorTest(t)
+	NodeInfoBackupFile = filepath.Join(t.TempDir(), "node_info.backup")
+	assert.Nil(t, os.WriteFile(NodeInfoBackupFile, []byte(`{"node_id":99,"node_type":8,"service_ip":"127.0.0.99"}`), 0o600))
+	want := NodeInfo{Hostname: "runtime-host", HostIP: "10.0.0.1", NodeID: 7, NodeIP: "127.0.0.7", NodeType: "xunyou"}
+	cfg := &MainConf{NodeConf: NodeConf{NodeInfo: want}}
+
+	err := parseNodeInfoJSONBackup(cfg)
+	assert.True(t, err != nil)
+	assert.Contains(t, filepath.Base(NodeInfoBackupFile), err.Error())
+	assert.Equal(t, want, cfg.NodeConf.NodeInfo)
 }
 
 // TestGetNodeIPFromAPIsUsesFirstValidLocalResult 验证多个本地 API 中只接受合法 IP 响应.

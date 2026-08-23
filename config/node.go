@@ -2,6 +2,8 @@ package config
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"os"
 	"strconv"
@@ -15,9 +17,6 @@ import (
 
 	"github.com/fufuok/pkg/json"
 )
-
-// UnknownNodeType 未知节点类型
-const UnknownNodeType = -1
 
 var (
 	// NodeInfoFile 配置中指定的节点基本信息配置文件路径
@@ -57,18 +56,7 @@ type NodeInfo struct {
 	NodeIP   string `json:"service_ip"`
 	NodeName string `json:"node_name"`
 	NodeDesc string `json:"node_desc"`
-	NodeType int    `json:"node_type"`
-}
-
-// 用于加载 node_info.json 文件内容
-type nodeInfoFileData struct {
-	NodeID        int    `json:"node_id"`
-	NodeIP        string `json:"service_ip"`
-	NodeName      string `json:"node_name"`
-	NodeDesc      string `json:"node_desc"`
-	InterNode     string `json:"inter_node"`
-	InterNodeType string `json:"inter_node_type"`
-	InterNodeCode int    `json:"inter_node_code"`
+	NodeType string `json:"node_type"`
 }
 
 // 解析节点信息
@@ -84,16 +72,19 @@ func parseNodeInfoConfig(cfg *MainConf) {
 	cfg.NodeConf.NodeInfo = NodeInfo{
 		Hostname: hostname,
 		HostIP:   hostIP,
-		NodeType: UnknownNodeType,
 	}
 
 	// 首选: 加载节点本地配置文件: node_info.json
-	parseNodeInfoJson(cfg)
+	if err := parseNodeInfoJSON(cfg); err != nil && !errors.Is(err, os.ErrNotExist) {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: Load node info file failed: %v\n", err)
+	}
 
 	// 次选: 加载上次保存的有效节点配置文件: etc/node_info.backup (默认关闭, 需环境变量显式启用)
 	backupEnabled := nodeInfoBackupEnabled()
 	if backupEnabled && cfg.NodeConf.NodeInfo.NodeIP == "" {
-		parseNodeInfoJsonBackup(cfg)
+		if err := parseNodeInfoJSONBackup(cfg); err != nil && !errors.Is(err, os.ErrNotExist) {
+			_, _ = fmt.Fprintf(os.Stderr, "Warning: Load node info backup file failed: %v\n", err)
+		}
 	}
 
 	// 节点 IP 为空时, 以出口 IP 作为节点 IP
@@ -126,49 +117,41 @@ func nodeInfoBackupEnabled() bool {
 	return enabled
 }
 
-func parseNodeInfoJson(cfg *MainConf) {
+// parseNodeInfoJSON 只加载跨项目通用的节点基础字段.
+// 项目专用扩展字段由 JSON 解码器忽略; 解码失败时不发布部分结果.
+func parseNodeInfoJSON(cfg *MainConf) error {
 	NodeInfoFile = cfg.NodeConf.NodeInfoFile
 	if NodeInfoFile == "" {
-		return
+		return nil
 	}
 	body, err := os.ReadFile(NodeInfoFile)
 	if err != nil {
-		return
+		return fmt.Errorf("read node info file %q: %w", NodeInfoFile, err)
 	}
-	var nInfo nodeInfoFileData
+
+	nInfo := cfg.NodeConf.NodeInfo
+	hostname, hostIP := nInfo.Hostname, nInfo.HostIP
 	if err := json.Unmarshal(body, &nInfo); err != nil {
-		return
+		return fmt.Errorf("parse node info file %q: %w", NodeInfoFile, err)
 	}
-	cfg.NodeConf.NodeInfo.NodeID = nInfo.NodeID
-	cfg.NodeConf.NodeInfo.NodeIP = nInfo.NodeIP
-	cfg.NodeConf.NodeInfo.NodeName = nInfo.NodeName
-	cfg.NodeConf.NodeInfo.NodeDesc = nInfo.NodeDesc
-	if nInfo.InterNodeType != "" {
-		// 新配置文件, 使用标准节点类型字段值: node_base.node_type
-		cfg.NodeConf.NodeInfo.NodeType = nInfo.InterNodeCode
-	} else {
-		// 旧配置, 根据 inter_node 推导节点类型
-		switch nInfo.InterNode {
-		case "普通节点":
-			cfg.NodeConf.NodeInfo.NodeType = 0
-		case "海外版_国内用户接入":
-			cfg.NodeConf.NodeInfo.NodeType = 2
-		case "海外版_海外用户接入":
-			cfg.NodeConf.NodeInfo.NodeType = 4
-		}
-	}
+	nInfo.Hostname, nInfo.HostIP = hostname, hostIP
+	cfg.NodeConf.NodeInfo = nInfo
+	return nil
 }
 
-func parseNodeInfoJsonBackup(cfg *MainConf) {
+// parseNodeInfoJSONBackup 严格加载当前 NodeInfo 契约的备份数据.
+// 读取或解码失败时不发布部分结果, 由调用方决定是否记录错误.
+func parseNodeInfoJSONBackup(cfg *MainConf) error {
 	body, err := os.ReadFile(NodeInfoBackupFile)
 	if err != nil {
-		return
+		return fmt.Errorf("read node info backup file %q: %w", NodeInfoBackupFile, err)
 	}
 	var nInfo NodeInfo
 	if err := json.Unmarshal(body, &nInfo); err != nil {
-		return
+		return fmt.Errorf("parse node info backup file %q: %w", NodeInfoBackupFile, err)
 	}
 	cfg.NodeConf.NodeInfo = nInfo
+	return nil
 }
 
 func saveNodeInfoBackup(info NodeInfo) {
