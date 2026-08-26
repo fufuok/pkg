@@ -152,6 +152,8 @@ plainText, err := xcrypto.OpenString(text, key)
 
 数据库连接密码通常时含有特殊字符的, 一般需要先编码后再加密.
 
+本工具只负责加密前把用户名和密码编成 `url.UserPassword`. 它不解密 DSN, 也不替驱动还原密码.
+
 ```shell
 # go run main.go -user="user~~666" -password='~!@#$%^&*()_+{}|":?><,./;[]'
 url.UserPassword:
@@ -160,13 +162,221 @@ user~~666
 user~~666:~%21%40%23$%25%5E&%2A%28%29_+%7B%7D%7C%22%3A%3F%3E%3C,.%2F;%5B%5D
 ```
 
+### 加密步骤
 
+1. 用上面的 `-user` / `-password` 得到编码后的 `user:password`.
+2. 只把这一段拼进 DSN, 不要对整串 DSN 再做 `QueryEscape` / `PathEscape`.
+3. 把拼好的 DSN 当作普通明文, 走本工具的 `-key` / `-data` 加密.
+4. 数据库账号仍使用原始密码. 编码只存在于待加密的 DSN 字符串里.
 
+```shell
+# 1. 先编码用户名和密码
+# go run main.go -user="releaseops" -password='ab+cd/ef'
+# 得到: releaseops:ab+cd%2Fef
+#
+# 2. 再拼 DSN (示例, 按实际主机/库名修改)
+# releaseops:ab+cd%2Fef@tcp(127.0.0.1:33084)/xy_releaseops?charset=utf8mb4&parseTime=true&loc=UTC
+#
+# 3. 整串加密
+# export BASE_SECRET_KEY=TQeKrAAFJ5godyTxtDw2o1
+# go run main.go -key="RELEASEOPS_MYSQL_DSN" -data='releaseops:ab+cd%2Fef@tcp(127.0.0.1:33084)/xy_releaseops?charset=utf8mb4&parseTime=true&loc=UTC' -appname="XY.CICDAgent"
+```
 
+注意:
 
+- `url.UserPassword` 不会编码 `+` 和 `@`. `+` 必须保持字面量, 不要写成 `%2B` 以外的二次转义; `@` 出现在用户名或密码里时, 驱动若按最后一个 `@` 切 host, 需要应用自己处理, 本工具不会额外编码它.
+- 字面量 `%` 会被编成 `%25`. 不要先手工 `quote` 一次再交给本工具, 否则会变成 `%252B`.
+- 不得使用 `url.QueryEscape` / `QueryUnescape`. `QueryUnescape` 会把字面量 `+` 变成空格.
+- `xcrypto.GetenvDecrypt` 只还原加密, 不会还原 `url.UserPassword`.
 
+### 应用端使用
 
+`GetenvDecrypt` 之后得到的仍是“编码过的 DSN”, 不是原始密码. 怎么用取决于驱动, 不要假设 GORM 或本工具会自动解码.
 
+**SQL Server / `sqlserver://...`**
+
+驱动走 `net/url.Parse`, 自己会解 userinfo. 应用只需:
+
+```go
+dsn := xcrypto.GetenvDecrypt("CT_ADMIN_DSN", config.Config().SYSConf.BaseSecretValue)
+db, err := sqlserver.Open(dsn) // 或 gorm 的 sqlserver.Open(dsn)
+```
+
+不要对整串 DSN 再做 `PathUnescape`.
+
+**MySQL / `user:pass@tcp(host:port)/db`**
+
+`go-sql-driver/mysql` 不解码 userinfo, `ParseDSN` 把第一个 `:` 到最后一个 `@` 之间的内容当字面密码. 没有引入 GORM 时更不会有人代解码. 应用必须自己拆字段:
+
+```go
+dsn := xcrypto.GetenvDecrypt("RELEASEOPS_MYSQL_DSN", config.Config().SYSConf.BaseSecretValue)
+cfg, err := mysql.ParseDSN(dsn)
+if err != nil {
+	return err
+}
+cfg.User, err = url.PathUnescape(cfg.User)
+if err != nil {
+	return err
+}
+cfg.Passwd, err = url.PathUnescape(cfg.Passwd)
+if err != nil {
+	return err
+}
+connector, err := mysql.NewConnector(cfg)
+if err != nil {
+	return err
+}
+db := sql.OpenDB(connector)
+```
+
+不要:
+
+- 对整串 DSN 做 `PathUnescape` 后再 `sql.Open("mysql", dsn)`
+- 把解码后的密码再 `FormatDSN` 回字符串; `@` `:` `/` 会被驱动二次截断
+- 使用 `QueryUnescape`
+
+离线给人看明文时, 才对 user/password 做 `PathUnescape`. 那不是连接路径.
+
+### 示例
+
+下面用同一组账号走完整路径. 数据库里存的始终是原始密码, 不是编码串.
+
+```text
+用户名: releaseops
+原始密码: ab+cd/ef#x
+```
+
+#### 1. 编码 userinfo
+
+```shell
+go run main.go -user="releaseops" -password='ab+cd/ef#x'
+```
+
+输出第三行是待拼进 DSN 的片段:
+
+```text
+url.UserPassword:
+releaseops
+ab+cd/ef#x
+releaseops:ab+cd%2Fef%23x
+```
+
+对照:
+
+| 原始 | 写入 DSN |
+| --- | --- |
+| `+` | `+` (不编码) |
+| `/` | `%2F` |
+| `#` | `%23` |
+| `ab%2Bcd` (密码本身含百分号) | `ab%252Bcd` |
+
+不要先手工把 `+` 写成 `%2B` 再交给本工具.
+
+#### 2. 拼 DSN 再加密
+
+MySQL:
+
+```text
+releaseops:ab+cd%2Fef%23x@tcp(127.0.0.1:33084)/xy_releaseops?charset=utf8mb4&parseTime=true&loc=UTC
+```
+
+SQL Server:
+
+```text
+sqlserver://releaseops:ab+cd%2Fef%23x@127.0.0.1:1433?database=xy_crontab
+```
+
+```shell
+export BASE_SECRET_KEY=TQeKrAAFJ5godyTxtDw2o1
+go run main.go -key="RELEASEOPS_MYSQL_DSN" \
+  -data='releaseops:ab+cd%2Fef%23x@tcp(127.0.0.1:33084)/xy_releaseops?charset=utf8mb4&parseTime=true&loc=UTC' \
+  -appname="XY.CICDAgent"
+```
+
+把输出的密文写入环境变量. `GetenvDecrypt` 还原出来的仍是上面这串编码 DSN, 密码字段还是 `ab+cd%2Fef%23x`.
+
+#### 3. 应用端: MySQL (本工具不解码, 驱动也不解码)
+
+```go
+package example
+
+import (
+	"database/sql"
+	"net/url"
+
+	"github.com/fufuok/pkg/config"
+	"github.com/fufuok/pkg/xcrypto"
+	"github.com/go-sql-driver/mysql"
+)
+
+func openMySQL() (*sql.DB, error) {
+	// 1. 只解密. 得到的仍是编码过的 DSN.
+	dsn := xcrypto.GetenvDecrypt("RELEASEOPS_MYSQL_DSN", config.Config().SYSConf.BaseSecretValue)
+
+	// 2. 先按驱动字面量切开, 再只解码 User / Passwd.
+	cfg, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.User, err = url.PathUnescape(cfg.User); err != nil {
+		return nil, err
+	}
+	if cfg.Passwd, err = url.PathUnescape(cfg.Passwd); err != nil {
+		return nil, err
+	}
+	// cfg.Passwd == "ab+cd/ef#x"
+
+	// 3. 用 Config 直连, 不要 FormatDSN 后再 sql.Open.
+	connector, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return sql.OpenDB(connector), nil
+}
+```
+
+错误示例:
+
+```go
+// 错: 整串解码会破坏 query, 解码后的 # / @ 也无法再当 DSN 字符串用.
+plain := xcrypto.GetenvDecrypt("RELEASEOPS_MYSQL_DSN", config.Config().SYSConf.BaseSecretValue)
+decoded, _ := url.PathUnescape(plain)
+db, err := sql.Open("mysql", decoded)
+
+// 错: QueryUnescape 会把密码里的 + 变成空格.
+cfg.Passwd, _ = url.QueryUnescape(cfg.Passwd)
+```
+
+#### 4. 应用端: SQL Server (驱动自己解码)
+
+```go
+package example
+
+import (
+	"github.com/fufuok/pkg/config"
+	"github.com/fufuok/pkg/xcrypto"
+	"gorm.io/driver/sqlserver"
+	"gorm.io/gorm"
+)
+
+func openSQLServer() (*gorm.DB, error) {
+	// GetenvDecrypt 后直接交给驱动. sqlserver:// 走 net/url.Parse, 会还原 ab+cd/ef#x.
+	dsn := xcrypto.GetenvDecrypt("CT_ADMIN_DSN", config.Config().SYSConf.BaseSecretValue)
+	return gorm.Open(sqlserver.Open(dsn), &gorm.Config{})
+}
+```
+
+GORM 本身不解码密码. 这里能还原, 只是因为 `sqlserver://` 使用 URL 解析.
+
+#### 5. 离线看明文 (不是连接路径)
+
+```go
+cfg, _ := mysql.ParseDSN(xcrypto.GetenvDecrypt("RELEASEOPS_MYSQL_DSN", baseSecret))
+user, _ := url.PathUnescape(cfg.User)
+pass, _ := url.PathUnescape(cfg.Passwd)
+// user == "releaseops"
+// pass == "ab+cd/ef#x"
+```
 
 *ff*
 
