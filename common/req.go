@@ -47,9 +47,10 @@ func loadReq() {
 	ReqUpload.SetLogger(NewAppLogger())
 	ReqDownload.SetLogger(NewAppLogger())
 	if reqDebug {
-		// 默认客户端只 dump 头; 正文改由重试 hook 限长打印, 避免 EnableDumpAll 无上限且与 hook 重复.
+		// 默认客户端 dump 头和正文, 方便开发调试; 敏感场景由调用方主动关 ReqDebug 或改用专用客户端.
 		// dump 必须进 logger, 不能落到 stdout; 热开 ReqDebug 时生产进程标准输出通常无人收.
-		applyReqDebugDump(req.DefaultClient(), false, false)
+		// 上传/下载客户端仍分别隐藏文件体, 避免大文件或二进制内容刷屏.
+		applyReqDebugDump(req.DefaultClient(), true, true)
 		applyReqDebugDump(ReqUpload, false, true)
 		applyReqDebugDump(ReqDownload, true, false)
 		req.EnableDebugLog().EnableTraceAll()
@@ -96,6 +97,7 @@ func applyReqDebugDump(client *req.Client, requestBody, responseBody bool) {
 
 // retryRequestHook 在默认客户端重试前记录状态码和 URL.
 // 非 ReqDebug 不写正文, 避免密钥进入抽样 Warn 日志; ReqDebug 时用无级别日志附截断正文.
+// 成功请求走 dump 看完整正文; 重试路径仍限长, 避免失败体反复刷满日志.
 // resp 在网络错误时可能没有底层 http.Response, 此时只保留 error 和已有 URL.
 func retryRequestHook(resp *req.Response, err error) {
 	ev := newRetryLogEvent().Err(err)

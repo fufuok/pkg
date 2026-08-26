@@ -16,7 +16,7 @@ import (
 	"github.com/fufuok/pkg/config"
 )
 
-// TestRequestClientContract 验证 user-agent、超时、重试、debug 和专用客户端 body 隐藏策略.
+// TestRequestClientContract 验证 user-agent、超时、重试、debug 默认打印正文和专用客户端 body 隐藏策略.
 func TestRequestClientContract(t *testing.T) {
 	cfg := prepareCommonConfig(t)
 	config.ReqUserAgent = "pkg-common-test/1.0"
@@ -55,6 +55,9 @@ func TestRequestClientContract(t *testing.T) {
 			if err == nil {
 				_ = conn.Close()
 			}
+		case "/echo":
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("regular response body"))
 		default:
 			w.Header().Set("Content-Type", "text/plain")
 			_, _ = w.Write([]byte("DOWNLOAD_SECRET"))
@@ -82,11 +85,11 @@ func TestRequestClientContract(t *testing.T) {
 	if !strings.Contains(regularDump.String(), "POST /echo") || !strings.Contains(regularDump.String(), "200 OK") {
 		t.Fatalf("regular debug dump omitted request or response metadata: %s", regularDump.String())
 	}
-	if strings.Contains(regularDump.String(), "regular request body") {
-		t.Fatal("regular debug dump exposed the request body")
+	if !strings.Contains(regularDump.String(), "regular request body") {
+		t.Fatal("regular debug dump omitted the request body")
 	}
-	if strings.Contains(regularDump.String(), "DOWNLOAD_SECRET") {
-		t.Fatal("regular debug dump exposed the response body")
+	if !strings.Contains(regularDump.String(), "regular response body") {
+		t.Fatal("regular debug dump omitted the response body")
 	}
 	if strings.Contains(uploadDump.String(), "UPLOAD_SECRET") {
 		t.Fatal("upload debug dump exposed the request body")
@@ -199,7 +202,7 @@ func TestRetryHookLogsTruncatedBodyWhenReqDebug(t *testing.T) {
 	}
 }
 
-// TestReqDebugDumpWritesToLogger 验证 ReqDebug dump 写入 logger, 不落到 stdout.
+// TestReqDebugDumpWritesToLogger 验证 ReqDebug dump 写入 logger, 不落到 stdout, 且默认客户端打印正文.
 func TestReqDebugDumpWritesToLogger(t *testing.T) {
 	cfg := prepareCommonConfig(t)
 	cfg.SYSConf.ReqDebug = true
@@ -217,15 +220,18 @@ func TestReqDebugDumpWritesToLogger(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	if _, err := req.Get(server.URL + "/dump-logger"); err != nil {
+	if _, err := req.R().SetBodyString("logger request body").Post(server.URL + "/dump-logger"); err != nil {
 		t.Fatalf("request dump logger fixture: %v", err)
 	}
 	got := logs.String()
-	if !strings.Contains(got, "GET /dump-logger") || !strings.Contains(got, "200 OK") {
+	if !strings.Contains(got, "POST /dump-logger") || !strings.Contains(got, "200 OK") {
 		t.Fatalf("req debug dump did not write headers to logger: %s", got)
 	}
-	if strings.Contains(got, "\nok\n") || strings.Contains(got, "\"ok\"") {
-		t.Fatalf("req debug dump exposed the response body: %s", got)
+	if !strings.Contains(got, "logger request body") {
+		t.Fatalf("req debug dump omitted the request body: %s", got)
+	}
+	if !strings.Contains(got, "ok") {
+		t.Fatalf("req debug dump omitted the response body: %s", got)
 	}
 }
 
