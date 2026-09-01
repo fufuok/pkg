@@ -77,15 +77,17 @@ func TestAddJob(t *testing.T) {
 
 			if tt.wantErr {
 				assert.NotNil(t, err)
-			} else {
-				assert.Nil(t, err)
-				assert.NotNil(t, job)
-				assert.Equal(t, tt.name, job.Name())
-				assert.True(t, job.IsRunning())
+				assert.Nil(t, job)
+				_, exists := GetJob(tt.name)
+				assert.False(t, exists)
+				return
 			}
 
-			// 清理
-			job.Stop()
+			assert.Nil(t, err)
+			assert.NotNil(t, job)
+			assert.Equal(t, tt.name, job.Name())
+			assert.True(t, job.IsRunning())
+			t.Cleanup(job.Stop)
 		})
 	}
 }
@@ -174,6 +176,28 @@ func TestAddJobDuplicate(t *testing.T) {
 
 		// 清理
 		job2.Stop()
+	})
+
+	t.Run("invalid_spec_preserves_existing_job", func(t *testing.T) {
+		mockRunner := &MockRunner{}
+		ctx := context.Background()
+
+		job, err := AddJob(ctx, "keep_on_bad_spec", "@every 1s", mockRunner)
+		assert.Nil(t, err)
+		assert.NotNil(t, job)
+		t.Cleanup(job.Stop)
+
+		for _, spec := range []string{"invalid", ""} {
+			got, err := AddJob(ctx, "keep_on_bad_spec", spec, mockRunner)
+			assert.NotNil(t, err, spec)
+			assert.Nil(t, got, spec)
+			assert.True(t, job.IsRunning(), spec)
+
+			cur, ok := GetJob("keep_on_bad_spec")
+			assert.True(t, ok, spec)
+			assert.Equal(t, job, cur, spec)
+			assert.Equal(t, "@every 1s", cur.spec, spec)
+		}
 	})
 }
 

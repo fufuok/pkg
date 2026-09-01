@@ -3,6 +3,7 @@ package crontab
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"sync"
 	"sync/atomic"
@@ -85,7 +86,9 @@ func (j *Job) Stop() {
 	}
 }
 
-// 添加或更新任务, 返回工作中的任务对象
+// start 把已通过预检的任务挂到调度器, 成功后写入 jobs 并返回自身.
+// AddFunc 在入口已 Parse 的前提下仍可能失败 (调度器未就绪或解析器日后分叉).
+// ctx 必须在 AddFunc 之前派生: WithRunImmediately 可能立刻回调, 不能延后赋值.
 func (j *Job) start(ctx context.Context, r Runner, once bool, opts ...cron.EntryOption) (*Job, error) {
 	j.ctx, j.cancel = context.WithCancel(ctx)
 	cmd := func() {
@@ -123,7 +126,11 @@ func (j *Job) start(ctx context.Context, r Runner, once bool, opts ...cron.Entry
 
 	id, err := crontab.AddFunc(j.spec, cmd, opts...)
 	if err != nil {
-		return j, err
+		// 任务未入表. 父 ctx 若可取消 (Runtime 热加载 ctx), 不 cancel 会把子 ctx
+		// 挂在父树上直到父取消. Stop 对未 running 对象是空操作, 不会代为释放.
+		j.cancel()
+		j.cancel = nil
+		return nil, fmt.Errorf("add job %q: %w", j.name, err)
 	}
 
 	j.id = id
@@ -150,7 +157,8 @@ func (j *Job) runningToStop() bool {
 	return j.running.CompareAndSwap(true, false)
 }
 
-// AddJob 添加任务
+// AddJob 添加或按名更新任务.
+// spec 非法 (含空串) 时返回 error, 不停止同名旧任务; 合法后同 spec skip, 不同则先停再挂.
 func AddJob(ctx context.Context, name, spec string, runner Runner, opts ...cron.EntryOption) (*Job, error) {
 	return addJob(ctx, name, spec, runner, false, nil, opts...)
 }
@@ -172,15 +180,32 @@ func AddOnceJobWithFields(ctx context.Context, name, spec string, runner Runner,
 	return addJob(ctx, name, spec, runner, true, fields, opts...)
 }
 
-// 添加任务
+// addJob 是 AddJob / AddOnceJob / *WithFields 的统一入口.
+//
+// 热加载 Runtime 按单线程调用. 非法 spec 绝不能先 Stop 同名旧任务,
+// 否则配置笔误会让线上已挂任务消失, 直到下一次合法重载.
+//
+// 流程:
+//  1. 用 DefaultParser.Parse 预检 (与调度器 WithSecondOptional 字段一致).
+//     失败只返回 error, 由调用方记录或处理; 旧任务保持调度; 空 spec 也视为非法.
+//  2. spec 合法后: 同名且仍 running 且 spec 未变则 skip,
+//     不替换 runner / fields / once / opts, 避免热加载抖动和取消在跑任务.
+//  3. 否则先 Stop 再挂新任务.
+//
+// 清空任务请 StopJob, 不要把空 spec 交给本函数.
 func addJob(ctx context.Context, name, spec string, runner Runner, once bool, fields map[string]any, opts ...cron.EntryOption) (*Job, error) {
+	if _, err := DefaultParser.Parse(spec); err != nil {
+		return nil, fmt.Errorf("invalid cron spec %q for job %q: %w", spec, name, err)
+	}
+
 	if job, ok := GetJob(name); ok {
 		if job.IsRunning() && job.spec == spec {
-			logger.Info().Str(name, spec).Msg("skipping job add")
+			logger.Info().Str("job", job.name).Str("cron", spec).Msg("skipping job add")
 			return job, nil
 		}
 		job.Stop()
 	}
+
 	j := &Job{
 		name:   name,
 		spec:   spec,

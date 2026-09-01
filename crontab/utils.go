@@ -4,7 +4,9 @@ import (
 	"github.com/fufuok/cron"
 )
 
-// DefaultParser 默认解析器，支持可选的秒字段
+// DefaultParser 默认解析器，支持可选的秒字段.
+// 字段集合必须与 initMain 中 cron.WithSecondOptional() 一致,
+// 否则 addJob 预检通过后 AddFunc 仍可能失败, 或预检误拒合法表达式.
 // 支持的表达式格式:
 // - 标准格式(5字段): "分钟 小时 日 月 星期"
 // - 扩展格式(6字段): "秒 分钟 小时 日 月 星期"
