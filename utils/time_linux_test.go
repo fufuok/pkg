@@ -21,17 +21,15 @@ func TestWaitNextSecond(t *testing.T) {
 		finished   time.Time
 	}
 	results := make(chan waitResult, rounds*(workersPerRound+1))
-	for i := 0; i < rounds; i++ {
+	for range rounds {
 		var wg sync.WaitGroup
-		for j := 0; j < workersPerRound; j++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range workersPerRound {
+			wg.Go(func() {
 				start := time.Now()
 				wantTarget := BeginOfSecond(start.Add(time.Second))
 				gotTarget := WaitNextSecondWithTime(start)
 				results <- waitResult{wantTarget: wantTarget, gotTarget: gotTarget, finished: time.Now()}
-			}()
+			})
 		}
 
 		start := time.Now()

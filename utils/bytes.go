@@ -2,6 +2,7 @@ package utils
 
 import (
 	"bytes"
+	"slices"
 )
 
 // GetBytes 先转为字符串再转为 []byte, 可选指定默认值
@@ -118,8 +119,8 @@ func EqualFoldBytes(b, s []byte) bool {
 	if len(b) != len(s) {
 		return false
 	}
-	for i := len(b) - 1; i >= 0; i-- {
-		if toUpperTable[b[i]] != toUpperTable[s[i]] {
+	for i, v := range slices.Backward(b) {
+		if toUpperTable[v] != toUpperTable[s[i]] {
 			return false
 		}
 	}

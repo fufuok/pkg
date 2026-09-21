@@ -9,7 +9,7 @@ import (
 func TestMSGenSign(t *testing.T) {
 	key := "test.KEY-777"
 	tests := []struct {
-		param interface{}
+		param any
 		want  string
 	}{
 		{nil, "df1f04e971d6ce284fa372fa81652e9e"},
@@ -18,7 +18,7 @@ func TestMSGenSign(t *testing.T) {
 		{"123", "df1f04e971d6ce284fa372fa81652e9e"},
 		{456, "df1f04e971d6ce284fa372fa81652e9e"},
 		{
-			map[string]interface{}{
+			map[string]any{
 				"t":   1661834285,
 				"a":   "test",
 				"z":   true,

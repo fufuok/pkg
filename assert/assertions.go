@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"text/tabwriter"
@@ -256,13 +257,7 @@ func IsNil(o any) bool {
 // containsKind checks if a specified kind in the slice of kinds.
 // Ref: stretchr/testify
 func containsKind(kinds []reflect.Kind, kind reflect.Kind) bool {
-	for i := range kinds {
-		if kind == kinds[i] {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(kinds, kind)
 }
 
 // IsEmpty gets whether the specified object is considered empty or not.

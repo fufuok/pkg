@@ -8,6 +8,7 @@
 package gjson
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -3536,8 +3537,8 @@ func (t Result) Path(json string) string {
 		}
 		return "@this"
 	}
-	for i := len(comps) - 1; i >= 0; i-- {
-		rcomp := Parse(comps[i])
+	for _, comp := range slices.Backward(comps) {
+		rcomp := Parse(comp)
 		if !rcomp.Exists() {
 			goto fail
 		}

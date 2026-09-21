@@ -11,7 +11,7 @@ import (
 type Bool struct {
 	_ NoCopy
 	_ NoCmp
-	v uint32
+	v atomic.Uint32
 }
 
 func NewBool(val bool) *Bool {
@@ -34,12 +34,12 @@ func NewFalse() *Bool {
 
 // Load atomically loads and returns the value stored in x.
 func (x *Bool) Load() bool {
-	return atomic.LoadUint32(&x.v) != 0
+	return x.v.Load() != 0
 }
 
 // Store atomically stores val into x.
 func (x *Bool) Store(val bool) {
-	atomic.StoreUint32(&x.v, b32(val))
+	x.v.Store(b32(val))
 }
 
 func (x *Bool) StoreTrue() {
@@ -52,12 +52,12 @@ func (x *Bool) StoreFalse() {
 
 // Swap atomically stores new into x and returns the previous value.
 func (x *Bool) Swap(new bool) (old bool) {
-	return atomic.SwapUint32(&x.v, b32(new)) != 0
+	return x.v.Swap(b32(new)) != 0
 }
 
 // CompareAndSwap executes the compare-and-swap operation for the boolean value x.
 func (x *Bool) CompareAndSwap(old, new bool) (swapped bool) {
-	return atomic.CompareAndSwapUint32(&x.v, b32(old), b32(new))
+	return x.v.CompareAndSwap(b32(old), b32(new))
 }
 
 func (x *Bool) CAS(old, new bool) bool {

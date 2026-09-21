@@ -7,11 +7,11 @@ import (
 	"sync/atomic"
 )
 
-var runtimeID uint64
+var runtimeID atomic.Uint64
 
 // ID 运行时自增 ID (每次程序启动从 1 开始)
 func ID() uint64 {
-	return atomic.AddUint64(&runtimeID, 1)
+	return runtimeID.Add(1)
 }
 
 // GoroutineID 获取 Goroutine ID

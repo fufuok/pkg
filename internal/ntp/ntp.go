@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -584,8 +585,8 @@ func getTime(address string, opt *QueryOptions) (*header, ntpTime, error) {
 	}
 
 	// Allow extensions to process the response.
-	for i := len(opt.Extensions) - 1; i >= 0; i-- {
-		err = opt.Extensions[i].ProcessResponse(recvBuf)
+	for _, v := range slices.Backward(opt.Extensions) {
+		err = v.ProcessResponse(recvBuf)
 		if err != nil {
 			return nil, 0, err
 		}

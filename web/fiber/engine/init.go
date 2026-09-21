@@ -154,8 +154,7 @@ func runOne(setup App, cfg config.WebConf) error {
 // 请求错误处理
 func errorHandler(c fiber.Ctx, err error) error {
 	code := fiber.StatusInternalServerError
-	var e *fiber.Error
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[*fiber.Error](err); ok {
 		code = e.Code
 	}
 	if code != fiber.StatusBadRequest {
