@@ -93,6 +93,35 @@ func TestConfigWatcherBranches(t *testing.T) {
 	assert.False(t, ConfigModTime.IsZero())
 }
 
+// TestConfigWatcherRestoresOldContent 验证失败不推进基线, 恢复原内容也会重新加载并解除安装暂停.
+func TestConfigWatcherRestoresOldContent(t *testing.T) {
+	prepareMasterConfig(t)
+	config.AppConfigBody = nil
+	body := []byte(`{"sys_conf":{"deb_version":"2.0","canary_deployment":0}}`)
+	assert.Nil(t, os.WriteFile(config.ConfigFile, body, 0o600))
+	debInstall = newDebInstaller("test-pkg", func() debTarget {
+		cfg := config.Config()
+		return debTarget{version: cfg.SYSConf.DebVersion, threshold: cfg.SYSConf.CanaryDeployment}
+	})
+	assert.False(t, configWatcher())
+	baseline, _ := watcherMD5.Load(MainWatcherConfKey)
+	assert.Nil(t, os.WriteFile(config.ConfigFile, []byte(`{"sys_conf":`), 0o600))
+	assert.True(t, configWatcher())
+	got, _ := watcherMD5.Load(MainWatcherConfKey)
+	assert.Equal(t, baseline, got)
+	debInstall.mu.Lock()
+	assert.True(t, debInstall.paused)
+	debInstall.mu.Unlock()
+	assert.Nil(t, os.WriteFile(config.ConfigFile, body, 0o600))
+	assert.False(t, configWatcher())
+	assert.False(t, watcherConfigDirty)
+	debInstall.mu.Lock()
+	assert.False(t, debInstall.paused)
+	assert.Equal(t, "2.0", debInstall.target.version)
+	debInstall.mu.Unlock()
+	assert.True(t, configWatcher())
+}
+
 // TestMD5ConfigFilesIncludesAllSources 验证配置 hash 汇总包含主配置、名单、env、额外文件和 NodeInfo.
 func TestMD5ConfigFilesIncludesAllSources(t *testing.T) {
 	prepareMasterConfig(t)

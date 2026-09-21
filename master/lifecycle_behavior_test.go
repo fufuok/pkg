@@ -37,10 +37,14 @@ func TestCanaryBoundary(t *testing.T) {
 	)
 	assert.False(t, canary(version, 0))
 	assert.True(t, canary(version, 100))
+	assert.False(t, canary(version, 101))
 
 	// 固定输入的 hash 桶为 66, 直接区分严格小于与小于等于两种实现.
 	assert.False(t, canary(version, bucket))
 	assert.True(t, canary(version, bucket+1))
+	common.InternalIPv4, common.ExternalIPv4 = "", ""
+	assert.False(t, canary(version, 99))
+	assert.True(t, canary(version, 100))
 }
 
 // TestCheckUpgradeOrRestartSignals 验证灰度阈值 0 不安装, restart 配置只发送重启信号.
@@ -50,7 +54,7 @@ func TestCheckUpgradeOrRestartSignals(t *testing.T) {
 	cfg := config.SYSConf{DebVersion: "2.0.0", CanaryDeployment: 0}
 	assert.False(t, checkUpgradeOrRestart(cfg))
 	assertMasterNoSignal(t, restartChan, "canary disabled")
-	assert.False(t, debInstalling.Load())
+	assert.True(t, debInstall == nil)
 
 	cfg.RestartMain = true
 	assert.True(t, checkUpgradeOrRestart(cfg))

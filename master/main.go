@@ -64,7 +64,8 @@ func Start() {
 	startPipeline()
 }
 
-// Stop 程序退出
+// Stop 取消安装器的本地等待后退出业务, 不等待或强杀已运行的包管理命令.
 func Stop() {
+	debInstall.stop()
 	stopPipeline()
 }

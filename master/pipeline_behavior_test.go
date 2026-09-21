@@ -258,13 +258,14 @@ func TestStartRemotePipelinesRunsApplicationStages(t *testing.T) {
 // TestGetRemoteConfStopsAfterCancellation 验证远端循环最终观察 context 取消并停止调用.
 func TestGetRemoteConfStopsAfterCancellation(t *testing.T) {
 	prepareMasterConfig(t)
-	called := make(chan struct{})
+	called := make(chan struct{}, 1)
 	common.Funcs.Store("test-remote", func(any) error {
 		called <- struct{}{}
 		return nil
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	GetRemoteConf(ctx, config.FilesConf{Method: "test-remote", Path: "local", RandomWait: 1, GetConfDuration: 2 * time.Millisecond})
+	done := startRemoteConf(ctx, config.FilesConf{Method: "test-remote", Path: "local", RandomWait: 1, GetConfDuration: 2 * time.Millisecond})
+	t.Cleanup(func() { cancel(); <-done })
 
 	select {
 	case <-called:
@@ -285,7 +286,7 @@ func TestGetRemoteConfExitsDuringIntervalSleep(t *testing.T) {
 	prepareMasterConfig(t)
 	preserveRemoteWait(t)
 	waitEntered := make(chan struct{})
-	release := make(chan struct{})
+	release := make(chan struct{}, 1)
 	remoteRandomWaitSeconds = func(int) int { return 0 }
 	remoteWait = gatedCancelableRemoteWait(waitEntered, release)
 
@@ -295,12 +296,13 @@ func TestGetRemoteConfExitsDuringIntervalSleep(t *testing.T) {
 		return nil
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	GetRemoteConf(ctx, config.FilesConf{
+	done := startRemoteConf(ctx, config.FilesConf{
 		Method:          "test-remote-interval",
 		Path:            "local",
 		RandomWait:      0,
 		GetConfDuration: time.Second,
 	})
+	t.Cleanup(func() { cancel(); <-done })
 
 	// 放行首次随机等待 (0s) , 让配置方法先执行一次.
 	waitForRemoteWait(t, waitEntered)
@@ -330,7 +332,7 @@ func TestGetRemoteConfExitsDuringRandomWait(t *testing.T) {
 	prepareMasterConfig(t)
 	preserveRemoteWait(t)
 	waitEntered := make(chan struct{})
-	release := make(chan struct{})
+	release := make(chan struct{}, 1)
 	remoteRandomWaitSeconds = func(int) int { return 1 }
 	remoteWait = gatedCancelableRemoteWait(waitEntered, release)
 
@@ -340,12 +342,13 @@ func TestGetRemoteConfExitsDuringRandomWait(t *testing.T) {
 		return nil
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	GetRemoteConf(ctx, config.FilesConf{
+	done := startRemoteConf(ctx, config.FilesConf{
 		Method:          "test-remote-wait",
 		Path:            "local",
 		RandomWait:      2,
 		GetConfDuration: time.Second,
 	})
+	t.Cleanup(func() { cancel(); <-done })
 	waitForRemoteWait(t, waitEntered)
 	cancel()
 	releaseOneWait(release)
@@ -394,8 +397,16 @@ func releaseOneWait(release chan struct{}) {
 // gatedCancelableRemoteWait 按次卡住等待, 放行后若 ctx 已取消则结束循环.
 func gatedCancelableRemoteWait(waitEntered chan struct{}, release <-chan struct{}) func(context.Context, time.Duration) bool {
 	return func(ctx context.Context, _ time.Duration) bool {
-		waitEntered <- struct{}{}
-		<-release
+		select {
+		case waitEntered <- struct{}{}:
+		case <-ctx.Done():
+			return false
+		}
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return false
+		}
 		select {
 		case <-ctx.Done():
 			return false

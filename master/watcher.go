@@ -37,6 +37,8 @@ var (
 
 	// 待监控内容变化的额外文件列表
 	extraWatcherFiles []string
+	// 加载失败后即使文件恢复旧内容, 仍需重新加载以恢复安装授权.
+	watcherConfigDirty bool
 )
 
 // Watcher 文件变化监控器
@@ -98,7 +100,6 @@ func initWatcher() {
 	watcherMD5.Store(MainWatcherKey, md5Main)
 	watcherMD5.Store(MainWatcherConfKey, md5Conf)
 
-	config.DebVersion = getCurrentDebVersion()
 	logger.Warn().Str("main", mainFile).Str(config.DebName, config.DebVersion).Msg("Watching")
 	logger.Warn().Strs("configs", confFiles).Msg("Watching")
 	logger.Warn().RawJSON("data", json.MustJSON(config.Config().NodeConf.NodeInfo)).Msg("Node info updated")
@@ -140,8 +141,6 @@ func startWatcher() {
 		runtimeConfigPipeline()
 		cfg = config.Config().SYSConf
 
-		// 同步更新机器上现在的包版本
-		config.DebVersion = getCurrentDebVersion()
 		if c := checkUpgradeOrRestart(cfg); c {
 			continue
 		}
@@ -157,8 +156,7 @@ func startWatcher() {
 		}
 
 		// 最终的配置列表和 MD5
-		md5ok, confFiles := MD5ConfigFiles()
-		watcherMD5.Store(MainWatcherConfKey, md5ok)
+		_, confFiles := MD5ConfigFiles()
 		logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> Reload config <<<<<<<")
 		logger.Warn().Strs("configs", confFiles).Msg("Watching")
 		logger.Warn().RawJSON("data", json.MustJSON(config.Config().NodeConf.NodeInfo)).Msg("Node info updated")
@@ -191,37 +189,31 @@ func appWatcher() {
 	})
 }
 
+// configWatcher 仅在加载成功后消费本次检查的基线, 并在业务Runtime前发布最新目标.
 func configWatcher() (needContinue bool) {
 	// 系统配置检查和重载
 	md5New, _ := MD5ConfigFiles()
-	md5Conf, _ := watcherMD5.LoadAndStore(MainWatcherConfKey, md5New)
-	if md5New == md5Conf {
+	md5Conf, _ := watcherMD5.Load(MainWatcherConfKey)
+	if md5New == md5Conf && !watcherConfigDirty {
 		return true
 	}
 	ConfigModTime = common.GTimeNow()
 
 	// 任意配置文件变化, 热加载所有配置
 	if err := config.LoadConfig(); err != nil {
+		watcherConfigDirty = true
+		debInstall.pause()
 		logger.Error().Err(err).Msg("Failed to reload config")
 		return true
 	}
+	watcherConfigDirty = false
+	watcherMD5.Store(MainWatcherConfKey, md5New)
+	debInstall.publish()
 	return false
 }
 
+// checkUpgradeOrRestart 保留既有显式重启行为; 安装由configWatcher发布, 不参与重启决策.
 func checkUpgradeOrRestart(cfg config.SYSConf) (needContinue bool) {
-	// 安装新版本, 每当配置有变化时才检测
-	if cfg.DebVersion != "" && config.DebVersion != "" && config.DebVersion != cfg.DebVersion {
-		threshold := cfg.CanaryDeployment
-		toInstall := canary(cfg.DebVersion, threshold)
-		logger.Warn().
-			Strs("deb_versions", []string{config.DebVersion, cfg.DebVersion}).
-			Bool("to_install", toInstall).Str("ip", common.ExternalIPv4).Uint64("threshold", threshold).
-			Msg("Starting canary deployment")
-		if toInstall {
-			go installDeb(cfg.DebVersion)
-		}
-	}
-
 	// 重启程序指令
 	if cfg.RestartMain {
 		logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> Restart main(config) <<<<<<<")

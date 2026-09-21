@@ -43,6 +43,10 @@ func startConfigPipeline() {
 		if err := p.Start(); err != nil {
 			log.Fatalln("Failed to initialize config:", err, "\nbye.")
 		}
+		if _, builtin := p.(*config.M); builtin {
+			// 在业务启动前固定自包名和版本快照, 此处不触发安装.
+			prepareDebInstaller()
+		}
 	}
 }
 

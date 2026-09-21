@@ -195,7 +195,8 @@ func GetNodeIPFromAPIs(ipapi string, timeout ...time.Duration) string {
 	return ""
 }
 
-// 尝试多次获取出口 IP, 填充到 NodeIP
+// nodeIPFetcher 最多重试十次获取出口 IP, 并以新快照发布, 不修改已返回调用方的配置.
+// 网络请求期间可能发生主配置重载, 发布必须合并到最新快照, 不能恢复旧升级目标.
 func nodeIPFetcher(api string) {
 	if nodeIPFetcherRunning {
 		return
@@ -230,13 +231,24 @@ func nodeIPFetcher(api string) {
 
 		// 从 IPAPI 获取到出口 IP, 发布新配置指针, 不改已发布的 MainConf.
 		NodeIPFromAPI = nodeIP.String()
-		cfg := mainConf.Load()
-		if cfg == nil {
+		publishNodeIP(mainConf.Load(), NodeIPFromAPI)
+		return
+	}
+}
+
+// publishNodeIP 只向观测到的配置副本写入出口 IP, 保留最新主配置.
+// observed 可在发布前失效; CAS 失败后重新合并最新快照, 仅补足仍需 fallback 的 IP.
+func publishNodeIP(observed *MainConf, nodeIP string) {
+	for observed != nil {
+		// 主配置重载期间可能已读到显式 IP, 晚到的 API 响应不能覆盖更高优先级来源.
+		if currentIP := observed.NodeConf.NodeInfo.NodeIP; currentIP != "" && currentIP != net.IPv4zero.String() {
 			return
 		}
-		next := *cfg
-		next.NodeConf.NodeInfo.NodeIP = NodeIPFromAPI
-		mainConf.Store(&next)
-		return
+		next := *observed
+		next.NodeConf.NodeInfo.NodeIP = nodeIP
+		if mainConf.CompareAndSwap(observed, &next) {
+			return
+		}
+		observed = mainConf.Load()
 	}
 }

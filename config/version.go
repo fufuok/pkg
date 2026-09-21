@@ -9,7 +9,7 @@ var (
 	GoVersion = ""
 	GitCommit = ""
 
-	// DebVersion 当前的包版本信息
+	// DebVersion 启动时查询的自包版本, 后台安装不写此变量, 避免与业务读取竞争.
 	DebVersion = ""
 )
 

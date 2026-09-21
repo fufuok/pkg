@@ -16,6 +16,15 @@ import (
 // 测试使用带缓冲 channel, 以便同步验证 restart/reload 信号而不启动永久 scheduler.
 func preserveMasterPackageState(t *testing.T) {
 	t.Helper()
+	oldDebInstall, oldWatcherConfigDirty := debInstall, watcherConfigDirty
+	debInstall, watcherConfigDirty = nil, false
+	t.Cleanup(func() {
+		if debInstall != nil {
+			debInstall.stop()
+			<-debInstall.done
+		}
+		debInstall, watcherConfigDirty = oldDebInstall, oldWatcherConfigDirty
+	})
 
 	mu.Lock()
 	oldConfigPipelines := slices.Clone(configPipelines)
@@ -45,7 +54,6 @@ func preserveMasterPackageState(t *testing.T) {
 	oldNTPFirstDoneChan := ntpFirstDoneChan
 	oldNTPGen := ntpGen
 	oldClockOffsetChanOf := clockOffsetChanOf
-	oldDebInstalling := debInstalling.Load()
 	oldCommonFuncs := common.Funcs
 	oldInternalIPv4 := common.InternalIPv4
 	oldExternalIPv4 := common.ExternalIPv4
@@ -64,7 +72,6 @@ func preserveMasterPackageState(t *testing.T) {
 	ntpDone = nil
 	ntpFirstDoneChan = make(chan struct{})
 	ntpGen = 0
-	debInstalling.Store(false)
 	common.Funcs = xsync.NewMap[string, common.Func]()
 	common.InternalIPv4 = ""
 	common.ExternalIPv4 = ""
@@ -106,7 +113,6 @@ func preserveMasterPackageState(t *testing.T) {
 		ntpGen = oldNTPGen
 		ntpMu.Unlock()
 		clockOffsetChanOf = oldClockOffsetChanOf
-		debInstalling.Store(oldDebInstalling)
 		common.Funcs = oldCommonFuncs
 		common.InternalIPv4 = oldInternalIPv4
 		common.ExternalIPv4 = oldExternalIPv4

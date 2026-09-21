@@ -46,6 +46,9 @@ func waitRemote(ctx context.Context, d time.Duration) bool {
 
 // 初始化获取远端配置
 func startRemotePipelines(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	// 定时获取远程主配置, 黑白名单配置
 	getMainRemoteConf(ctx)
 	getWhitelistRemoteConf(ctx)
@@ -54,6 +57,9 @@ func startRemotePipelines(ctx context.Context) {
 	// 运行应用级自定义的获取远端方法
 	ps := getPipelinesWithContext(RemoteStage)
 	for _, sf := range ps {
+		if ctx.Err() != nil {
+			return
+		}
 		sf(ctx)
 	}
 	logger.Warn().Int("count", len(ps)+3).Msg("Remote config fetchers started")
@@ -86,13 +92,22 @@ func getBlacklistRemoteConf(ctx context.Context) {
 // GetRemoteConf 定时获取远端配置, 配合 RemotePipelines 使用.
 // 主配置变化时旧循环应在随机等待和周期等待期间响应 ctx 取消并退出, 避免与新 fetcher 重叠写同一文件.
 func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
+	startRemoteConf(ctx, cfg)
+}
+
+// startRemoteConf 为单个远端循环固定等待依赖并返回结束信号, 供测试和生命周期观察.
+// 返回并不等待首次拉取; 所有写入结束后才关闭 done, 清理测试环境必须先等待此信号.
+func startRemoteConf(ctx context.Context, cfg config.FilesConf) <-chan struct{} {
 	id := common.GTimeNowString("060102150405.999999999")
 	logger.Warn().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
 		Msg("Remote config fetcher started")
+	waitFn, randomFn := remoteWait, remoteRandomWaitSeconds
+	done := make(chan struct{})
 	fetcher := func() {
+		defer close(done)
 		for {
-			wait := remoteRandomWaitSeconds(cfg.RandomWait)
-			if !remoteWait(ctx, time.Duration(wait)*time.Second) {
+			wait := randomFn(cfg.RandomWait)
+			if !waitFn(ctx, time.Duration(wait)*time.Second) {
 				logger.Warn().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
 					Msg("Remote config fetcher exited")
 				return
@@ -114,7 +129,7 @@ func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 						Msg("Execute remote config fetcher")
 				}
 			}
-			if !remoteWait(ctx, cfg.GetConfDuration) {
+			if !waitFn(ctx, cfg.GetConfDuration) {
 				logger.Warn().Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
 					Msg("Remote config fetcher exited")
 				return
@@ -122,4 +137,5 @@ func GetRemoteConf(ctx context.Context, cfg config.FilesConf) {
 		}
 	}
 	utils.SafeGo(fetcher, common.RecoverAlarm)
+	return done
 }

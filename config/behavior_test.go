@@ -146,7 +146,7 @@ func TestParseSYSConfigDurationContext(t *testing.T) {
 	err = parseSYSConfig(cfg)
 	assert.True(t, err != nil)
 	assert.Contains(t, "parse req_timeout err", err.Error())
-	assert.Equal(t, "1.2.3rm", cfg.SYSConf.DebVersion)
+	assert.Equal(t, "1.2.3;rm", cfg.SYSConf.DebVersion)
 }
 
 // TestParseLogAndAlarmConfig 验证日志默认派生、环境变量覆盖和报警开关.

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -301,6 +300,7 @@ func readConfig() (*MainConf, error) {
 	return cfg, nil
 }
 
+// parseSYSConfig 解析系统配置, Debian版本仅裁剪空白, 由安装器调用dpkg校验.
 func parseSYSConfig(cfg *MainConf) error {
 	if AppBaseSecretValue != "" {
 		cfg.SYSConf.BaseSecretValue = AppBaseSecretValue
@@ -315,8 +315,8 @@ func parseSYSConfig(cfg *MainConf) error {
 	BaseSecretValue = cfg.SYSConf.BaseSecretValue
 	WebTokenSalt = cfg.SYSConf.BaseSecretValue
 
-	// 包版本格式清理
-	cfg.SYSConf.DebVersion = regexp.MustCompile(`[^\w-.=]`).ReplaceAllString(cfg.SYSConf.DebVersion, "")
+	// 保留epoch, revision和tilde等Debian语义, 不把非法输入清洗成另一个版本.
+	cfg.SYSConf.DebVersion = strings.TrimSpace(cfg.SYSConf.DebVersion)
 
 	// 配置文件变化监控时间间隔, 空为默认值
 	dur, err := ParseDuration(cfg.SYSConf.WatcherInterval, WatcherIntervalDuration, 30*time.Second)
