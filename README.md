@@ -14,7 +14,7 @@
 - `xhash.HashString64` / `Sum32`: 稳定 FNV, 不是 per-process `maphash`
 - `utils.FastIntn` / `FastRand` / `Rand`: runtime fastrand + `math/rand` v1, 不是密码学随机
 
-细节见 [docs/features/merge-utils-go126-plan.md](docs/features/merge-utils-go126-plan.md).
+细节见本地 `docs/features/merge-utils-go126-plan.md`. `docs/` 仅作本地技术留底, 不纳入 pkg 提交.
 
 ## 部署
 
