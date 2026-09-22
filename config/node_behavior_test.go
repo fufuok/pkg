@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -36,7 +37,6 @@ func TestParseNodeInfoFileFormats(t *testing.T) {
 			}}
 
 			assert.Nil(t, parseNodeInfoJSON(cfg))
-			assert.Equal(t, "xunyou", cfg.NodeConf.NodeInfo.NodeType)
 			assert.True(t, cfg.NodeConf.NodeInfo.NodeID > 0)
 			assert.Equal(t, "runtime-host", cfg.NodeConf.NodeInfo.Hostname)
 			assert.Equal(t, "10.0.0.1", cfg.NodeConf.NodeInfo.HostIP)
@@ -45,12 +45,36 @@ func TestParseNodeInfoFileFormats(t *testing.T) {
 	}
 }
 
-// TestParseNodeInfoRejectsInvalidNodeType 验证类型错误不会把临时解析出的部分字段发布到配置.
-func TestParseNodeInfoRejectsInvalidNodeType(t *testing.T) {
+// TestParseNodeInfoIgnoresNodeType 验证主文件和 backup 忽略已弃用字段, 保留完整身份且序列化不再输出该字段.
+func TestParseNodeInfoIgnoresNodeType(t *testing.T) {
+	for _, source := range []string{"file", "backup"} {
+		for _, rawType := range []string{`"xunyou"`, `8`, `null`, `{"legacy":8}`} {
+			t.Run(source+"/"+rawType, func(t *testing.T) {
+				prepareConfigBehaviorTest(t)
+				file := filepath.Join(t.TempDir(), "node_info.json")
+				body := fmt.Sprintf(`{"hostname":"runtime-host","host_ip":"192.0.2.1","node_id":99,"node_name":"edge-99","node_desc":"edge node","node_type":%s,"service_ip":"198.51.100.99"}`, rawType)
+				assert.Nil(t, os.WriteFile(file, []byte(body), 0o600))
+				want := NodeInfo{Hostname: "runtime-host", HostIP: "192.0.2.1", NodeID: 99, NodeIP: "198.51.100.99", NodeName: "edge-99", NodeDesc: "edge node"}
+				cfg := &MainConf{NodeConf: NodeConf{NodeInfoFile: file, NodeInfo: NodeInfo{Hostname: want.Hostname, HostIP: want.HostIP}}}
+				load := parseNodeInfoJSON
+				if source == "backup" {
+					NodeInfoBackupFile = file
+					load = parseNodeInfoJSONBackup
+				}
+				assert.Nil(t, load(cfg))
+				assert.Equal(t, want, cfg.NodeConf.NodeInfo)
+				assertNodeTypeOmitted(t, json.MustJSON(cfg.NodeConf.NodeInfo))
+			})
+		}
+	}
+}
+
+// TestParseNodeInfoRejectsInvalidIdentity 验证基础身份类型错误仍不会把临时解析出的部分字段发布到配置.
+func TestParseNodeInfoRejectsInvalidIdentity(t *testing.T) {
 	prepareConfigBehaviorTest(t)
 	file := filepath.Join(t.TempDir(), "node_info.json")
-	assert.Nil(t, os.WriteFile(file, []byte(`{"node_id":99,"node_name":"partial","node_type":8,"service_ip":"127.0.0.99"}`), 0o600))
-	want := NodeInfo{Hostname: "runtime-host", HostIP: "10.0.0.1", NodeID: 7, NodeIP: "127.0.0.7", NodeName: "stable", NodeType: "xunyou"}
+	assert.Nil(t, os.WriteFile(file, []byte(`{"node_name":"partial","node_id":"invalid","node_type":8,"service_ip":"127.0.0.99"}`), 0o600))
+	want := NodeInfo{Hostname: "runtime-host", HostIP: "10.0.0.1", NodeID: 7, NodeIP: "127.0.0.7", NodeName: "stable"}
 	cfg := &MainConf{NodeConf: NodeConf{NodeInfoFile: file, NodeInfo: want}}
 
 	err := parseNodeInfoJSON(cfg)
@@ -63,7 +87,7 @@ func TestParseNodeInfoBackupContract(t *testing.T) {
 	prepareConfigBehaviorTest(t)
 	backupFile := filepath.Join(t.TempDir(), "node_info.backup")
 	NodeInfoBackupFile = backupFile
-	want := NodeInfo{Hostname: "saved-host", HostIP: "10.0.0.1", NodeID: 11, NodeIP: "127.0.0.11", NodeName: "saved", NodeType: "xunyou"}
+	want := NodeInfo{Hostname: "saved-host", HostIP: "10.0.0.1", NodeID: 11, NodeIP: "127.0.0.11", NodeName: "saved"}
 	assert.Nil(t, os.WriteFile(backupFile, json.MustJSON(want), 0o600))
 
 	disabled := &MainConf{}
@@ -82,21 +106,30 @@ func TestParseNodeInfoBackupContract(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Nil(t, json.Unmarshal(body, &persisted))
 	assert.Equal(t, want.NodeIP, persisted.NodeIP)
-	assert.Equal(t, want.NodeType, persisted.NodeType)
+	assertNodeTypeOmitted(t, body)
 }
 
-// TestParseNodeInfoBackupRejectsInvalidNodeType 验证 backup 同样严格遵循字符串节点类型契约.
-func TestParseNodeInfoBackupRejectsInvalidNodeType(t *testing.T) {
+// TestParseNodeInfoBackupRejectsInvalidIdentity 验证 backup 的基础身份类型错误仍拒绝发布并保留路径上下文.
+func TestParseNodeInfoBackupRejectsInvalidIdentity(t *testing.T) {
 	prepareConfigBehaviorTest(t)
 	NodeInfoBackupFile = filepath.Join(t.TempDir(), "node_info.backup")
-	assert.Nil(t, os.WriteFile(NodeInfoBackupFile, []byte(`{"node_id":99,"node_type":8,"service_ip":"127.0.0.99"}`), 0o600))
-	want := NodeInfo{Hostname: "runtime-host", HostIP: "10.0.0.1", NodeID: 7, NodeIP: "127.0.0.7", NodeType: "xunyou"}
+	assert.Nil(t, os.WriteFile(NodeInfoBackupFile, []byte(`{"node_name":"partial","node_id":"invalid","node_type":8,"service_ip":"127.0.0.99"}`), 0o600))
+	want := NodeInfo{Hostname: "runtime-host", HostIP: "10.0.0.1", NodeID: 7, NodeIP: "127.0.0.7"}
 	cfg := &MainConf{NodeConf: NodeConf{NodeInfo: want}}
 
 	err := parseNodeInfoJSONBackup(cfg)
 	assert.True(t, err != nil)
 	assert.Contains(t, filepath.Base(NodeInfoBackupFile), err.Error())
 	assert.Equal(t, want, cfg.NodeConf.NodeInfo)
+}
+
+// assertNodeTypeOmitted 检查真实 JSON 输出中不存在废弃字段, 而不是只判断值是否为空.
+func assertNodeTypeOmitted(t *testing.T, body []byte) {
+	t.Helper()
+	var fields map[string]any
+	assert.Nil(t, json.Unmarshal(body, &fields))
+	_, exists := fields["node_type"]
+	assert.False(t, exists)
 }
 
 // TestGetNodeIPFromAPIsUsesFirstValidLocalResult 验证多个本地 API 中只接受合法 IP 响应.
