@@ -166,15 +166,13 @@ func startWatcher() {
 }
 
 func mainWatcher() (needContinue bool) {
-	// 程序二进制变化时重启
+	// 先推进hash基线, 确保ignore或信号发送失败不会在每个周期重复处理同一变化.
 	md5New := MD5Files(mainFile)
 	md5Main, _ := watcherMD5.LoadAndStore(MainWatcherKey, md5New)
 	if md5New == md5Main {
 		return
 	}
-	logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> Restart main <<<<<<<")
-	restartChan <- true
-	return true
+	return handleBinaryChange(binaryChangeActionValue)
 }
 
 // 运行应用自助添加的监控器

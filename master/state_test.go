@@ -17,13 +17,16 @@ import (
 func preserveMasterPackageState(t *testing.T) {
 	t.Helper()
 	oldDebInstall, oldWatcherConfigDirty := debInstall, watcherConfigDirty
+	oldBinaryChangeAction, oldBinaryChangeSignal := binaryChangeActionValue, binaryChangeSignal
 	debInstall, watcherConfigDirty = nil, false
+	binaryChangeActionValue, binaryChangeSignal = binaryChangeRestart, sendBinaryChangeSIGTERM
 	t.Cleanup(func() {
 		if debInstall != nil {
 			debInstall.stop()
 			<-debInstall.done
 		}
 		debInstall, watcherConfigDirty = oldDebInstall, oldWatcherConfigDirty
+		binaryChangeActionValue, binaryChangeSignal = oldBinaryChangeAction, oldBinaryChangeSignal
 	})
 
 	mu.Lock()

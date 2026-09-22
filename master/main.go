@@ -61,6 +61,7 @@ func Start() {
 	registerCommonFuncs()
 	registerPipeline()
 	startConfigPipeline()
+	loadBinaryChangeAction()
 	startPipeline()
 }
 

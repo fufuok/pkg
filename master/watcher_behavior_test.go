@@ -1,6 +1,7 @@
 package master
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -58,7 +59,7 @@ func TestAppWatcherChangeAndAlways(t *testing.T) {
 	waitMasterSignal(t, always, "always watcher second run")
 }
 
-// TestMainWatcherUsesBinaryHash 验证主程序二进制 hash 变化只发送 restart 信号.
+// TestMainWatcherUsesBinaryHash 验证主程序二进制 hash变化按默认策略发送restart信号.
 func TestMainWatcherUsesBinaryHash(t *testing.T) {
 	preserveMasterPackageState(t)
 	mainFile = filepath.Join(t.TempDir(), "app")
@@ -70,6 +71,64 @@ func TestMainWatcherUsesBinaryHash(t *testing.T) {
 	assert.Nil(t, os.WriteFile(mainFile, []byte("v2"), 0o600))
 	assert.True(t, mainWatcher())
 	waitMasterSignal(t, restartChan, "changed binary")
+}
+
+// TestMainWatcherBinaryChangeActions 验证ignore、sigterm和信号失败回退路径.
+func TestMainWatcherBinaryChangeActions(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		action      binaryChangeAction
+		signalErr   error
+		needNext    bool
+		wantRestart bool
+	}{
+		{name: "ignore", action: binaryChangeIgnore, needNext: false},
+		{name: "sigterm", action: binaryChangeSigterm, needNext: true},
+		{name: "sigterm fallback", action: binaryChangeSigterm, signalErr: errors.New("unsupported"), needNext: true, wantRestart: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			preserveMasterPackageState(t)
+			mainFile = filepath.Join(t.TempDir(), "app")
+			assert.Nil(t, os.WriteFile(mainFile, []byte("v1"), 0o600))
+			watcherMD5.Store(MainWatcherKey, MD5Files(mainFile))
+			binaryChangeActionValue = tc.action
+			binaryChangeSignal = func() error { return tc.signalErr }
+
+			assert.Nil(t, os.WriteFile(mainFile, []byte("v2"), 0o600))
+			assert.Equal(t, tc.needNext, mainWatcher())
+			if tc.wantRestart {
+				waitMasterSignal(t, restartChan, "fallback restart")
+			} else {
+				assertMasterNoSignal(t, restartChan, "unexpected restart")
+			}
+			// 基线已推进, 同一内容的后续轮次不应再次执行动作.
+			assert.False(t, mainWatcher())
+			assertMasterNoSignal(t, restartChan, "repeated binary action")
+			gotHash, ok := watcherMD5.Load(MainWatcherKey)
+			assert.True(t, ok)
+			assert.Equal(t, MD5Files(mainFile), gotHash)
+		})
+	}
+}
+
+// TestParseBinaryChangeAction 验证环境变量策略的规范化、白名单和安全回退.
+func TestParseBinaryChangeAction(t *testing.T) {
+	for _, tc := range []struct {
+		raw   string
+		want  binaryChangeAction
+		valid bool
+	}{
+		{raw: "", want: binaryChangeRestart, valid: true},
+		{raw: " restart ", want: binaryChangeRestart, valid: true},
+		{raw: "IGNORE", want: binaryChangeIgnore, valid: true},
+		{raw: "sigterm", want: binaryChangeSigterm, valid: true},
+		{raw: "sighup", want: binaryChangeRestart, valid: false},
+		{raw: "unknown", want: binaryChangeRestart, valid: false},
+	} {
+		got, valid := parseBinaryChangeAction(tc.raw)
+		assert.Equal(t, tc.want, got)
+		assert.Equal(t, tc.valid, valid)
+	}
 }
 
 // TestConfigWatcherBranches 验证配置未变化、加载失败和加载成功三条分支.
