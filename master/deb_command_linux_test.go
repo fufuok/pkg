@@ -14,25 +14,27 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/fufuok/pkg/sysenv"
 )
 
 // TestDebLinuxCommands 使用真实命令验证环境覆盖、有界输出及查询超时后的进程回收.
 func TestDebLinuxCommands(t *testing.T) {
 	t.Setenv("LC_ALL", "not-a-locale")
 	t.Setenv("DEBIAN_FRONTEND", "interactive")
-	env := runDebCommand(time.Second, "/bin/sh", "-c", `printf '%s|%s' "$LC_ALL" "$DEBIAN_FRONTEND"`)
+	env := runDebCommand(time.Second, sysenv.BinSh, "-c", `printf '%s|%s' "$LC_ALL" "$DEBIAN_FRONTEND"`)
 	if env.err != nil || env.output != "C|noninteractive" {
 		t.Fatalf("environment: %+v", env)
 	}
-	large := runDebCommand(time.Second, "/bin/sh", "-c", "head -c 100000 /dev/zero; head -c 100000 /dev/zero >&2")
+	large := runDebCommand(time.Second, sysenv.BinSh, "-c", "head -c 100000 /dev/zero; head -c 100000 /dev/zero >&2")
 	if large.err != nil || len(large.output) != debOutputLimit+len("\n[output truncated]") {
 		t.Fatalf("output not bounded: %d %v", len(large.output), large.err)
 	}
-	timed := runDebCommand(10*time.Millisecond, "/bin/sleep", "10")
+	timed := runDebCommand(10*time.Millisecond, sysenv.BinSleep, "10")
 	if !errors.Is(timed.err, context.DeadlineExceeded) || timed.exit != -1 {
 		t.Fatalf("query timeout: %+v", timed)
 	}
-	done := runDebCommand(0, "/bin/sleep", "0.01")
+	done := runDebCommand(0, sysenv.BinSleep, "0.01")
 	if done.err != nil || done.exit != 0 {
 		t.Fatalf("wait command: %+v", done)
 	}
@@ -127,11 +129,11 @@ func TestDebAPTFixture(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	dependencies, err := exec.Command("ldd", "/bin/dash").Output()
+	dependencies, err := exec.Command("ldd", sysenv.BinDash).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	paths := []string{"/bin/dash"}
+	paths := []string{sysenv.BinDash}
 	for _, p := range strings.Fields(string(dependencies)) {
 		if strings.HasPrefix(p, "/") {
 			paths = append(paths, p)
@@ -165,7 +167,7 @@ func TestDebAPTFixture(t *testing.T) {
 		if err := os.Chmod(postinst, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		output, err := exec.Command("dpkg-deb", "--build", pkg, filepath.Join(base, "repo/test-pkg_"+version+"_all.deb")).CombinedOutput()
+		output, err := exec.Command(sysenv.BinDpkgDeb, "--build", pkg, filepath.Join(base, "repo/test-pkg_"+version+"_all.deb")).CombinedOutput()
 		if err != nil {
 			t.Fatalf("build package: %v %s", err, output)
 		}
@@ -199,7 +201,7 @@ func TestDebAPTFixture(t *testing.T) {
 	fmt.Fprintf(&conf, "Dpkg::Options { %q; %q; %q; };\n", "--root="+root, "--admindir="+admin, "--log="+base+"/log/dpkg.log")
 	writeDebFixture(t, base+"/apt.conf", conf.String())
 	t.Setenv("APT_CONFIG", base+"/apt.conf")
-	resolved := runDebCommand(debQueryTimeout, "/usr/bin/apt-config", "dump")
+	resolved := runDebCommand(debQueryTimeout, sysenv.BinAptConfig, "dump")
 	if resolved.err != nil {
 		t.Fatal(resolved.failure("resolve fixture"))
 	}

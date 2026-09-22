@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	debAPTGet       = "/usr/bin/apt-get"
-	debDpkg         = "/usr/bin/dpkg"
-	debDpkgQuery    = "/usr/bin/dpkg-query"
+	// 包管理器路径统一来自 sysenv, 本包只保留超时和输出上限.
+	debAPTGet       = sysenv.BinAptGet
+	debDpkg         = sysenv.BinDpkg
+	debDpkgQuery    = sysenv.BinDpkgQuery
 	debQueryTimeout = 5 * time.Second
 	debOutputLimit  = 64 * 1024
 )
