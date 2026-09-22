@@ -56,7 +56,6 @@ type NodeInfo struct {
 	NodeIP   string `json:"service_ip"`
 	NodeName string `json:"node_name"`
 	NodeDesc string `json:"node_desc"`
-	NodeType string `json:"node_type"`
 }
 
 // 解析节点信息
