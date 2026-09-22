@@ -62,12 +62,12 @@ func (f *debFixture) run(_ time.Duration, args ...string) debCommandResult {
 		if f.queryFailure {
 			return debFailed("database unavailable", 2)
 		}
-		return debCommandResult{output: "installed\t" + f.version + "\n"}
-	case stage == "--validate-version":
-		if strings.Contains(args[2], ";") {
-			return debFailed("invalid version", 2)
-		}
+		return debCommandResult{output: "install ok installed\t" + f.version + "\n"}
 	case stage == "--compare-versions":
+		if strings.Contains(args[2], ";") {
+			// dpkg比较对部分非法字符仅警告并返回0, 门禁必须同时检查诊断输出.
+			return debCommandResult{output: "dpkg: warning: invalid character in version number\n"}
+		}
 		if args[3] == "gt" && args[2] <= args[4] {
 			return debFailed("", 1)
 		}

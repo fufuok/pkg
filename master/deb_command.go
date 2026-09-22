@@ -93,8 +93,9 @@ func debToolsReady() error {
 }
 
 // queryDebVersion 只把明确缺包或仅残留配置视作空版本, 其他错误不能伪装成低版本.
+// 使用原始Status字段兼容Ubuntu 14.04的dpkg 1.17.5, 不依赖1.17.11才加入的状态虚拟字段.
 func queryDebVersion(run func(time.Duration, ...string) debCommandResult, name string) (string, error) {
-	result := run(debQueryTimeout, debDpkgQuery, "-W", "-f=${db:Status-Status}\t${Version}\n", "--", name)
+	result := run(debQueryTimeout, debDpkgQuery, "-W", "-f=${Status}\t${Version}\n", "--", name)
 	if result.exit == 1 && strings.Contains(result.output, "no packages found matching") {
 		return "", nil
 	}
@@ -102,10 +103,11 @@ func queryDebVersion(run func(time.Duration, ...string) debCommandResult, name s
 		return "", result.failure("query version")
 	}
 	status, version, ok := strings.Cut(strings.TrimSpace(result.output), "\t")
-	if !ok || version == "" {
+	state := strings.Fields(status)
+	if !ok || len(state) != 3 || version == "" {
 		return "", fmt.Errorf("unexpected dpkg-query output: %q", result.output)
 	}
-	if status == "not-installed" || status == "config-files" {
+	if state[2] == "not-installed" || state[2] == "config-files" {
 		return "", nil
 	}
 	return version, nil

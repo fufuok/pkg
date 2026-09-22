@@ -1,7 +1,7 @@
 # pkg Debian 安装器方案与实现
 
-> 状态: 已按本文完成精简实现与代码复审, 已验证Ubuntu 20.04隔离包安装. Ubuntu 26.04及生产业务包的维护脚本仍需部署环境验收.
-> 本文是本主题唯一方案. 使用范围为Ubuntu 20.04及后续Ubuntu 26.04, 26.04需要实际镜像验证.
+> 状态: 已完成精简实现与复审, 已验证Ubuntu 14.04官方APT/dpkg工具的隔离安装及Ubuntu 20.04隔离包安装. Ubuntu 26.04及各版本生产业务包的维护脚本仍需部署环境验收.
+> 本文是本主题唯一方案. Ubuntu 14.04是必须兼容的最低目标, 同时保留Ubuntu 20.04及26.04适用范围.
 
 ## 1. 背景与目标
 
@@ -77,11 +77,21 @@ eligible := threshold > 0 && threshold <= 100 && bucket < threshold
 
 ### 2.3 平台与执行能力
 
-当前仓库只有 [sysenv.IsLinux](../../sysenv/default.go) 和Linux固定命令路径, 没有Ubuntu发行版及版本识别方法. **不新增发行版解析器或Ubuntu版本门禁**, 20.04与26.04共用安装流程和参数.
+当前仓库只有 [sysenv.IsLinux](../../sysenv/default.go) 和Linux固定命令路径, 没有Ubuntu发行版及版本识别方法. **不新增发行版解析器或Ubuntu版本门禁**, 14.04、20.04与26.04共用安装流程和参数.
 
 执行前要求Linux、已配置自包名、apt-get及dpkg与dpkg-query可执行、具备包管理权限且可查询自包实际版本. 缺工具或明确无权限时记录原因并结束本轮; 自包缺失时跳过, 不作为首次安装. 不自动sudo或安装工具. 工具执行中的临时查询错误仍可补试.
 
-`/etc/os-release`不存在、读不到或未写Ubuntu均不单独阻断. 能力满足时仍可尝试; 这不代表承诺支持所有Linux发行版. 验收范围为Ubuntu 20.04与26.04, 后者必须在实际镜像中验证, 不能仅凭发行版名称或20.04测试判定兼容.
+`/etc/os-release`不存在、读不到或未写Ubuntu均不单独阻断. 能力满足时仍可尝试; 这不代表承诺支持所有Linux发行版. 验收范围为Ubuntu 14.04、20.04与26.04; 旧工具隔离运行不等同于旧内核和真实包脚本验收, 26.04也不能仅凭20.04测试判定兼容.
+
+兼容最低目标dpkg 1.17.5及APT 1.0, 不新增版本探测或多套后端:
+
+| 能力 | 统一实现及旧版行为 |
+| --- | --- |
+| 查询版本 | 使用原始Status和Version字段; 不使用dpkg 1.17.11才新增的db:Status-Status |
+| 校验目标 | 用dpkg --compare-versions对目标自比较; 退出非零或有诊断输出均拒绝, 不依赖1.18.16才新增的--validate-version |
+| 禁止降级 | 安装前原生比较加APT保护; APT 1.0用-y与force-yes=false拒绝降级, 新版另显式关闭allow-downgrades |
+| 更新索引 | 旧APT忽略严格模式配置项, 部分源失败可能仅警告; 非零结果才补试update, install失败仍补试一次 |
+| 锁竞争 | 旧APT忽略DPkg::Lock::Timeout并可能立即失败; 仍由一分钟后的唯一补试补偿, 不新增锁轮询 |
 
 ### 2.4 版本配置与监控查询的边界
 
@@ -90,10 +100,10 @@ eligible := threshold > 0 && threshold <= 100 && bucket < threshold
 查询沿用公开函数 `DebVersion` 和 `DebVersionByService`, 内部改用:
 
 ```sh
-dpkg-query -W '-f=${db:Status-Status}\t${Version}\n' -- xunyou-nodeagent
+dpkg-query -W '-f=${Status}\t${Version}\n' -- xunyou-nodeagent
 ```
 
-内部拆开状态和版本, 对外只返回完整版本字符串. 它无需解析 `dpkg -l` 的展示表格, 不删除日期或Debian版本字符. Ubuntu 20.04隔离数据库实测 `1.2.3.260916134926`、`1:1.2.3+build~rc1-2` 和 `5:5.0.7-2ubuntu0.1` 均原样返回. 查询的是包数据库版本, 不承诺代表正在运行的二进制版本或完整安装健康状态.
+内部拆开状态和版本, Status的第三个词为实际状态, 例如 `install ok installed` 中的installed; 对外只返回完整版本字符串. 它无需解析 `dpkg -l` 的展示表格, 不删除日期或Debian版本字符. Ubuntu 20.04隔离数据库实测 `1.2.3.260916134926`、`1:1.2.3+build~rc1-2` 和 `5:5.0.7-2ubuntu0.1` 均原样返回. Ubuntu 14.04的dpkg 1.17.5隔离查询也完整保留日期版本、epoch、加号及tilde. 查询的是包数据库版本, 不承诺代表正在运行的二进制版本或完整安装健康状态.
 
 NodeAgent的 `ps/systemctl.go` 经 `DebVersionByService` 取得版本, `ps/metric.go` 原样写入 `deb_version`; 当前采集器没有解析末段日期. 自有包的规范版本因此继续原样上报. 元数据沿用既有缓存: 查询得到的新元数据只有在新增服务或进程集合变化时替换, 不保证同进程下的包版本变动立即上报.
 
@@ -102,6 +112,8 @@ AdminMonitor微服务包管理页面走另一条独立链路: `show_page.py` 请
 这两个API字段是既有兼容契约, 本次不修改. 用户样例在Ubuntu 20.04临时包数据库、实际Go采集解析、API响应类型序列化以及AdminMonitor原有Python拆分语句和前端表达式中离线验证通过: `1.2.3.260916134926 2026-09-16 13:43:49 +0800 b3ef70b release/90300_0916` 完整保留. 反例验证确认把 `dpkg_list` 值替换为纯版本会触发AdminMonitor的IndexError, 但当前安装器修改没有做这种替换. 因此保留pkg的纯版本查询和NodeAgent的完整包信息采集各自职责, 不为本次需求新增包元数据API或改前端产物. 该验证不代表已修复2.4节之外的NodeAgent旧原型API编译遗留.
 
 旧正则 `[^\w-.=]` 配合ReplaceAllString删除不允许的字符, 并非完整业务格式校验. 例如它把 `1:1.2.3+build~rc1-2` 变成 `11.2.3buildrc1-2`, 可能改变目标版本含义. 当前实现只裁剪首尾空白, 再由dpkg校验; 尚无严格或宽松模式字段. 若后续增加模式, 应只约束目标准入, 不能清洗实际查询版本或影响禁止降级比较.
+
+Ubuntu 14.04.5实机反馈已确认 `dpkg-query -W '-f=${binary:Package}\t${Version}\t${binary:Summary}\n' -- 'xunyou-*'` 可完整返回应用包名、版本及描述中的时间、commit和分支. NodeAgent若后续替换表格解析, 可采用该查询并保持原API字段契约; 本次只修pkg安装器, 不修改NodeAgent采集器.
 
 ## 3. 主架构与最小状态
 
@@ -242,7 +254,7 @@ graph TD
 
 先核对目标有效性和灰度, 再用 `dpkg-query -W -f=${Version}` 获取自包真实版本. 缺包时跳过, 保持自包更新用途; 查询失败不假设版本为空或较低, 计为本次失败.
 
-使用 `dpkg --compare-versions` 比较, 不依赖缓存的config.DebVersion, 不对版本做正则字符清洗.
+先执行 `dpkg --compare-versions VERSION eq VERSION` 校验目标. 正常自比较退出0且无输出; dpkg对部分非法语法只警告并返回0, 因此非空诊断输出也按非法目标拒绝. 随后的gt和eq比较决定是否升级或允许同轮补试, 不依赖缓存的config.DebVersion, 不对版本做正则字符清洗.
 
 | 比较结果 | 动作 |
 | --- | --- |
@@ -307,7 +319,7 @@ apt-get -o APT::Get::allow-downgrades=false \
 ```
 
 - `PACKAGE=VERSION`固定目标, APT正常处理依赖和维护脚本.
-- 禁止降级及force-yes显式设为false, 覆盖主机同名配置. 查询后外部先升级时, APT仍在原生锁下按最新包状态拒绝降级.
+- 禁止降级及force-yes显式设为false, 覆盖主机同名配置. APT 1.0不识别allow-downgrades, 但其-y与force-yes=false同样拒绝降级. 查询后外部先升级时, APT仍在原生锁下按最新包状态拒绝降级.
 - 保持held包保护, 不通过主机放宽策略覆盖hold; 不删除包, 不将缺失自包当作首次安装.
 - 采用非交互环境及 `--force-confdef`、`--force-confold`, 避免配置文件确认阻塞; 不自动接受不可信来源.
 
@@ -393,7 +405,7 @@ sequenceDiagram
 | 有界内存 | 一个目标槽、容量1通知、一个timer和常量数量局部变量, 不随配置变化累积 |
 | 有界次数 | 每轮最多四次update、两次install、一次条件configure, 无后台环境扫描或无限重试 |
 | 命令输出 | stdout和stderr合计最多保留64 KiB用于错误摘要, 超限继续消费但不保留并标记截断, 不阻塞APT写输出 |
-| 临时阻塞 | 版本查询及比较设置5秒超时; APT网络超时30秒、APT的dpkg锁等待60秒、内部下载重试0; 直接dpkg锁冲突通常立即失败, 不另做锁轮询 |
+| 临时阻塞 | 版本查询及比较设置5秒超时; APT网络超时30秒、内部下载重试0; 支持锁超时的APT等待最多60秒, 旧APT及直接dpkg锁冲突可能立即失败, 不另做锁轮询 |
 | 安装长时间运行 | 不用配置取消或总时限强杀install及configure; 脚本卡住时保持当前命令, 不并发补试, 由运维处理 |
 | 等待回收 | 新配置或Stop停止旧timer; 空闲时无周期安装轮询 |
 | 共享数据 | 目标槽用小锁, 尝试状态由worker独占; config.DebVersion仅为业务启动前的版本快照, 需要实时版本时使用既有DebVersion函数 |
@@ -438,7 +450,7 @@ sequenceDiagram
 | 失败边界 | 查询失败不得猜测版本; 原命令未结束不得再启动命令; 所有恢复步骤仍服从禁止降级及最新授权 |
 | 平台能力 | 缺Ubuntu标识不阻断; 非Linux、缺工具或明确无权限不执行; 早期APT不因长选项未知而拒绝update |
 | 并发与退出 | 安装协程最多一个, 最大包管理命令并发为一; Stop回收等待, race无新增竞争 |
-| 实际Ubuntu环境 | 20.04及26.04分别验证APT选项、锁竞争、仓库故障、非交互和真实包脚本的重启行为 |
+| 实际Ubuntu环境 | 14.04、20.04及26.04分别验证APT选项、锁竞争、仓库故障、非交互和真实包脚本的重启行为 |
 
 实现已通过针对本方案的测试, 结果见下一节. 生产部署仍需验证真实包维护脚本的重启行为; 如宿主停止应用会中断安装, 按本文生命周期边界处理, 不扩展为跨进程事务管理器.
 
@@ -448,6 +460,7 @@ sequenceDiagram
 - Ubuntu 20.04.5、APT 2.0.9的隔离实验: 同一临时抓取失败下, 普通update返回0并警告, 严格长选项和上述配置项均返回100. 连续两次索引更新返回100后, 有效测试源的精确版本安装模拟仍返回0.
 - 同环境的隔离dpkg根目录实验: 数字更新日志残留使APT明确报告 `dpkg was interrupted` 和 `dpkg --configure -a`; 执行一次configure后, 精确install返回0. 未对宿主安装包, 宿主包数据库及包管理日志指纹前后一致.
 - 已安装APT官方变更日志 `/usr/share/doc/apt/changelog.gz` 明确在2.0.5加入严格模式; dpkg手册说明configure的全机范围及postinst行为. Ubuntu 26.04尚无实际镜像验收, 旧于2.0.5的APT兼容退化未做实际镜像测试, 不将当前实验泛化为全部平台通过.
+- Ubuntu官方归档的 `dpkg_1.17.5ubuntu5.8` 与 `apt_1.0.1ubuntu2.24` 在Ubuntu 20.04宿主的隔离目录中运行, 生产命令参数不变. 实测修复前Status虚拟字段为空、validate-version选项未知; 修复后真实查询、非法版本拒绝、精确升级、禁止降级、dpkg中断经一次configure恢复均通过, 宿主数据库及日志指纹不变. 工具来源为 [Ubuntu dpkg归档](https://archive.ubuntu.com/ubuntu/pool/main/d/dpkg/) 与 [APT归档](https://archive.ubuntu.com/ubuntu/pool/main/a/apt/); 功能引入版本见 [dpkg-query手册](https://manpages.debian.org/bookworm/dpkg/dpkg-query.1.en.html) 和 [dpkg手册](https://manpages.debian.org/bookworm/dpkg/dpkg.1.en.html).
 
 ## 10. 代码审查与验证
 
@@ -461,7 +474,7 @@ sequenceDiagram
 | 配置加载失败后恢复旧内容 | 取消授权后必须允许重新加载; 只保留旧MD5会遗漏恢复 | 一个dirty标记即可, 行为测试验证失败不消费基线及恢复后解除暂停 |
 | 跨重启恢复、全机健康扫描及发行版探测 | 超出有限补试安装器职责, 未发现本需求必须依赖它们的证据 | 不采纳, 保留明确生命周期与平台验收边界 |
 
-复审结论: 未发现需要继续扩大实现的代码阻塞项. 安装核心由原型八个文件共1925行收敛到两个文件共478行, 均包含注释和空行; 新增代码只覆盖有限补试闭环及其实际边界.
+复审结论: 未发现需要继续扩大实现的代码阻塞项. 安装核心集中于两个文件, 只覆盖有限补试闭环及其实际边界; 14.04兼容修正共用现有查询和比较流程, 不新增平台分支、依赖或状态.
 
 | 验证 | 结果 |
 | --- | --- |
@@ -475,8 +488,10 @@ sequenceDiagram
 
 完整golangci-lint在Windows运行超过八分钟无结果, Linux受限重跑也在分析阶段超时, **不宣称完整lint通过**. 未过滤旧问题的快检只剩既有NormalizeWebConf复杂度25, 已核实该函数与HEAD逐字相同, 不在本任务中重构.
 
-一次同时开启全部master测试和APT fixture的race运行出现无堆栈SIGSEGV; 随后的独立fixture、安装定向race和完整master及config三次race均通过, 未复现也未定位原因, 不将其记录为已修复问题. 若目标环境复现, 应单独获取堆栈定位, 不据此增加安装器防御层.
+同时开启全部master测试和真实APT fixture的race运行曾出现无堆栈SIGSEGV, 本轮14.04兼容修正后该组合再次出现同类异常; 原因尚未定位, 不把该组合列为通过项. 独立fixture、先前安装定向race以及不含真实fixture的master/config race通过, 不将此异常记录为已修复问题, 也不据此增加安装器防御层.
 
 部署前仍需在Ubuntu 26.04镜像及真实业务Deb包上验证维护脚本与服务重启行为. 当前隔离包验证不代表已承诺跨应用退出生存, 也不替代真实业务包的部署验收.
 
 2026-09-21提交前复审: 以独立检出仅装入本需求的18个文件, 使用基线原依赖, 不混入工作区的依赖升级和JSON文档改动. 未发现生产代码阻塞, 本轮仅校正文档对缺包处理、失败日志字段和日志覆盖范围的描述, 不新增功能. Windows默认及std_json全量测试、全量vet通过; Ubuntu 20.04的master/config race与vet、真实隔离APT fixture通过. 包含新增文件的增量golangci-lint快检为0问题; 完整lint再次未正常完成, 不列为通过. 当前实现满足配置驱动、单worker、一次补试及禁止降级的需求边界, 继续保留有限生命周期和目标平台部署验收要求.
+
+2026-09-21补充Ubuntu 14.04为强制兼容目标: 使用官方dpkg 1.17.5重现查询和门禁测试失败后, 将状态查询改为原始Status字段, 校验改为无诊断的原生自比较, 生产代码只增加少量判断及注释. Ubuntu 14.04官方工具与Ubuntu 20.04工具分别通过真实版本查询、非法版本门禁、隔离APT升级、禁止降级及configure恢复. Windows全量测试和vet、Linux常规master/config race与vet、增量lint快检均通过. 用户另在Ubuntu 14.04.5实机确认包描述查询完整; 这不替代实际业务包安装及旧系统内核上的应用运行验收. 本轮不修改NodeAgent、不引入OS版本探测.

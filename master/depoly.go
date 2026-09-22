@@ -221,8 +221,9 @@ func (u *debInstaller) gate(target debTarget, round uint64, retryInstall bool) (
 	if !validDebName(u.name) {
 		return false, nil
 	}
-	valid := u.run(debQueryTimeout, debDpkg, "--validate-version", target.version)
-	if valid.err != nil {
+	// 自比较沿用dpkg原生版本解析并兼容1.17.5; 部分非法语法只警告且返回0, 也必须拒绝.
+	valid := u.run(debQueryTimeout, debDpkg, "--compare-versions", target.version, "eq", target.version)
+	if valid.err != nil || valid.output != "" {
 		if valid.exit >= 0 {
 			logger.Warn().Str("version", target.version).Msg("Invalid Debian target version")
 			return false, nil

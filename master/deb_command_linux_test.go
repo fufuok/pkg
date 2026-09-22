@@ -61,9 +61,6 @@ func TestDebLinuxVersions(t *testing.T) {
 			t.Fatalf("%+v: %+v", tc, r)
 		}
 	}
-	if r := runDebCommand(debQueryTimeout, debDpkg, "--validate-version", "1.0;rm"); r.err == nil {
-		t.Fatal("dpkg accepted invalid version")
-	}
 	admin := t.TempDir()
 	if err := os.Mkdir(filepath.Join(admin, "updates"), 0o700); err != nil {
 		t.Fatal(err)
@@ -76,34 +73,50 @@ func TestDebLinuxVersions(t *testing.T) {
 	if v != "" || err != nil {
 		t.Fatalf("missing package: %q %v", v, err)
 	}
-	writeDebFixture(t, filepath.Join(admin, "status"), debFixtureStatus("installed", "1:1.0+build~rc1-2"))
-	v, err = queryDebVersion(run, "test-pkg")
-	if v != "1:1.0+build~rc1-2" || err != nil {
-		t.Fatalf("query full version: %q %v", v, err)
+	for _, status := range []string{"installed", "unpacked", "half-configured", "triggers-pending", "config-files"} {
+		writeDebFixture(t, filepath.Join(admin, "status"), debFixtureStatus(status, "1:1.0+build~rc1-2"))
+		want := "1:1.0+build~rc1-2"
+		if status == "config-files" {
+			want = ""
+		}
+		v, err = queryDebVersion(run, "test-pkg")
+		if v != want || err != nil {
+			t.Fatalf("query status %s: %q %v", status, v, err)
+		}
 	}
 }
 
-// TestDebLinuxEquivalentRetry 用真实dpkg验证语义相等但字面不同的版本仍允许同轮失败补试.
-func TestDebLinuxEquivalentRetry(t *testing.T) {
+// TestDebLinuxVersionGates 使用真实dpkg验证旧版兼容的校验, 拒绝仅警告的非法版本并保留同版补试.
+func TestDebLinuxVersionGates(t *testing.T) {
 	if _, err := os.Stat(debDpkg); err != nil {
 		t.Skip("dpkg is not installed")
 	}
-	target := debTarget{version: "1.0-0", threshold: 100}
-	u := newDebInstaller("test-pkg", func() debTarget { return target })
-	u.target, u.round = target, 1
-	u.run = func(d time.Duration, args ...string) debCommandResult {
-		if args[0] == debDpkgQuery {
-			return debCommandResult{output: "installed\t1.0\n"}
+	for _, tc := range []struct {
+		version        string
+		retry, allowed bool
+	}{
+		{"1.0-0", true, true},
+		{"1.0-0", false, false},
+		{"1.2.3.260916134926", false, true},
+		{"1:1.0+build~rc1-2", false, true},
+		{"0.9", true, false},
+		{"2.0;rm", false, false},
+		{"invalid", false, false},
+		{"2.0 3", false, false},
+	} {
+		target := debTarget{version: tc.version, threshold: 100}
+		u := newDebInstaller("test-pkg", func() debTarget { return target })
+		u.target, u.round = target, 1
+		u.run = func(d time.Duration, args ...string) debCommandResult {
+			if args[0] == debDpkgQuery {
+				return debCommandResult{output: "install ok installed\t1.0\n"}
+			}
+			return runDebCommand(d, args...)
 		}
-		return runDebCommand(d, args...)
-	}
-	allowed, err := u.gate(target, 1, true)
-	if err != nil || !allowed {
-		t.Fatalf("equivalent retry rejected: allowed=%v err=%v", allowed, err)
-	}
-	allowed, err = u.gate(target, 1, false)
-	if err != nil || allowed {
-		t.Fatalf("first equivalent install should skip: allowed=%v err=%v", allowed, err)
+		allowed, err := u.gate(target, 1, tc.retry)
+		if err != nil || allowed != tc.allowed {
+			t.Fatalf("gate %+v: allowed=%v err=%v", tc, allowed, err)
+		}
 	}
 }
 
@@ -180,6 +193,8 @@ func TestDebAPTFixture(t *testing.T) {
 	}
 	writeDebFixture(t, filepath.Join(base, "repo/Packages"), string(index))
 	writeDebFixture(t, filepath.Join(admin, "status"), debFixtureStatus("installed", "1.0"))
+	// dpkg 1.17.5安装时仍要求available存在, 空文件即可满足隔离数据库的初始化要求.
+	writeDebFixture(t, filepath.Join(admin, "available"), "")
 	writeDebFixture(t, filepath.Join(admin, "info/test-pkg.list"), "")
 	for _, p := range []string{"etc/empty.conf", "etc/empty.preferences"} {
 		writeDebFixture(t, filepath.Join(base, p), "")
@@ -227,7 +242,7 @@ func TestDebAPTFixture(t *testing.T) {
 	t.Log("Two failed updates followed by successful exact install")
 	// 明确覆盖主机允许降级与force-yes, 原生APT必须拒绝回退.
 	downgrade := runDebCommand(0, debAPTArgs("install", "test-pkg=1.0")...)
-	if downgrade.err == nil || !strings.Contains(downgrade.output, "--allow-downgrades") {
+	if downgrade.err == nil || (!strings.Contains(downgrade.output, "--allow-downgrades") && !strings.Contains(downgrade.output, "-y was used without --force-yes")) {
 		t.Fatalf("downgrade protection: %+v", downgrade)
 	}
 	// 模拟数字更新日志残留, 只运行隔离root中的configure再重试.
@@ -249,7 +264,11 @@ func TestDebAPTFixture(t *testing.T) {
 
 // debFixtureStatus 构造独立包数据库记录, 不读取或修改宿主包名.
 func debFixtureStatus(status, version string) string {
-	return fmt.Sprintf("Package: test-pkg\nStatus: install ok %s\nPriority: optional\nSection: misc\nArchitecture: all\nVersion: %s\nMaintainer: Fixture <fixture@example.invalid>\nDescription: isolated fixture\n\n", status, version)
+	triggers := ""
+	if status == "triggers-pending" {
+		triggers = "Triggers-Pending: fixture-trigger\n"
+	}
+	return fmt.Sprintf("Package: test-pkg\nStatus: install ok %s\nPriority: optional\nSection: misc\nArchitecture: all\nVersion: %s\nMaintainer: Fixture <fixture@example.invalid>\n%sDescription: isolated fixture\n\n", status, version, triggers)
 }
 
 // writeDebFixture 只写调用者创建的临时树, 目录和文件使用最小访问权限.
