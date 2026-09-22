@@ -14,11 +14,12 @@ import (
 
 const (
 	// 包管理器路径统一来自 sysenv, 本包只保留超时和输出上限.
-	debAPTGet       = sysenv.BinAptGet
-	debDpkg         = sysenv.BinDpkg
-	debDpkgQuery    = sysenv.BinDpkgQuery
-	debQueryTimeout = 5 * time.Second
-	debOutputLimit  = 64 * 1024
+	debAPTGet        = sysenv.BinAptGet
+	debDpkg          = sysenv.BinDpkg
+	debDpkgQuery     = sysenv.BinDpkgQuery
+	debQueryTimeout  = 5 * time.Second
+	debMutateTimeout = 30 * time.Minute
+	debOutputLimit   = 64 * 1024
 )
 
 var debNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+$`)
@@ -44,7 +45,8 @@ func (w *debOutput) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// runDebCommand 仅只读查询使用超时; 修改命令不绑定配置或Stop取消, Run保证Wait收尾.
+// runDebCommand 对查询和修改命令都执行调用方给定的硬超时.
+// 超时只结束本次命令, 不取消配置轮次; 进程组一并终止, 避免子孙进程继续持有 dpkg 锁.
 func runDebCommand(timeout time.Duration, args ...string) debCommandResult {
 	ctx := context.Background()
 	if timeout > 0 {
@@ -53,6 +55,8 @@ func runDebCommand(timeout time.Duration, args ...string) debCommandResult {
 		defer cancel()
 	}
 	command := exec.CommandContext(ctx, args[0], args[1:]...)
+	// Linux 超时后结束整个进程组; 其他平台沿用 CommandContext 的进程取消.
+	prepareDebCommand(command)
 	command.Env = append(os.Environ(), "LC_ALL=C", "DEBIAN_FRONTEND=noninteractive")
 	// 命令已退出而后代仍持有输出管道时, 不让日志复制永久阻塞收尾.
 	command.WaitDelay = debQueryTimeout

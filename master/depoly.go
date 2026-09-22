@@ -263,7 +263,7 @@ func (u *debInstaller) updateIndexes(round uint64) bool {
 		if !u.current(round) {
 			return false
 		}
-		result := u.run(0, debAPTArgs("update", "")...)
+		result := u.run(debMutateTimeout, debAPTArgs("update", "")...)
 		if result.err == nil {
 			break
 		}
@@ -289,7 +289,7 @@ func (u *debInstaller) attempt(target debTarget, round uint64, previous debAttem
 		return debAttempt{err: err}
 	}
 	if previous.configure {
-		result := u.run(0, debDpkg, "--force-confdef", "--force-confold", "--configure", "-a")
+		result := u.run(debMutateTimeout, debDpkg, "--force-confdef", "--force-confold", "--configure", "-a")
 		if result.err != nil {
 			logger.Warn().Err(result.failure("configure")).Msg("Debian configuration recovery failed")
 		}
@@ -301,7 +301,7 @@ func (u *debInstaller) attempt(target debTarget, round uint64, previous debAttem
 	if !u.current(round) {
 		return debAttempt{}
 	}
-	result := u.run(0, debAPTArgs("install", u.name+"="+target.version)...)
+	result := u.run(debMutateTimeout, debAPTArgs("install", u.name+"="+target.version)...)
 	if result.err == nil {
 		logger.Info().Str("package", u.name).Str("version", target.version).Msg("Debian package installed")
 		return debAttempt{}
