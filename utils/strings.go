@@ -141,6 +141,20 @@ func RemoveString(ss []string, s string) ([]string, bool) {
 	return ss, false
 }
 
+// TrimBOMSpace 去掉字符串首尾的 UTF-8 BOM (U+FEFF) 和空白.
+// U+FEFF 的 Unicode 分类是 Format, unicode.IsSpace 为 false, strings.TrimSpace 去不掉.
+// BOM 和空白可能交替出现, 例如 " \uFEFF value \uFEFF ", 所以交替清除到稳定.
+// 只处理首尾, 不删除字符串内部的 BOM 或空白.
+func TrimBOMSpace(s string) string {
+	for {
+		next := strings.TrimSpace(strings.Trim(s, "\uFEFF"))
+		if next == s {
+			return s
+		}
+		s = next
+	}
+}
+
 // TrimSlice 清除 slice 中各元素的空白, 并删除空白项
 // 注意: 原切片将被修改
 func TrimSlice(ss []string) []string {

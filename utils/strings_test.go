@@ -135,6 +135,18 @@ func TestRemoveString(t *testing.T) {
 	assert.Equal(t, []string{"a", "c"}, val)
 }
 
+func TestTrimBOMSpace(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "129.28.188.241", TrimBOMSpace("\ufeff129.28.188.241"))
+	assert.Equal(t, "129.28.188.241", TrimBOMSpace(" \ufeff129.28.188.241\ufeff "))
+	assert.Equal(t, "129.28.188.241", TrimBOMSpace("\ufeff  \ufeff129.28.188.241\ufeff \t"))
+	assert.Equal(t, "129.28.188.241", TrimBOMSpace("  129.28.188.241\t"))
+	assert.Equal(t, "", TrimBOMSpace("\ufeff  \ufeff"))
+	assert.Equal(t, "", TrimBOMSpace(""))
+	// 内部 BOM 和空白保持原样, 避免误改正文.
+	assert.Equal(t, "a\ufeffb c", TrimBOMSpace(" \ufeffa\ufeffb c\ufeff "))
+}
+
 func TestTrimSpace(t *testing.T) {
 	t.Parallel()
 	val := []string{" a", "", "   ", "\t", "\n", "\t\r\n ", "b ", "   ", "  c  "}
