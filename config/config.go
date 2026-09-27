@@ -268,7 +268,9 @@ func readConfig() (*MainConf, error) {
 		return nil, err
 	}
 
-	loadEnvFiles(cfg.SYSConf.EnvFiles...)
+	if err := loadEnvFiles(cfg.SYSConf.EnvFiles...); err != nil {
+		return nil, err
+	}
 
 	if err := parseSYSConfig(cfg); err != nil {
 		return nil, err

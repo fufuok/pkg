@@ -19,6 +19,19 @@ import (
 	"github.com/fufuok/pkg/common"
 )
 
+// universalRedisStub 只实现统计路径需要的方法, 动态类型不是 *redis.Client.
+type universalRedisStub struct {
+	redis.UniversalClient
+}
+
+func (universalRedisStub) PoolStats() *redis.PoolStats { return &redis.PoolStats{} }
+
+func (universalRedisStub) DBSize(context.Context) *redis.IntCmd {
+	cmd := redis.NewIntCmd(context.Background())
+	cmd.SetErr(errors.New("stub dbsize"))
+	return cmd
+}
+
 // respFixture 为 go-redis 提供只支持当前统计命令的内存 RESP2 服务.
 type respFixture struct {
 	listener net.Listener
@@ -59,6 +72,12 @@ func TestRedisStatsUninitializedAndFailure(t *testing.T) {
 	stats := RedisStats()
 	if stats["Addr"] != "fixture.invalid:6379" || stats["PoolSize"] != 2 || stats["DBSize"] != -1 {
 		t.Fatalf("failed Redis stats = %#v", stats)
+	}
+
+	common.InitRedisDB(universalRedisStub{})
+	stats = RedisStats()
+	if _, ok := stats["Addr"]; ok || stats["DBSize"] != -1 {
+		t.Fatalf("non-client Redis stats = %#v", stats)
 	}
 }
 

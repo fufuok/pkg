@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"fmt"
 	"math"
 	"math/big"
 	"testing"
@@ -145,6 +146,8 @@ func TestParseInts(t *testing.T) {
 		{"", empty, false},
 		{"3,1,3", []int{1, 3}, true},
 		{"3  \t\n,1- 5, 3\r-4", []int{1, 2, 3, 4, 5}, true},
+		{fmt.Sprintf("%d-%d", math.MaxInt, math.MaxInt), []int{math.MaxInt}, true},
+		{"5-1", empty, false},
 	} {
 		got, err := ParseInts(v.s)
 		assert.Equal(t, v.want, got)

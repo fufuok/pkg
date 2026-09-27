@@ -194,8 +194,16 @@ func ParseInts(s string) ([]int, error) {
 				e = err
 				continue
 			}
-			for i := start; i <= end; i++ {
+			// start > end 是倒序区间, 不展开. 到达 end 后立即退出,
+			// 避免 start == end == MaxInt 时 i++ 溢出后永远满足 i <= end.
+			if start > end {
+				continue
+			}
+			for i := start; ; i++ {
 				set[i] = struct{}{}
+				if i == end {
+					break
+				}
 			}
 		}
 	}

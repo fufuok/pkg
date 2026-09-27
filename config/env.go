@@ -1,6 +1,9 @@
 package config
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,7 +31,8 @@ func GetEnvFiles() []string {
 // 热加载语义: 当变量从 env 文件中被删除或注释掉时, 进程环境中对应的旧值会被置空,
 // 使 os.Getenv 返回空字符串. 这解决了 godotenv.Overload 只设置文件中存在的 key,
 // 注释/删除的 key 仍保留旧值的问题. 仅影响由 env 文件管理过的 key, 不影响系统级环境变量.
-func loadEnvFiles(envFiles ...string) {
+// 文件不存在仍忽略; 其余读取错误在修改进程环境前返回, 保留上一轮快照.
+func loadEnvFiles(envFiles ...string) error {
 	envFiles = append([]string{EnvMainFile}, envFiles...)
 	for i, f := range envFiles {
 		if !filepath.IsAbs(f) {
@@ -44,7 +48,10 @@ func loadEnvFiles(envFiles ...string) {
 	for _, f := range envFiles {
 		m, err := godotenv.Read(f)
 		if err != nil {
-			continue
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return fmt.Errorf("read env file %q: %w", f, err)
 		}
 		for k := range m {
 			currentKeys[k] = struct{}{}
@@ -67,6 +74,7 @@ func loadEnvFiles(envFiles ...string) {
 	envFileKeys = currentKeys
 	extraEnvFiles = envFiles
 	loadEnvConfig()
+	return nil
 }
 
 // 加载环境变量中设定的应用配置

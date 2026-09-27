@@ -297,13 +297,28 @@ func TestLoadEnvFilesOverrideOrder(t *testing.T) {
 		clearTestEnvironment(t, key)
 	}
 
-	loadEnvFiles("extra.env")
+	assert.Nil(t, loadEnvFiles("extra.env"))
 	assert.Equal(t, "extra", os.Getenv("PKG_ENV_ORDER"))
 	assert.Equal(t, "main", os.Getenv("PKG_ENV_MAIN_ONLY"))
 	assert.Equal(t, "extra", os.Getenv("PKG_ENV_EXTRA_ONLY"))
 	files := GetEnvFiles()
 	assert.Equal(t, EnvMainFile, files[0])
 	assert.Equal(t, extraFile, files[1])
+}
+
+// TestLoadEnvFilesKeepsStateOnReadError 验证已存在文件读取失败时不清理旧环境变量.
+func TestLoadEnvFilesKeepsStateOnReadError(t *testing.T) {
+	prepareConfigBehaviorTest(t)
+	assert.Nil(t, os.WriteFile(EnvMainFile, []byte("PKG_ENV_KEEP=old\n"), 0o600))
+	clearTestEnvironment(t, "PKG_ENV_KEEP")
+	assert.Nil(t, loadEnvFiles())
+	oldKeys := envFileKeys
+
+	err := loadEnvFiles(EnvFilePath)
+	assert.True(t, err != nil)
+	assert.Equal(t, "old", os.Getenv("PKG_ENV_KEEP"))
+	assert.Equal(t, oldKeys, envFileKeys)
+	assert.Equal(t, []string{EnvMainFile}, extraEnvFiles)
 }
 
 // mustLookupIPNet 返回名单值, 找不到时立即终止当前测试.

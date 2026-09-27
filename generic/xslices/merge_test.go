@@ -30,4 +30,6 @@ func TestMerge(t *testing.T) {
 	assert.Nil(t, Merge(x))
 	x = []int{}
 	assert.Equal(t, x, Merge(x))
+	assert.Equal(t, []int{1, 2}, Merge([]int{}, []int{1, 2}))
+	assert.Equal(t, []int{1, 2}, Merge([]int(nil), []int{1, 2}))
 }

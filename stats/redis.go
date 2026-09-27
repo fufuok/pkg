@@ -16,19 +16,24 @@ func RedisStats() map[string]any {
 	}
 
 	poolStats := common.RedisDB.PoolStats()
-	redisOptions := common.RedisDB.(*redis.Client).Options()
-	return map[string]any{
+	stats := map[string]any{
 		"Hits":       poolStats.Hits,
 		"Misses":     poolStats.Misses,
 		"Timeouts":   poolStats.Timeouts,
 		"TotalConns": poolStats.TotalConns,
 		"IdleConns":  poolStats.IdleConns,
 		"StaleConns": poolStats.StaleConns,
-		"PoolSize":   redisOptions.PoolSize,
-		"Addr":       redisOptions.Addr,
-		"DB":         redisOptions.DB,
 		"DBSize":     RedisDBSize(),
 	}
+	// Cluster, Ring 等 UniversalClient 没有单机 Options. 只有普通客户端补这三项,
+	// 其余实现仍返回通用池统计, 不能因为类型断言失败而 panic.
+	if client, ok := common.RedisDB.(*redis.Client); ok {
+		options := client.Options()
+		stats["PoolSize"] = options.PoolSize
+		stats["Addr"] = options.Addr
+		stats["DB"] = options.DB
+	}
+	return stats
 }
 
 // RedisDBSize 当前数据库键数量

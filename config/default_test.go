@@ -275,14 +275,14 @@ func TestLoadEnvFilesClearsRemovedVars(t *testing.T) {
 	assert.Nil(t, os.WriteFile(EnvMainFile, []byte("FF_ON=1\nFF_REMOVE=2\n"), 0o600))
 	clearTestEnvironment(t, "FF_ON")
 	clearTestEnvironment(t, "FF_REMOVE")
-	loadEnvFiles()
+	assert.Nil(t, loadEnvFiles())
 	assert.Equal(t, "1", os.Getenv("FF_ON"))
 	assert.Equal(t, "2", os.Getenv("FF_REMOVE"))
 
 	// 第二次加载: FF_REMOVE 被注释掉, FF_ON 保留, 新增 FF_NEW=3
 	assert.Nil(t, os.WriteFile(EnvMainFile, []byte("FF_ON=1\n#FF_REMOVE=2\nFF_NEW=3\n"), 0o600))
 	clearTestEnvironment(t, "FF_NEW")
-	loadEnvFiles()
+	assert.Nil(t, loadEnvFiles())
 	assert.Equal(t, "1", os.Getenv("FF_ON"))
 	assert.Equal(t, "", os.Getenv("FF_REMOVE"), "commented-out var should be cleared on reload")
 	assert.Equal(t, "3", os.Getenv("FF_NEW"))

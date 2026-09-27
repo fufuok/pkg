@@ -102,9 +102,10 @@ func RightPadBytes(b, pad []byte, n int) []byte {
 	return bs
 }
 
-// 重复填充到指定长度
+// 重复填充到指定长度.
+// 空 pad 无法产生填充字节, 直接返回以避免 n 始终为 0 的复制循环.
 func copyPad(bs []byte, pad string, need int) {
-	if need <= 0 {
+	if need <= 0 || len(pad) == 0 {
 		return
 	}
 	n := copy(bs[:need], pad)
@@ -115,7 +116,7 @@ func copyPad(bs []byte, pad string, need int) {
 }
 
 func copyPadBytes(bs, pad []byte, need int) {
-	if need <= 0 {
+	if need <= 0 || len(pad) == 0 {
 		return
 	}
 	n := copy(bs[:need], pad)

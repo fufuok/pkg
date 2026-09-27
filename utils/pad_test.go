@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/fufuok/pkg/assert"
@@ -53,6 +54,8 @@ func TestLeftPad(t *testing.T) {
 	}
 	assert.Equal(t, fmt.Sprintf("%32s", src), LeftPad(src, " ", 32))
 	assert.Equal(t, fmt.Sprintf("%032s", "111"), LeftPad("111", "0", 32))
+	wantEmpty := strings.Repeat("\x00", 4) + src
+	assert.Equal(t, wantEmpty, LeftPad(src, "", len(src)+4))
 }
 
 func TestRightPad(t *testing.T) {
@@ -77,6 +80,9 @@ func TestRightPad(t *testing.T) {
 	}
 	assert.Equal(t, fmt.Sprintf("%-32s", src), RightPad(src, " ", 32))
 	assert.Equal(t, fmt.Sprintf("%s%032s", "111", "")[:32], RightPad("111", "0", 32))
+	wantEmpty := src + strings.Repeat("\x00", 4)
+	assert.Equal(t, wantEmpty, RightPad(src, "", len(src)+4))
+	assert.Equal(t, []byte(wantEmpty), RightPadBytes([]byte(src), nil, len(src)+4))
 }
 
 func TestPadBytes(t *testing.T) {
