@@ -199,6 +199,9 @@ func (u *debInstaller) installRound(target debTarget, round uint64) {
 	if !u.wait(round, delay) {
 		return
 	}
+	// 等待结束后再记录, 被新目标或 Stop 取消的轮次不产生安装日志.
+	logger.Warn().Str("package", u.name).Str("version", target.version).Int("attempt", 1).
+		Dur("wait", delay).Msg("Debian installation started")
 	result := debAttempt{}
 	for attempt := 1; attempt <= 2; attempt++ {
 		result = u.attempt(target, round, result)
@@ -210,6 +213,8 @@ func (u *debInstaller) installRound(target debTarget, round uint64) {
 		if attempt == 2 || !u.wait(round, debRetryDelay) {
 			return
 		}
+		logger.Warn().Str("package", u.name).Str("version", target.version).Int("attempt", attempt+1).
+			Msg("Debian installation started")
 	}
 }
 
@@ -263,13 +268,20 @@ func (u *debInstaller) updateIndexes(round uint64) bool {
 		if !u.current(round) {
 			return false
 		}
+		logger.Warn().Str("package", u.name).Int("attempt", update+1).Msg("Debian index update started")
 		result := u.run(debMutateTimeout, debAPTArgs("update", "")...)
 		if result.err == nil {
+			logger.Warn().Str("package", u.name).Int("attempt", update+1).Str("output", result.logTail()).
+				Msg("Debian index update finished")
 			break
 		}
 		logger.Warn().Err(result.failure("update")).Msg("Debian index update failed")
 		if update == 0 && !u.wait(round, debUpdateRetryDelay) {
 			return false
+		}
+		// 第二次不再进入循环头, 等待被取消时不记录新的开始.
+		if update == 0 && u.current(round) {
+			logger.Warn().Str("package", u.name).Int("attempt", update+2).Msg("Debian index update started")
 		}
 	}
 	return true
@@ -301,9 +313,12 @@ func (u *debInstaller) attempt(target debTarget, round uint64, previous debAttem
 	if !u.current(round) {
 		return debAttempt{}
 	}
+	logger.Warn().Str("package", u.name).Str("version", target.version).Msg("Debian package install started")
 	result := u.run(debMutateTimeout, debAPTArgs("install", u.name+"="+target.version)...)
 	if result.err == nil {
-		logger.Info().Str("package", u.name).Str("version", target.version).Msg("Debian package installed")
+		// Warn 保证默认级别能看到成功; 只附尾部, 完整输出仍只在失败错误中保留.
+		logger.Warn().Str("package", u.name).Str("version", target.version).Str("output", result.logTail()).
+			Msg("Debian package installed")
 		return debAttempt{}
 	}
 	return debAttempt{

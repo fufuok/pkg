@@ -645,6 +645,27 @@ func TestTruncStr(t *testing.T) {
 	assert.NotEqual(t, TruncStr(ss, 10, ""), ss[:10])
 }
 
+func TestTruncStrTail(t *testing.T) {
+	t.Parallel()
+	ss := "Hello，世界!😄,f f"
+	for _, tt := range []struct {
+		s      string
+		maxLen int
+		suffix string
+		want   string
+	}{
+		{"", 1, "..", ""},
+		{ss, 0, "..", ""},
+		{ss, 1, "", "f"},
+		{ss, 1, "..", "..f"},
+		{ss, 2, "..", ".. f"},
+		{ss, 14, "..", ss},
+		{"\u4e2d" + strings.Repeat("a", 4), 4, "..", "..aaaa"},
+	} {
+		assert.Equal(t, tt.want, TruncStrTail(tt.s, tt.maxLen, tt.suffix), tt.s)
+	}
+}
+
 func TestLastString(t *testing.T) {
 	t.Parallel()
 	ss := "Hello，世界!😄,f f"

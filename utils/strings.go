@@ -360,7 +360,8 @@ func IsLetterOrNumeric(s string) bool {
 	return true
 }
 
-// TruncStr 截断字符串
+// TruncStr 按 Unicode 字符从头截断字符串.
+// maxLen 小于等于 0 或输入为空时返回空字符串; 未超过长度时忽略 suffix.
 func TruncStr(s string, maxLen int, suffix string) string {
 	if maxLen <= 0 || s == "" {
 		return ""
@@ -376,6 +377,27 @@ func TruncStr(s string, maxLen int, suffix string) string {
 		n++
 	}
 	return s[:i] + suffix
+}
+
+// TruncStrTail 按 Unicode 字符从尾部保留字符串, 供命令输出保留最终结果.
+// suffix 放在保留内容前面; maxLen 小于等于 0 或输入为空时返回空字符串.
+func TruncStrTail(s string, maxLen int, suffix string) string {
+	if maxLen <= 0 || s == "" {
+		return ""
+	}
+	count := utf8.RuneCountInString(s)
+	if count <= maxLen {
+		return s
+	}
+	// 跳过多余字符, i 始终落在保留内容的首个字符边界.
+	skip := count - maxLen
+	for i := range s {
+		if skip == 0 {
+			return suffix + s[i:]
+		}
+		skip--
+	}
+	return suffix
 }
 
 // LastString 获取文本内容最后一个分隔符(单字节: sep[0])后的内容

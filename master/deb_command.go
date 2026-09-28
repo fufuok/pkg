@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fufuok/pkg/sysenv"
+	"github.com/fufuok/pkg/utils"
 )
 
 const (
@@ -20,6 +21,8 @@ const (
 	debQueryTimeout  = 5 * time.Second
 	debMutateTimeout = 30 * time.Minute
 	debOutputLimit   = 64 * 1024
+	// debLogTailRunes 只限制成功摘要的字符数, 失败仍保留完整有界输出.
+	debLogTailRunes = 2048
 )
 
 var debNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+$`)
@@ -140,4 +143,10 @@ func debAPTArgs(action, target string) []string {
 // failure 为有界命令结果补充阶段, 不隐藏退出码及执行失败原因.
 func (r debCommandResult) failure(stage string) error {
 	return fmt.Errorf("%s exited %d: %w; output: %s", stage, r.exit, r.err, r.output)
+}
+
+// logTail 只保留命令输出尾部, 避免 apt 下载进度占满默认 Warn 日志.
+// 标记放在保留内容前面, 与命令缓冲的前缀截断标记区分.
+func (r debCommandResult) logTail() string {
+	return utils.TruncStrTail(strings.TrimSpace(r.output), debLogTailRunes, "[log tail truncated]\n")
 }

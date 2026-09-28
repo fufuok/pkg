@@ -426,3 +426,18 @@ func TestDebInstallerReadsLoadedConfig(t *testing.T) {
 		requireDebActions(t, f, "update", "install:2", "update", "install:3")
 	})
 }
+
+// TestDebCommandLogTail 验证短输出原样保留, 长输出从尾部按字符截断.
+func TestDebCommandLogTail(t *testing.T) {
+	short := debCommandResult{output: "  done  \n"}.logTail()
+	if short != "done" {
+		t.Fatalf("short tail %q", short)
+	}
+	long := debCommandResult{output: "\u4e2d" + strings.Repeat("a", debLogTailRunes)}.logTail()
+	if !strings.HasPrefix(long, "[log tail truncated]\n") || strings.Contains(long, "\u4e2d") {
+		t.Fatalf("long tail %q", long[:64])
+	}
+	if !strings.HasSuffix(long, strings.Repeat("a", 16)) {
+		t.Fatal("long tail dropped the retained suffix")
+	}
+}
