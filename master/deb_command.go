@@ -2,6 +2,7 @@ package master
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -86,10 +87,10 @@ func validDebName(name string) bool { return debNamePattern.MatchString(name) }
 // debToolsReady 按Linux、root权限和工具能力检查, 不依赖发行版标签或systemd.
 func debToolsReady() error {
 	if !sysenv.IsLinux() {
-		return fmt.Errorf("Debian installation requires Linux")
+		return errors.New("Debian installation requires Linux")
 	}
 	if os.Geteuid() != 0 {
-		return fmt.Errorf("Debian installation requires root")
+		return errors.New("Debian installation requires root")
 	}
 	for _, tool := range []string{debAPTGet, debDpkg, debDpkgQuery} {
 		if _, err := exec.LookPath(tool); err != nil {

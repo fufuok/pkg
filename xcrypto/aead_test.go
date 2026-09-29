@@ -13,6 +13,11 @@ import (
 	"github.com/fufuok/pkg/assert"
 )
 
+const (
+	// aeadTagSize 是 cipher.NewGCM 的默认认证标签长度, 只用于测试长度断言.
+	aeadTagSize = 16
+)
+
 var (
 	aeadKey128 = bytes.Repeat([]byte{0x11}, AES128KeySize)
 	aeadKey256 = bytes.Repeat([]byte{0x22}, AES256KeySize)

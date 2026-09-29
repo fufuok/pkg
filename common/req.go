@@ -2,7 +2,6 @@ package common
 
 import (
 	"github.com/imroc/req/v3"
-	"github.com/rs/zerolog"
 
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/json"
@@ -99,34 +98,33 @@ func applyReqDebugDump(client *req.Client, requestBody, responseBody bool) {
 // 非 ReqDebug 不写正文, 避免密钥进入抽样 Warn 日志; ReqDebug 时用无级别日志附截断正文.
 // 成功请求走 dump 看完整正文; 重试路径仍限长, 避免失败体反复刷满日志.
 // resp 在网络错误时可能没有底层 http.Response, 此时只保留 error 和已有 URL.
+// 事件必须在本函数内派发, 不能把未完成的 zerolog 事件返回给其他函数.
 func retryRequestHook(resp *req.Response, err error) {
-	ev := newRetryLogEvent().Err(err)
-	if resp != nil {
-		if resp.Response != nil {
-			ev = ev.Int("status", resp.StatusCode)
+	// ReqDebug 用无级别事件, 不受默认 Warn 过滤; 生产仍走抽样 Warn.
+	ev := LogSampled().Warn()
+	if reqDebug {
+		ev = Log().Log()
+	}
+	ev = ev.Err(err)
+	if resp == nil {
+		ev.Msg("Retrying request")
+		return
+	}
+	if resp.Response != nil {
+		ev = ev.Int("status", resp.StatusCode)
+	}
+	if resp.Request != nil {
+		if resp.Request.RawURL != "" {
+			ev = ev.Str("url", resp.Request.RawURL)
 		}
-		if resp.Request != nil {
-			if resp.Request.RawURL != "" {
-				ev = ev.Str("url", resp.Request.RawURL)
-			}
-			if body := reqDebugBody(resp.Request.Body); body != "" {
-				ev = ev.Str("req_body", body)
-			}
+		if body := reqDebugBody(resp.Request.Body); body != "" {
+			ev = ev.Str("req_body", body)
 		}
-		if body := reqDebugBody(resp.Bytes()); body != "" {
-			ev = ev.Str("resp_body", body)
-		}
+	}
+	if body := reqDebugBody(resp.Bytes()); body != "" {
+		ev = ev.Str("resp_body", body)
 	}
 	ev.Msg("Retrying request")
-}
-
-// newRetryLogEvent 选择重试日志通道.
-// ReqDebug 用无级别事件, 不受默认 Warn 级别过滤; 生产仍走抽样 Warn.
-func newRetryLogEvent() *zerolog.Event {
-	if reqDebug {
-		return Log().Log()
-	}
-	return LogSampled().Warn()
 }
 
 // reqDebugBody 仅在 ReqDebug 时返回截断后的正文, 空体或关闭调试时返回空串.

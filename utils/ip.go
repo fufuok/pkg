@@ -133,10 +133,12 @@ func Int2IPv6(ipInt *big.Int) net.IP {
 		return nil
 	}
 
-	// 前面补零, 补齐 16 位
+	// 前面补零, 补齐 16 位. 不把零长度切片 append 到原数据,
+	// 避免 makezero 告警, 也不改变补齐后的字节顺序.
 	if n < 16 {
-		padding := make([]byte, 16-len(ipBytes))
-		ipBytes = append(padding, ipBytes...)
+		padded := make([]byte, 16)
+		copy(padded[16-n:], ipBytes)
+		ipBytes = padded
 	}
 
 	ip := net.IP(ipBytes)

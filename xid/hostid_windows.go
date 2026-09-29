@@ -3,6 +3,7 @@
 package xid
 
 import (
+	"errors"
 	"fmt"
 	"syscall"
 	"unsafe"
@@ -37,7 +38,8 @@ func readPlatformMachineID() (string, error) {
 
 	err = syscall.RegQueryValueEx(h, mGuidPtr, nil, &valType, (*byte)(unsafe.Pointer(&regBuf[0])), &bufLen)
 	if err != nil {
-		return "", fmt.Errorf("error parsing ")
+		// 保持上游原文, 不把注册表错误包进返回值.
+		return "", errors.New("error parsing ")
 	}
 
 	hostID := syscall.UTF16ToString(regBuf[:])

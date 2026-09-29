@@ -1,7 +1,7 @@
 package utils
 
 import (
-	"fmt"
+	"errors"
 	"math"
 	"math/big"
 	"sort"
@@ -209,7 +209,7 @@ func ParseInts(s string) ([]int, error) {
 	}
 
 	if len(set) == 0 {
-		return nil, fmt.Errorf("invalid integer range")
+		return nil, errors.New("invalid integer range")
 	}
 
 	for n := range set {

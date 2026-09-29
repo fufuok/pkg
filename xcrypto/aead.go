@@ -17,8 +17,6 @@ const (
 
 	// aeadNonceSize 是 AES-GCM 标准 nonce 长度. 每次 Seal 都重新抽取, 并前置进密文.
 	aeadNonceSize = 12
-	// aeadTagSize 是 cipher.NewGCM 的默认认证标签长度.
-	aeadTagSize = 16
 )
 
 var (
