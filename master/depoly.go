@@ -201,7 +201,7 @@ func (u *debInstaller) installRound(target debTarget, round uint64) {
 	}
 	// 等待结束后再记录, 被新目标或 Stop 取消的轮次不产生安装日志.
 	logger.Warn().Str("package", u.name).Str("version", target.version).Int("attempt", 1).
-		Dur("wait", delay).Msg("Debian installation started")
+		Str("wait", delay.String()).Msg("Debian installation started")
 	result := debAttempt{}
 	for attempt := 1; attempt <= 2; attempt++ {
 		result = u.attempt(target, round, result)
@@ -241,6 +241,10 @@ func (u *debInstaller) gate(target debTarget, round uint64, retryInstall bool) (
 	}
 	// 相等只允许补偿同轮失败的install, 不增加独立的同版修复任务.
 	if installed == target.version {
+		if !retryInstall {
+			logger.Warn().Str("package", u.name).Str("installed", installed).Str("target", target.version).
+				Msg("Debian installation skipped")
+		}
 		return retryInstall && u.current(round), nil
 	}
 	compared := u.run(debQueryTimeout, debDpkg, "--compare-versions", target.version, "gt", installed)
@@ -248,6 +252,10 @@ func (u *debInstaller) gate(target debTarget, round uint64, retryInstall bool) (
 		// Debian语义相等不要求字面相同, 例如1.0与1.0-0; 同轮失败仍可补试.
 		equal := u.run(debQueryTimeout, debDpkg, "--compare-versions", target.version, "eq", installed)
 		if equal.err == nil {
+			if !retryInstall {
+				logger.Warn().Str("package", u.name).Str("installed", installed).Str("target", target.version).
+					Msg("Debian installation skipped")
+			}
 			return retryInstall && u.current(round), nil
 		}
 		if equal.exit != 1 {
