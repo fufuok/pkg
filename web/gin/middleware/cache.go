@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"hash/maphash"
 	"io"
 	"net/http"
 	"strconv"
@@ -10,7 +11,6 @@ import (
 
 	"github.com/chenyahui/gin-cache"
 	"github.com/chenyahui/gin-cache/persist"
-	"github.com/fufuok/pkg/xhash"
 	"github.com/gin-gonic/gin"
 )
 
@@ -35,6 +35,10 @@ func CacheByRawData(cacheExpire time.Duration, forgetTimeout time.Duration, opts
 		true:  "Y.",
 		false: "N.",
 	}
+	// seed 绑定当前中间件实例, 保证同一实例中相同请求体得到稳定缓存键.
+	// maphash 的种子只在当前进程和实例内有效, 不能跨实例或进程比较.
+	// 必须在构造阶段生成, 不能在每个请求中重新 MakeSeed.
+	seed := maphash.MakeSeed()
 	opts = append(opts, cache.WithCacheStrategyByRequest(func(c *gin.Context) (bool, cache.Strategy) {
 		body, err := c.GetRawData()
 		defer func() {
@@ -45,7 +49,7 @@ func CacheByRawData(cacheExpire time.Duration, forgetTimeout time.Duration, opts
 		}
 		// gzip 格式结果单独缓存
 		gzipKey := gzipKeys[shouldCompress(c.Request)]
-		key := gzipKey + strconv.FormatUint(xhash.MemHashb(body), 10)
+		key := gzipKey + strconv.FormatUint(maphash.Bytes(seed, body), 10)
 		return true, cache.Strategy{
 			CacheKey: key,
 		}
