@@ -38,8 +38,7 @@ func WebLogger(cond LogCondition, withBody ...bool) fiber.Handler {
 
 		// 将下游错误交还给 Fiber 的 ErrorHandler, 保留调用方自定义的 404/405/业务错误语义.
 		if chainErr != nil {
-			var fiberErr *fiber.Error
-			if errors.As(chainErr, &fiberErr) && fiberErr.Code < fiber.StatusInternalServerError {
+			if fiberErr, ok := errors.AsType[*fiber.Error](chainErr); ok && fiberErr.Code < fiber.StatusInternalServerError {
 				return chainErr
 			}
 

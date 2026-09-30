@@ -1,22 +1,111 @@
 package utils
 
 import (
+	"bytes"
+	"encoding/hex"
 	"testing"
+	"uuid"
 
-	"github.com/fufuok/pkg/assert"
+	"github.com/fufuok/pkg/base58"
 	"github.com/fufuok/pkg/xid"
 )
 
+// TestUUID 验证二进制 UUID 的版本和变体, 不以概率性的碰撞检查判断随机质量.
+func TestUUID(t *testing.T) {
+	t.Parallel()
+	id := UUID()
+	checkUUIDV4(t, id)
+
+	// 返回切片由调用方拥有, 修改另一份 UUID 不得影响已有结果.
+	want := bytes.Clone(id)
+	other := UUID()
+	copy(other, id)
+	other[0] ^= 0xff
+	if !bytes.Equal(id, want) {
+		t.Fatal("UUID calls share mutable storage")
+	}
+}
+
+// TestUUIDString 验证标准短横线形式和小写约定, 同时检查实际返回值的版本和变体.
 func TestUUIDString(t *testing.T) {
-	m := make(map[string]bool)
-	for range 10000 {
-		id := UUIDString()
-		if m[id] {
-			t.Error("duplicated UUID:", id)
-		}
-		m[id] = true
-		assert.Equal(t, uint8(4), UUID()[6]>>4)
-		assert.Equal(t, uint8(0x80), UUID()[8]&0xc0)
+	t.Parallel()
+	s := UUIDString()
+	id, err := uuid.Parse(s)
+	if err != nil {
+		t.Fatalf("parse UUIDString: %v", err)
+	}
+	if s != id.String() {
+		t.Fatalf("UUIDString is not canonical lowercase text: %q", s)
+	}
+	checkUUIDV4(t, id[:])
+}
+
+// TestUUIDSimple 验证无短横线的 32 位小写十六进制格式.
+func TestUUIDSimple(t *testing.T) {
+	t.Parallel()
+	s := UUIDSimple()
+	id, err := hex.DecodeString(s)
+	if err != nil {
+		t.Fatalf("decode UUIDSimple: %v", err)
+	}
+	if s != hex.EncodeToString(id) {
+		t.Fatalf("UUIDSimple is not lowercase hexadecimal: %q", s)
+	}
+	checkUUIDV4(t, id)
+}
+
+// TestUUIDShort 验证 base58 编码保留完整 UUID, 不假定随机文本具有固定长度.
+func TestUUIDShort(t *testing.T) {
+	t.Parallel()
+	s := UUIDShort()
+	id := base58.Decode(s)
+	checkUUIDV4(t, id)
+	if s != base58.Encode(id) {
+		t.Fatalf("UUIDShort is not canonical base58 text: %q", s)
+	}
+}
+
+// TestEncodeUUID 固定任意长度输入的编码契约, 包括补零、截断和不校验版本位.
+func TestEncodeUUID(t *testing.T) {
+	t.Parallel()
+	full := []byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff}
+	tests := []struct {
+		name string
+		id   []byte
+		want string
+	}{
+		{name: "nil", want: "00000000-0000-0000-0000-000000000000"},
+		{name: "empty", id: []byte{}, want: "00000000-0000-0000-0000-000000000000"},
+		{name: "short", id: []byte{0xab, 0xcd, 0xef}, want: "abcdef00-0000-0000-0000-000000000000"},
+		{name: "full", id: full, want: "00112233-4455-6677-8899-aabbccddeeff"},
+		{name: "long", id: append(bytes.Clone(full), 0x12, 0x34), want: "00112233-4455-6677-8899-aabbccddeeff"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			before := bytes.Clone(tt.id)
+			got := EncodeUUID(tt.id)
+			if string(got) != tt.want {
+				t.Fatalf("EncodeUUID = %q, want %q", got, tt.want)
+			}
+			if !bytes.Equal(tt.id, before) {
+				t.Fatal("EncodeUUID modified its input")
+			}
+		})
+	}
+}
+
+// checkUUIDV4 检查生成结果的长度和固定标志位, 不限制随机数据的具体取值.
+func checkUUIDV4(t *testing.T, id []byte) {
+	t.Helper()
+	if len(id) != 16 {
+		t.Fatalf("UUID length = %d, want 16", len(id))
+	}
+	if id[6]>>4 != 4 {
+		t.Fatalf("UUID version = %d, want 4", id[6]>>4)
+	}
+	if id[8]&0xc0 != 0x80 {
+		t.Fatalf("UUID variant bits = %#x, want 0x80", id[8]&0xc0)
 	}
 }
 

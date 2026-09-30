@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"testing"
 
@@ -45,25 +46,39 @@ func TestWebLoggerPropagatesMethodNotAllowed(t *testing.T) {
 	}
 }
 
-// TestWebLoggerPropagatesHandlerError 验证业务 handler 返回错误时交由 Fiber ErrorHandler 统一处理.
-// 该用例固定 WebLogger 的职责边界: 记录错误但不覆盖调用方自定义的错误响应策略.
+// TestWebLoggerPropagatesHandlerError 验证原始和包装后的 Fiber 错误都交由自定义 ErrorHandler 处理.
+// 类型判断应沿错误链查找, 同时保留返回错误的身份和上下文.
 func TestWebLoggerPropagatesHandlerError(t *testing.T) {
-	app := fiber.New(fiber.Config{
-		ErrorHandler: func(c fiber.Ctx, err error) error {
-			return c.Status(fiber.StatusTeapot).SendString(err.Error())
-		},
-	})
-	app.Use(WebLogger(nil))
-	app.Get("/err", func(fiber.Ctx) error {
-		return fiber.ErrBadRequest
-	})
+	for _, tt := range []struct {
+		name string
+		err  error
+	}{
+		{name: "direct", err: fiber.ErrBadRequest},
+		{name: "wrapped", err: fmt.Errorf("request rejected: %w", fiber.ErrBadRequest)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			app := fiber.New(fiber.Config{
+				ErrorHandler: func(c fiber.Ctx, err error) error {
+					if err != tt.err {
+						t.Errorf("error identity changed: got %v, want %v", err, tt.err)
+					}
+					return c.Status(fiber.StatusTeapot).SendString(err.Error())
+				},
+			})
+			app.Use(WebLogger(nil))
+			app.Get("/err", func(fiber.Ctx) error {
+				return tt.err
+			})
 
-	req := httptest.NewRequest(fiber.MethodGet, "/err", nil)
-	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
-	if err != nil {
-		t.Fatalf("app.Test() error = %v", err)
-	}
-	if resp.StatusCode != fiber.StatusTeapot {
-		t.Fatalf("status code = %d, want %d", resp.StatusCode, fiber.StatusTeapot)
+			req := httptest.NewRequest(fiber.MethodGet, "/err", nil)
+			resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+			if err != nil {
+				t.Fatalf("app.Test() error = %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != fiber.StatusTeapot {
+				t.Fatalf("status code = %d, want %d", resp.StatusCode, fiber.StatusTeapot)
+			}
+		})
 	}
 }

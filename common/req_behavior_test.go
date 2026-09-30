@@ -44,7 +44,7 @@ func TestRequestClientContract(t *testing.T) {
 	}
 
 	var retryCalls atomic.Int64
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/slow":
 			time.Sleep(150 * time.Millisecond)
@@ -63,7 +63,7 @@ func TestRequestClientContract(t *testing.T) {
 			_, _ = w.Write([]byte("DOWNLOAD_SECRET"))
 		}
 	}))
-	t.Cleanup(server.Close)
+	attachReqTestServer(t, server, req.DefaultClient(), ReqUpload, ReqDownload)
 
 	resp, err := req.Get(server.URL + "/ok")
 	if err != nil {
@@ -214,11 +214,11 @@ func TestReqDebugDumpWritesToLogger(t *testing.T) {
 	newReq()
 	loadReq()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	}))
-	t.Cleanup(server.Close)
+	attachReqTestServer(t, server, req.DefaultClient())
 
 	if _, err := req.R().SetBodyString("logger request body").Post(server.URL + "/dump-logger"); err != nil {
 		t.Fatalf("request dump logger fixture: %v", err)
@@ -260,5 +260,20 @@ func TestClonedDefaultClientKeepsSnapshotAfterReload(t *testing.T) {
 	}
 	if cloned.DebugLog {
 		t.Fatal("cloned client unexpectedly inherited later ReqDebug")
+	}
+}
+
+// attachReqTestServer 把当前测试拥有的 req 客户端接入服务器的 HTTP 内存网络.
+// 只替换拨号并关闭环境代理, 保留 req transport 的 dump、超时和重试路径.
+// 必须在请求前调用; NewTestServer 负责关闭服务器, 本函数负责关闭 req 的空闲连接.
+func attachReqTestServer(t *testing.T, server *httptest.Server, clients ...*req.Client) {
+	t.Helper()
+	transport, ok := server.Client().Transport.(*http.Transport)
+	if !ok || transport.DialContext == nil {
+		t.Fatal("test server client does not provide an HTTP dialer")
+	}
+	for _, client := range clients {
+		client.SetProxy(nil).SetDial(transport.DialContext)
+		t.Cleanup(client.Transport.CloseIdleConnections)
 	}
 }

@@ -666,6 +666,7 @@ func TestTruncStrTail(t *testing.T) {
 	}
 }
 
+// TestLastString 验证完整分隔符匹配, 包括 ASCII 多字符和 UTF-8 分隔符.
 func TestLastString(t *testing.T) {
 	t.Parallel()
 	ss := "Hello，世界!😄,f f"
@@ -678,8 +679,7 @@ func TestLastString(t *testing.T) {
 		{"o", "，世界!😄,f f"},
 		{" ", "f"},
 
-		// 注意:
-		{"el", "llo，世界!😄,f f"},
+		{"el", "lo，世界!😄,f f"},
 		{",,", ""},
 
 		{"E", ""},
@@ -688,8 +688,8 @@ func TestLastString(t *testing.T) {
 		assert.Equal(t, tt.want, LastString(ss, tt.sep))
 	}
 
-	assert.NotEqual(t, ",f f", LastString(ss, "😄"))
-	assert.Equal(t, "\nc", LastString("a\n\nb\n\nc", "\n\n"))
+	assert.Equal(t, ",f f", LastString(ss, "😄"))
+	assert.Equal(t, "c", LastString("a\n\nb\n\nc", "\n\n"))
 	assert.Equal(t, "c", LastString("a\n\nb\n\nc", "\n"))
 
 	assert.Equal(t, "c", LastString("a\nb\nc", "\n"))
@@ -697,6 +697,38 @@ func TestLastString(t *testing.T) {
 	assert.Equal(t, "c", LastString(strings.TrimSpace("a\nb\nc\n"), "\n"))
 
 	assert.Equal(t, "ff", LastString("abc", "\n", "ff"))
+}
+
+// TestLastStringFallback 固定空结果回退规则, 包括 NodeAgent 使用原文作为默认值的调用形式.
+func TestLastStringFallback(t *testing.T) {
+	t.Parallel()
+	const stdout = "line 1\nline 2\n"
+	tests := []struct {
+		name     string
+		input    string
+		sep      string
+		defaults []string
+		want     string
+	}{
+		{name: "missing without default", input: "abc", sep: "/"},
+		{name: "missing with default", input: "abc", sep: "/", defaults: []string{"fallback"}, want: "fallback"},
+		{name: "first default", input: "abc", sep: "/", defaults: []string{"first", "second"}, want: "first"},
+		{name: "empty input", sep: "/", defaults: []string{"fallback"}, want: "fallback"},
+		{name: "empty separator", input: "abc", defaults: []string{"fallback"}, want: "fallback"},
+		{name: "trailing separator", input: "a/b/", sep: "/", defaults: []string{"fallback"}, want: "fallback"},
+		{name: "trailing full separator", input: "a::", sep: "::", defaults: []string{"fallback"}, want: "fallback"},
+		{name: "full separator", input: "a::b", sep: "::", defaults: []string{"fallback"}, want: "b"},
+		{name: "CRLF separator", input: "a\r\nb", sep: "\r\n", want: "b"},
+		{name: "NodeAgent trailing newline", input: stdout, sep: "\n", defaults: []string{stdout}, want: stdout},
+		{name: "NodeAgent last line", input: "line 1\nline 2", sep: "\n", defaults: []string{"line 1\nline 2"}, want: "line 2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := LastString(tt.input, tt.sep, tt.defaults...); got != tt.want {
+				t.Fatalf("LastString(%q, %q, %q) = %q, want %q", tt.input, tt.sep, tt.defaults, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestFirstString(t *testing.T) {

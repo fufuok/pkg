@@ -5,6 +5,7 @@ import (
 	"os"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/fufuok/cron"
@@ -28,6 +29,36 @@ func TestMain(m *testing.M) {
 	config.StopTester()
 
 	os.Exit(exitCode)
+}
+
+// testWithSchedulerBubble 为串行调度测试建立独立的虚拟时间环境.
+// TestMain 的调度器必须在 bubble 外停止并等待, 不能让外部 goroutine 访问内部 channel.
+// 内部任务全部结束后才恢复原调度器, 任务表和单例开关; 使用本助手的测试不能并行运行.
+func testWithSchedulerBubble(t *testing.T, test func(*testing.T)) {
+	t.Helper()
+	previousCron, previousJobs := crontab, jobs
+	previousSkip := skipIfStillRunning.Load()
+	<-previousCron.Stop().Done()
+	defer func() {
+		crontab, jobs = previousCron, previousJobs
+		skipIfStillRunning.Store(previousSkip)
+		previousCron.Start()
+	}()
+
+	synctest.Test(t, func(t *testing.T) {
+		// 在 bubble 内创建 cron 的 channel, timer 和 goroutine, 沿用生产初始化选项.
+		initMain()
+		skipIfStillRunning.Store(false)
+		t.Cleanup(func() {
+			jobs.Range(func(_ string, job *Job) bool {
+				job.Stop()
+				return true
+			})
+			// 生产 Stop 只发出停止请求, 测试还需等待全部任务返回才能离开 bubble.
+			<-crontab.Stop().Done()
+		})
+		test(t)
+	})
 }
 
 // MockRunner 是一个模拟的 Runner 实现
@@ -92,32 +123,28 @@ func TestAddJob(t *testing.T) {
 	}
 }
 
+// TestAddOnceJob 验证单次任务执行后移除, 后续调度不再执行, 同名注册仍复用原任务.
 func TestAddOnceJob(t *testing.T) {
 	t.Run("once_job_execution", func(t *testing.T) {
-		runDone := make(chan struct{}, 1)
-		mockRunner := &MockRunner{runFunc: func() { runDone <- struct{}{} }}
-		ctx := context.Background()
+		testWithSchedulerBubble(t, func(t *testing.T) {
+			mockRunner := &MockRunner{}
+			job, err := AddOnceJob(t.Context(), "once_test", "@every 1s", mockRunner)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-		job, err := AddOnceJob(ctx, "once_test", "@every 1s", mockRunner)
-		assert.Nil(t, err)
-		assert.NotNil(t, job)
-		t.Cleanup(job.Stop)
+			// 推进至首次调度并等待 goroutine 收敛, 不依赖真实时间或状态轮询.
+			synctest.Sleep(time.Second)
+			assert.Equal(t, 1, mockRunner.RunCount())
+			assert.False(t, job.IsRunning())
+			_, exists := GetJob(job.Name())
+			assert.False(t, exists)
+			assert.Equal(t, 0, len(crontab.Entries()))
 
-		select {
-		case <-runDone:
-		case <-time.After(2 * time.Second):
-			t.Fatal("timed out waiting for once job")
-		}
-
-		// 验证任务只执行了一次
-		assert.Equal(t, 1, mockRunner.RunCount())
-
-		// 一次性任务执行后会同步停止并从调度器移除.
-		waitUntil(t, time.Second, func() bool { return !job.IsRunning() })
-		assert.Equal(t, 1, mockRunner.RunCount())
-
-		// 验证任务已停止
-		assert.False(t, job.IsRunning())
+			// 再经过两个调度周期, 确认单次任务已经从调度器移除.
+			synctest.Sleep(2 * time.Second)
+			assert.Equal(t, 1, mockRunner.RunCount())
+		})
 	})
 
 	t.Run("duplicate_once_job", func(t *testing.T) {
@@ -201,98 +228,46 @@ func TestAddJobDuplicate(t *testing.T) {
 	})
 }
 
+// TestJobExecutionWithSkipIfStillRunning 验证首次执行未返回时, 下一周期是否允许重叠进入 Runner.
 func TestJobExecutionWithSkipIfStillRunning(t *testing.T) {
-	t.Run("skip_if_still_running_blocks_overlap", func(t *testing.T) {
-		// 启用跳过仍在运行的任务
-		skipIfStillRunning.Store(true)
-		defer func() {
-			skipIfStillRunning.Store(false)
-		}()
+	for _, tt := range []struct {
+		name      string
+		skip      bool
+		wantCount int
+	}{
+		{name: "skip_if_still_running_blocks_overlap", skip: true, wantCount: 1},
+		{name: "not_skip_if_still_running_allows_overlap", skip: false, wantCount: 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			testWithSchedulerBubble(t, func(t *testing.T) {
+				SetSkipIfStillRunning(tt.skip)
+				started := make(chan struct{}, 2)
+				release := make(chan struct{})
+				mockRunner := &MockRunner{runFunc: func() {
+					started <- struct{}{}
+					<-release
+				}}
+				job, err := AddJob(t.Context(), "overlap_test", "@every 1s", mockRunner, cron.WithRunImmediately())
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					// 先移除调度, 再释放已进入的执行; 助手随后等待它们全部结束.
+					job.Stop()
+					close(release)
+				})
 
-		started := make(chan struct{}, 4)
-		release := make(chan struct{})
-		// 创建一个执行时间较长的 Runner
-		mockRunner := &MockRunner{
-			runFunc: func() {
-				started <- struct{}{}
-				<-release
-			},
-		}
-		ctx := context.Background()
-
-		// 创建一个快速重复执行的任务
-		job, err := AddJob(ctx, "overlap_test", "@every 1s", mockRunner, cron.WithRunImmediately())
-		assert.Nil(t, err)
-		t.Cleanup(func() {
-			job.Stop()
-			close(release)
+				select {
+				case <-started:
+				case <-time.After(time.Second):
+					t.Fatal("timed out waiting for first job execution")
+				}
+				// 首次执行仍被 release 阻塞, 精确推进一个周期后检查重叠进入次数.
+				// Sleep 同时等待该时刻的任务收敛, 避免与 cron 的同刻 timer 抢先断言.
+				synctest.Sleep(time.Second)
+				assert.Equal(t, tt.wantCount, mockRunner.RunCount())
+			})
 		})
-
-		select {
-		case <-started:
-		case <-time.After(time.Second):
-			t.Fatal("timed out waiting for first job execution")
-		}
-
-		// 等待下一次秒级调度, 被占用的单例锁应阻止重叠执行.
-		time.Sleep(1200 * time.Millisecond)
-
-		// 由于启用了 skipIfStillRunning，应该只执行了一次
-		assert.Equal(t, 1, mockRunner.RunCount())
-	})
-
-	t.Run("not_skip_if_still_running_blocks_overlap", func(t *testing.T) {
-		started := make(chan struct{}, 4)
-		release := make(chan struct{})
-		// 创建一个执行时间较长的 Runner
-		mockRunner := &MockRunner{
-			runFunc: func() {
-				started <- struct{}{}
-				<-release
-			},
-		}
-		ctx := context.Background()
-
-		// 创建一个快速重复执行的任务
-		job, err := AddJob(ctx, "overlap_test", "@every 1s", mockRunner, cron.WithRunImmediately())
-		assert.Nil(t, err)
-		t.Cleanup(func() {
-			job.Stop()
-			close(release)
-		})
-
-		for range 2 {
-			select {
-			case <-started:
-			case <-time.After(2 * time.Second):
-				t.Fatal("timed out waiting for overlapping job execution")
-			}
-		}
-
-		// 未启用 skipIfStillRunning 时, 至少两个执行可以重叠进入 Runner.
-		if got := mockRunner.RunCount(); got < 2 {
-			t.Fatalf("run count = %d, want at least 2", got)
-		}
-	})
-}
-
-// waitUntil 在限定时间内等待异步状态收敛, 避免使用固定长休眠掩盖调度失败.
-func waitUntil(t *testing.T, timeout time.Duration, condition func() bool) {
-	t.Helper()
-	deadline := time.NewTimer(timeout)
-	defer deadline.Stop()
-	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		if condition() {
-			return
-		}
-		select {
-		case <-deadline.C:
-			t.Fatal("timed out waiting for condition")
-		case <-ticker.C:
-		}
 	}
 }
 

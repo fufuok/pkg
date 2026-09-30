@@ -402,11 +402,17 @@ func TruncStrTail(s string, maxLen int, suffix string) string {
 	return suffix
 }
 
-// LastString 获取文本内容最后一个分隔符(单字节: sep[0])后的内容
+// LastString 返回最后一个完整 sep 之后的非空内容, 支持多字符和 UTF-8 分隔符.
+// sep 为空, 未找到分隔符或分隔符位于末尾时, 返回首个 defaultStr; 未提供默认值则返回空字符串.
+// 只需要最后一段及默认值时使用本函数; 需要前半段或区分未找到与空尾段时使用 strings.CutLast.
+//
+//	LastString("a::b", "::", "unknown") // 返回 "b".
+//	LastString("abc", "::", "unknown")  // 未找到分隔符, 返回 "unknown".
+//	LastString("a::", "::", "unknown")  // 最后一段为空, 返回 "unknown".
 func LastString(s, sep string, defaultStr ...string) string {
-	idx := strings.LastIndex(s, sep)
-	if idx != -1 && idx+1 < len(s) {
-		return s[idx+1:]
+	// 空尾段仍回退默认值, 保持原有单字节分隔符调用的行为.
+	if _, after, found := strings.CutLast(s, sep); found && after != "" {
+		return after
 	}
 	if len(defaultStr) > 0 {
 		return defaultStr[0]
