@@ -139,12 +139,8 @@ func TestHashUint(t *testing.T) {
 func TestHashStringToInt(t *testing.T) {
 	assert.Equal(t, uint64(offset64), Sum64(""))
 	assert.Equal(t, uint32(offset32), Sum32(""))
-	assert.Equal(t, uint64(offset64), FnvHash(""))
-	assert.Equal(t, uint32(offset32), FnvHash32(""))
 	assert.Equal(t, uint64(13467076781014605639), Sum64(testString))
 	assert.Equal(t, uint32(475021159), Sum32(testString))
-	assert.Equal(t, uint64(13467076781014605639), FnvHash(testString))
-	assert.Equal(t, uint32(475021159), FnvHash32(testString))
 
 	v := MemHash(testString)
 	for range 100000 {
@@ -161,10 +157,6 @@ func TestHashStringToInt(t *testing.T) {
 		assert.Equal(t, v32, MemHash32(testString))
 	}
 
-	v32 = Djb33(testString)
-	for range 100000 {
-		assert.Equal(t, v32, Djb33(testString))
-	}
 }
 
 func TestHashSeedString(t *testing.T) {
@@ -238,16 +230,6 @@ func BenchmarkHash(b *testing.B) {
 			_ = Sum32(str)
 		}
 	})
-	b.Run("FnvHash", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_ = FnvHash(str)
-		}
-	})
-	b.Run("FnvHash32", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_ = FnvHash32(str)
-		}
-	})
 	b.Run("MemHashb", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			_ = MemHashb(buf)
@@ -268,11 +250,6 @@ func BenchmarkHash(b *testing.B) {
 			_ = MemHash32(str)
 		}
 	})
-	b.Run("Djb33", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			_ = Djb33(str)
-		}
-	})
 	b.Run("SeedString", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			_ = HashSeedString(seed, str)
@@ -291,12 +268,6 @@ func BenchmarkHash(b *testing.B) {
 // BenchmarkHash/Sum32-8           48003264                21.97 ns/op            0 B/op          0 allocs/op
 // BenchmarkHash/Sum32-8           56251669                21.41 ns/op            0 B/op          0 allocs/op
 // BenchmarkHash/Sum32-8           51219012                22.23 ns/op            0 B/op          0 allocs/op
-// BenchmarkHash/FnvHash-8         28918519                37.55 ns/op            0 B/op          0 allocs/op
-// BenchmarkHash/FnvHash-8         33735345                35.68 ns/op            0 B/op          0 allocs/op
-// BenchmarkHash/FnvHash-8         36855715                37.35 ns/op            0 B/op          0 allocs/op
-// BenchmarkHash/FnvHash32-8       35083820                32.14 ns/op            0 B/op          0 allocs/op
-// BenchmarkHash/FnvHash32-8       47042220                28.03 ns/op            0 B/op          0 allocs/op
-// BenchmarkHash/FnvHash32-8       46833836                28.16 ns/op            0 B/op          0 allocs/op
 // BenchmarkHash/MemHashb-8       153161814                9.470 ns/op            0 B/op          0 allocs/op
 // BenchmarkHash/MemHashb-8       152563350                8.079 ns/op            0 B/op          0 allocs/op
 // BenchmarkHash/MemHashb-8       142128412                7.964 ns/op            0 B/op          0 allocs/op
@@ -309,6 +280,3 @@ func BenchmarkHash(b *testing.B) {
 // BenchmarkHash/MemHash32-8      100000000                10.13 ns/op            0 B/op          0 allocs/op
 // BenchmarkHash/MemHash32-8      100000000                10.30 ns/op            0 B/op          0 allocs/op
 // BenchmarkHash/MemHash32-8      143592832                8.360 ns/op            0 B/op          0 allocs/op
-// BenchmarkHash/Djb33-8           60568434                18.17 ns/op            0 B/op          0 allocs/op
-// BenchmarkHash/Djb33-8           75151240                18.17 ns/op            0 B/op          0 allocs/op
-// BenchmarkHash/Djb33-8           68428705                19.79 ns/op            0 B/op          0 allocs/op

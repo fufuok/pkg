@@ -9,7 +9,6 @@ import (
 	"crypto/sha512"
 	"encoding/hex"
 	"hash"
-	"hash/fnv"
 	"hash/maphash"
 	"io"
 	"os"
@@ -177,19 +176,6 @@ func SumBytes32(bs []byte) uint32 {
 	return AddBytes32(offset32, bs)
 }
 
-// FnvHash 获取字符串的哈希值
-func FnvHash(s string) uint64 {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(s))
-	return h.Sum64()
-}
-
-// FnvHash32 获取字符串的哈希值
-func FnvHash32(s string) uint32 {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(s))
-	return h.Sum32()
-}
 
 // MemHashb 使用内置的 memhash 获取哈希值
 func MemHashb(b []byte) uint64 {
@@ -213,40 +199,6 @@ func MemHashb32(b []byte) uint32 {
 func MemHash32(s string) uint32 {
 	h := (*reflect.StringHeader)(unsafe.Pointer(&s))
 	return uint32(memhash(unsafe.Pointer(h.Data), offset32, uintptr(h.Len)))
-}
-
-// Djb33 比 FnvHash32 更快的获取字符串哈希值
-// djb2 with better shuffling. 5x faster than FNV with the hash.Hash overhead.
-// Ref: patrickmn/go-cache
-func Djb33(s string) uint32 {
-	var (
-		l = uint32(len(s))
-		d = 5381 + utils.Seed + l
-		i = uint32(0)
-	)
-	// Why is all this 5x faster than a for loop?
-	if l >= 4 {
-		for i < l-4 {
-			d = (d * 33) ^ uint32(s[i])
-			d = (d * 33) ^ uint32(s[i+1])
-			d = (d * 33) ^ uint32(s[i+2])
-			d = (d * 33) ^ uint32(s[i+3])
-			i += 4
-		}
-	}
-	switch l - i {
-	case 1:
-	case 2:
-		d = (d * 33) ^ uint32(s[i])
-	case 3:
-		d = (d * 33) ^ uint32(s[i])
-		d = (d * 33) ^ uint32(s[i+1])
-	case 4:
-		d = (d * 33) ^ uint32(s[i])
-		d = (d * 33) ^ uint32(s[i+1])
-		d = (d * 33) ^ uint32(s[i+2])
-	}
-	return d ^ (d >> 16)
 }
 
 // HashString 合并一串文本, 得到字符串哈希
