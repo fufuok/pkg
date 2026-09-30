@@ -6,13 +6,13 @@ require (
 	github.com/chenyahui/gin-cache v1.10.0
 	github.com/fufuok/ants v1.11.9
 	github.com/fufuok/bytespool v1.5.1
-	github.com/fufuok/cache v1.1.1
+	github.com/fufuok/cache v1.2.0
 	github.com/fufuok/chanx v1.3.1
 	github.com/fufuok/cron v0.3.2
-	github.com/fufuok/freelru v0.16.0
+	github.com/fufuok/freelru v0.17.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-cmd/cmd v1.4.3
-	github.com/goccy/go-json v0.11.1
+	github.com/goccy/go-json v0.11.2
 	github.com/gofiber/fiber/v3 v3.5.0
 	github.com/imroc/req/v3 v3.61.0
 	github.com/joho/godotenv v1.5.1
@@ -26,7 +26,7 @@ require (
 )
 
 require (
-	github.com/andybalholm/brotli v1.2.5 // indirect
+	github.com/andybalholm/brotli v1.2.6 // indirect
 	github.com/bytedance/gopkg v0.1.4 // indirect
 	github.com/bytedance/sonic v1.15.4 // indirect
 	github.com/bytedance/sonic/loader v0.5.2 // indirect
@@ -65,7 +65,7 @@ require (
 	github.com/quic-go/quic-go v0.63.0 // indirect
 	github.com/refraction-networking/utls v1.8.2 // indirect
 	github.com/shoenig/go-m1cpu v0.2.2 // indirect
-	github.com/tinylib/msgp v1.6.4 // indirect
+	github.com/tinylib/msgp v1.6.5 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect

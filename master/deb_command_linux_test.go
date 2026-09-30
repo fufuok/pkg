@@ -147,7 +147,7 @@ func TestDebAPTFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	paths := []string{sysenv.BinDash}
-	for _, p := range strings.Fields(string(dependencies)) {
+	for p := range strings.FieldsSeq(string(dependencies)) {
 		if strings.HasPrefix(p, "/") {
 			paths = append(paths, p)
 		}

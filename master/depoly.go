@@ -272,7 +272,7 @@ func (u *debInstaller) gate(target debTarget, round uint64, retryInstall bool) (
 
 // updateIndexes 对索引做一次有限补试, 返回false只表示授权撤销, 更新错误不阻断安装.
 func (u *debInstaller) updateIndexes(round uint64) bool {
-	for update := 0; update < 2; update++ {
+	for update := range 2 {
 		if !u.current(round) {
 			return false
 		}
