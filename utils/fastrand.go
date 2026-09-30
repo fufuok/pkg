@@ -2,9 +2,22 @@ package utils
 
 import (
 	"math/rand"
+	randv2 "math/rand/v2"
 	"sync"
 	"time"
 )
+
+// FastRand64 返回覆盖 uint64 全部取值范围的伪随机数, 可并发调用.
+// 使用标准库的进程随机源, 不提供可重现序列, 不适用于密钥或安全令牌.
+func FastRand64() uint64 {
+	return randv2.Uint64()
+}
+
+// FastRandu 返回覆盖 uint 全部取值范围的伪随机数, 位宽随目标平台变化, 可并发调用.
+// 使用标准库公开入口以避免依赖已移除的 runtime.fastrandu 符号, 不适用于密码学用途.
+func FastRandu() uint {
+	return randv2.Uint()
+}
 
 // Implement Source and Source64 interfaces
 type rngSource struct {

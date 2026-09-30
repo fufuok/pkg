@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/fufuok/pkg/assert"
 )
@@ -39,6 +40,32 @@ func TestB2S(t *testing.T) {
 
 	assert.Equal(t, true, B2S(nil) == "")
 	assert.Equal(t, testString, B2S(testBytes))
+}
+
+// TestZeroCopyViews 验证转换保留子视图的起点和长度, 以及 nil 和空字节切片的边界.
+// 只比较底层地址, 不通过写入别名破坏字符串不可变约定.
+func TestZeroCopyViews(t *testing.T) {
+	t.Parallel()
+	s := strings.Clone("prefix-value-suffix")[7:12]
+	b := S2B(s)
+	if string(b) != "value" || len(b) != len(s) || cap(b) != len(s) {
+		t.Fatalf("unexpected byte view: %q, len=%d, cap=%d", b, len(b), cap(b))
+	}
+	if unsafe.SliceData(b) != unsafe.StringData(s) {
+		t.Fatal("string-to-bytes conversion copied the underlying data")
+	}
+
+	source := []byte("prefix-value-suffix")
+	view := source[7:12]
+	got := B2S(view)
+	if got != "value" || unsafe.StringData(got) != unsafe.SliceData(view) {
+		t.Fatal("bytes-to-string conversion did not preserve the original view")
+	}
+	for _, empty := range [][]byte{nil, {}, source[:0]} {
+		if B2S(empty) != "" {
+			t.Fatal("empty byte view did not convert to an empty string")
+		}
+	}
 }
 
 func TestMustJSONString(t *testing.T) {

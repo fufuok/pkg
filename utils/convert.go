@@ -8,7 +8,22 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
 )
+
+// S2B 返回字符串底层数据的零拷贝字节视图, 长度和容量均等于字符串长度.
+// 返回切片只可读取, 不得修改; 需要可写的独立副本时使用 CopyS2B.
+// 空字符串返回零长度切片, 是否为 nil 由字符串的底层表示决定.
+func S2B(s string) []byte {
+	return unsafe.Slice(unsafe.StringData(s), len(s))
+}
+
+// B2S 返回字节切片底层数据的零拷贝字符串视图, nil 或空切片返回空字符串.
+// 字符串仍在使用时, 调用方不得修改或归还底层字节到对象池; 需要独立副本时使用 CopyB2S.
+// 直接复用切片头的数据指针和长度; Go 1.27/amd64 基准中 unsafe.String 写法仍有额外检查开销.
+func B2S(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
+}
 
 // MustJSONIndent 转 json 返回 []byte
 func MustJSONIndent(v any) []byte {

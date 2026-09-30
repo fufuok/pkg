@@ -156,7 +156,6 @@ func TestHashStringToInt(t *testing.T) {
 	for range 100000 {
 		assert.Equal(t, v32, MemHash32(testString))
 	}
-
 }
 
 func TestHashSeedString(t *testing.T) {
