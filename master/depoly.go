@@ -287,10 +287,6 @@ func (u *debInstaller) updateIndexes(round uint64) bool {
 		if update == 0 && !u.wait(round, debUpdateRetryDelay) {
 			return false
 		}
-		// 第二次不再进入循环头, 等待被取消时不记录新的开始.
-		if update == 0 && u.current(round) {
-			logger.Warn().Str("package", u.name).Int("attempt", update+2).Msg("Debian index update started")
-		}
 	}
 	return true
 }
@@ -324,7 +320,7 @@ func (u *debInstaller) attempt(target debTarget, round uint64, previous debAttem
 	logger.Warn().Str("package", u.name).Str("version", target.version).Msg("Debian package install started")
 	result := u.run(debMutateTimeout, debAPTArgs("install", u.name+"="+target.version)...)
 	if result.err == nil {
-		// Warn 保证默认级别能看到成功; 只附尾部, 完整输出仍只在失败错误中保留.
+		// Warn 保证默认日志级别可见安装成功.
 		logger.Warn().Str("package", u.name).Str("version", target.version).Str("output", result.logTail()).
 			Msg("Debian package installed")
 		return debAttempt{}

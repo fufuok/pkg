@@ -2,7 +2,6 @@ package kit
 
 import (
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/fufuok/pkg/utils"
@@ -20,7 +19,7 @@ func (wallRateClock) Now() time.Time {
 	return time.Now()
 }
 
-// RateState 通过计数增长和时间间隔计算速率
+// RateState 通过计数增长和时间间隔计算速率, 支持并发调用; 首次使用后不得复制.
 type RateState struct {
 	lastRate  float64
 	lastTime  time.Time
@@ -30,8 +29,8 @@ type RateState struct {
 	// clock 返回速率计算使用的当前时间. 构造器默认使用系统墙钟, nil 时保持零值可用.
 	clock rateClock
 
-	// 轻量级 TryLock
-	tryLock atomic.Int32
+	// 同步采样状态和最小间隔设置.
+	mu sync.Mutex
 
 	// 延迟初始化
 	initOnce sync.Once
@@ -59,10 +58,11 @@ func (r *RateState) now() time.Time {
 	return time.Now()
 }
 
-// SetMinSecond 设置最小时间间隔 (秒)
-//
-//go:norace
+// SetMinSecond 设置最小时间间隔 (秒), 与正在进行的采样串行执行.
 func (r *RateState) SetMinSecond(second float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	if r.minSecond != second {
 		r.minSecond = second
 	}
@@ -78,8 +78,12 @@ func (r *RateState) Rate(count uint64) float64 {
 	return rate
 }
 
-// RateWithLastCount 获取速率和上次计数
+// RateWithLastCount 获取速率和上次计数, 同一实例的采样串行执行.
+// 调用前取得的计数仍可能乱序, 较小计数沿用重置规则.
 func (r *RateState) RateWithLastCount(count uint64) (float64, uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	// 确保零值实例默认 minSecond 值为: 1.0
 	r.initOnce.Do(func() {
 		if r.minSecond <= 0 {
@@ -93,12 +97,6 @@ func (r *RateState) RateWithLastCount(count uint64) (float64, uint64) {
 		r.lastCount = 0
 		return -1, lcount
 	}
-
-	// 避免频繁计算, 允许使用旧值
-	if !r.tryLock.CompareAndSwap(0, 1) {
-		return r.lastRate, r.lastCount
-	}
-	defer r.tryLock.Store(0)
 
 	// 首次调用 或 计数器重置, 重新开始记录状态数据
 	now := r.now()

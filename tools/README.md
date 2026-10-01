@@ -184,7 +184,7 @@ user~~666:~%21%40%23$%25%5E&%2A%28%29_+%7B%7D%7C%22%3A%3F%3E%3C,.%2F;%5B%5D
 
 注意:
 
-- `url.UserPassword` 不会编码 `+` 和 `@`. `+` 必须保持字面量, 不要写成 `%2B` 以外的二次转义; `@` 出现在用户名或密码里时, 驱动若按最后一个 `@` 切 host, 需要应用自己处理, 本工具不会额外编码它.
+- `url.UserPassword` 保留 `+` 字面量, 会把 `@` 编码为 `%40`. 直接传入原始用户名和密码, 不要对生成的 userinfo 再做二次转义.
 - 字面量 `%` 会被编成 `%25`. 不要先手工 `quote` 一次再交给本工具, 否则会变成 `%252B`.
 - 不得使用 `url.QueryEscape` / `QueryUnescape`. `QueryUnescape` 会把字面量 `+` 变成空格.
 - `xcrypto.GetenvDecrypt` 只还原加密, 不会还原 `url.UserPassword`.

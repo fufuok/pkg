@@ -1,6 +1,7 @@
 package kit
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -9,6 +10,25 @@ import (
 
 type rateTestClock struct {
 	current time.Time
+}
+
+// TestRateStateConcurrent 用 race 检查共享实例的采样、重置和间隔热更新.
+// 并发输入可能乱序, 不要求逐次速率精确或固定执行顺序.
+func TestRateStateConcurrent(t *testing.T) {
+	var rate RateState
+	var workers sync.WaitGroup
+	for worker := range 8 {
+		workers.Go(func() {
+			for i := range 4000 {
+				if worker%2 == 0 {
+					rate.SetMinSecond(float64(i%10+1) / 1e9)
+				} else {
+					rate.RateWithLastCount(uint64(i % 2000))
+				}
+			}
+		})
+	}
+	workers.Wait()
 }
 
 // newRateStateForTest 创建使用固定时钟的速率计算器.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -15,6 +16,67 @@ import (
 
 	"github.com/fufuok/pkg/config"
 )
+
+type retryHookSampler func(zerolog.Level) bool
+
+// Sample 在事件创建时执行测试回调, 固定调试开关切换与正文读取的先后关系.
+func (s retryHookSampler) Sample(level zerolog.Level) bool {
+	return s(level)
+}
+
+// TestRetryHookDebugSnapshot 验证一次重试沿用入口的调试状态, 不混入后续启用的正文.
+func TestRetryHookDebugSnapshot(t *testing.T) {
+	cfg := prepareCommonConfig(t)
+	var logs lockedBuffer
+	installCommonTestLoggers(&logs, zerolog.WarnLevel)
+	cfg.SYSConf.ReqDebug = false
+	newReq()
+	loadReq()
+
+	base := zerolog.New(&logs).Level(zerolog.WarnLevel).With().Bool("sampling", true).Logger()
+	sampled := base.Sample(retryHookSampler(func(zerolog.Level) bool {
+		// hook 已选择抽样通道; 在提取正文前通过真实配置加载启用调试.
+		cfg.SYSConf.ReqDebug = true
+		loadReq()
+		return true
+	}))
+	logSampled.Store(&sampled)
+	resp := &req.Response{
+		Response: &http.Response{StatusCode: http.StatusBadGateway},
+		Request:  &req.Request{RawURL: "http://example.invalid/retry", Body: []byte("REQUEST_BODY_MARKER")},
+	}
+	resp.SetBodyString("RESPONSE_BODY_MARKER")
+	retryRequestHook(resp, errors.New("temporary failure"))
+
+	got := logs.String()
+	if strings.Count(got, "Retrying request") != 1 || !strings.Contains(got, `"sampling":true`) {
+		t.Fatalf("retry event did not use the sampled logger: %s", got)
+	}
+	if strings.Contains(got, `"req_body"`) || strings.Contains(got, `"resp_body"`) {
+		t.Fatalf("retry event used a later debug setting: %s", got)
+	}
+}
+
+// TestRetryHookDebugConcurrent 用 race 检查真实配置加载与重试日志之间的开关同步.
+func TestRetryHookDebugConcurrent(t *testing.T) {
+	cfg := prepareCommonConfig(t)
+	var logs lockedBuffer
+	installCommonTestLoggers(&logs, zerolog.Disabled)
+	newReq()
+	loadReq()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 10000 {
+			retryRequestHook(nil, nil)
+		}
+	}()
+	for i := range 500 {
+		cfg.SYSConf.ReqDebug = i%2 == 0
+		loadReq()
+	}
+	<-done
+}
 
 // TestRequestClientContract 验证 user-agent、超时、重试、debug 默认打印正文和专用客户端 body 隐藏策略.
 func TestRequestClientContract(t *testing.T) {
@@ -39,7 +101,7 @@ func TestRequestClientContract(t *testing.T) {
 	}
 	uploadTimeout := ReqUpload.GetClient().Timeout
 	downloadTimeout := ReqDownload.GetClient().Timeout
-	if !reqDebug || !req.DefaultClient().DebugLog || !ReqUpload.DebugLog || !ReqDownload.DebugLog {
+	if !reqDebug.Load() || !req.DefaultClient().DebugLog || !ReqUpload.DebugLog || !ReqDownload.DebugLog {
 		t.Fatal("request debug mode was not enabled on all clients")
 	}
 
@@ -106,7 +168,7 @@ func TestRequestClientContract(t *testing.T) {
 
 	cfg.SYSConf.ReqDebug = false
 	loadReq()
-	if reqDebug || req.DefaultClient().DebugLog || ReqUpload.DebugLog || ReqDownload.DebugLog {
+	if reqDebug.Load() || req.DefaultClient().DebugLog || ReqUpload.DebugLog || ReqDownload.DebugLog {
 		t.Fatal("request debug mode was not disabled on all clients")
 	}
 	dumpSize := regularDump.Len()
@@ -145,7 +207,7 @@ func TestRequestClientContract(t *testing.T) {
 // TestRetryHookDoesNotLogResponseBody 验证关闭 ReqDebug 时重试 hook 不写请求或响应正文.
 func TestRetryHookDoesNotLogResponseBody(t *testing.T) {
 	_ = prepareCommonConfig(t)
-	reqDebug = false
+	reqDebug.Store(false)
 	var logs lockedBuffer
 	installCommonTestLoggers(&logs, zerolog.WarnLevel)
 
@@ -174,7 +236,7 @@ func TestRetryHookDoesNotLogResponseBody(t *testing.T) {
 // 成功请求不走 hook; 超长正文只保留前 reqDebugBodyMaxLen 字节.
 func TestRetryHookLogsTruncatedBodyWhenReqDebug(t *testing.T) {
 	_ = prepareCommonConfig(t)
-	reqDebug = true
+	reqDebug.Store(true)
 	var logs lockedBuffer
 	installCommonTestLoggers(&logs, zerolog.WarnLevel)
 
@@ -199,6 +261,40 @@ func TestRetryHookLogsTruncatedBodyWhenReqDebug(t *testing.T) {
 	}
 	if strings.Contains(got, reqTail) || strings.Contains(got, respTail) {
 		t.Fatalf("req debug retry hook did not truncate bodies: %s", got)
+	}
+}
+
+// TestRetryHookSamplingBudget 验证调试重试不占业务采样额度, 非调试重试仍正常采样.
+// 使用真实且由 Warn/Error 共用的 BurstSampler, 避免仅替换 writer 漏掉事件创建时的副作用.
+func TestRetryHookSamplingBudget(t *testing.T) {
+	oldLevel := zerolog.GlobalLevel()
+	zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	t.Cleanup(func() { zerolog.SetGlobalLevel(oldLevel) })
+	for _, debug := range []bool{false, true} {
+		t.Run(strconv.FormatBool(debug), func(t *testing.T) {
+			preserveCommonPackageState(t)
+			// 固定采样时钟, 让两次重试和业务错误始终处于同一采样周期.
+			zerolog.TimestampFunc = func() time.Time { return time.Unix(1, 0) }
+			var logs lockedBuffer
+			base := zerolog.New(&logs).Level(zerolog.WarnLevel)
+			burst := &zerolog.BurstSampler{Burst: 2, Period: time.Hour}
+			sampled := base.Sample(&zerolog.LevelSampler{WarnSampler: burst, ErrorSampler: burst})
+			logger.Store(&base)
+			logSampled.Store(&sampled)
+			reqDebug.Store(debug)
+
+			retryRequestHook(nil, errors.New("temporary failure"))
+			retryRequestHook(nil, errors.New("temporary failure"))
+			LogSampled().Error().Msg("Business error after retries")
+
+			got := logs.String()
+			if count := strings.Count(got, "Retrying request"); count != 2 {
+				t.Fatalf("retry logs = %d, want 2", count)
+			}
+			if visible := strings.Contains(got, "Business error after retries"); visible != debug {
+				t.Fatalf("business error visible = %t, want %t after debug=%t retries", visible, debug, debug)
+			}
+		})
 	}
 }
 

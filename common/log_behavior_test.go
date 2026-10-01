@@ -67,7 +67,7 @@ func TestLoggerInitializationAndRuntime(t *testing.T) {
 	}
 	Log().Warn().Msg("hidden warning")
 	Log().Error().Msg("visible error")
-	if !reqDebug || logCurrentConf != cfg.LogConf {
+	if !reqDebug.Load() || logCurrentConf != cfg.LogConf {
 		t.Fatal("runtime reload did not publish logger and request state")
 	}
 

@@ -297,23 +297,28 @@ func TestStopJob(t *testing.T) {
 	})
 }
 
+// TestJobContextCancellation 验证父 context 取消只通知 Runner, 不自动撤销周期任务.
 func TestJobContextCancellation(t *testing.T) {
-	t.Run("context_cancellation_stops_job", func(t *testing.T) {
-		mockRunner := &MockRunner{}
-		ctx, cancel := context.WithCancel(context.Background())
-
-		// 添加任务
-		job, err := AddJob(ctx, "context_cancel_test", "@every 1s", mockRunner)
-		assert.Nil(t, err)
-
-		// 取消上下文
+	testWithSchedulerBubble(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		var calls atomic.Int32
+		runner := publicationRunner(func(runCtx context.Context) error {
+			calls.Add(1)
+			assert.Equal(t, context.Canceled, runCtx.Err())
+			return nil
+		})
+		job, err := AddJob(ctx, "context_cancel_test", "@every 1s", runner)
+		if err != nil {
+			t.Fatal(err)
+		}
 		cancel()
-
-		// 等待一点时间让取消生效
-		time.Sleep(50 * time.Millisecond)
-
-		// 任务应该仍然存在但会被标记为停止（取决于具体实现）
-		// 注意：某些 cron 实现可能会在上下文取消时自动清理任务
-		assert.NotNil(t, job)
+		synctest.Sleep(2 * time.Second)
+		assert.Equal(t, int32(2), calls.Load())
+		assert.True(t, job.IsRunning())
+		assert.True(t, StopJob(job.Name()))
+		synctest.Sleep(time.Second)
+		assert.Equal(t, int32(2), calls.Load())
+		assert.Empty(t, crontab.Entries())
 	})
 }

@@ -36,7 +36,7 @@ func preserveCommonPackageState(t *testing.T) {
 	oldPostAPI := postAPI
 	oldReqUpload := ReqUpload
 	oldReqDownload := ReqDownload
-	oldReqDebug := reqDebug
+	oldReqDebug := reqDebug.Load()
 	oldReqDefault := req.DefaultClient()
 	oldRedisDB := RedisDB
 	oldRedisInited := RedisDBInited.Load()
@@ -71,7 +71,7 @@ func preserveCommonPackageState(t *testing.T) {
 	postAPI = ""
 	ReqUpload = nil
 	ReqDownload = nil
-	reqDebug = false
+	reqDebug.Store(false)
 	req.SetDefaultClient(req.C())
 	InitRedisDB(nil)
 	clockOffset.Store(0)
@@ -99,7 +99,7 @@ func preserveCommonPackageState(t *testing.T) {
 		postAPI = oldPostAPI
 		ReqUpload = oldReqUpload
 		ReqDownload = oldReqDownload
-		reqDebug = oldReqDebug
+		reqDebug.Store(oldReqDebug)
 		req.SetDefaultClient(oldReqDefault)
 		RedisDB = oldRedisDB
 		RedisDBInited.Store(oldRedisInited)

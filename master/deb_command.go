@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/fufuok/pkg/sysenv"
 	"github.com/fufuok/pkg/utils"
@@ -22,23 +23,27 @@ const (
 	debQueryTimeout  = 5 * time.Second
 	debMutateTimeout = 30 * time.Minute
 	debOutputLimit   = 64 * 1024
-	// debLogTailRunes 只限制成功摘要的字符数, 失败仍保留完整有界输出.
-	debLogTailRunes = 2048
+	// 8KiB可容纳2048个最长UTF-8字符.
+	debLogTailLimit  = 8 * 1024
+	debLogTailRunes  = 2048
+	debLogTailMarker = "[log tail truncated]\n"
 )
 
 var debNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+$`)
 
 // debCommandResult 保留退出结果与有界合并输出, 不把命令启动失败误报为成功.
 type debCommandResult struct {
-	output string
-	exit   int
-	err    error
+	output, tail             string
+	exit                     int
+	err                      error
+	truncated, tailTruncated bool
 }
 
-// debOutput 持续消费但仅保留前64KiB; 相同Writer让os/exec串行写入stdout和stderr.
+// debOutput 保留用于解析的前64KiB和仅供日志使用的尾8KiB.
+// 相同Writer让os/exec串行写入stdout和stderr, 无需额外同步.
 type debOutput struct {
-	body      []byte
-	truncated bool
+	body, tail               []byte
+	truncated, tailTruncated bool
 }
 
 // Write 超限时仍返回完整消费长度, 防止日志截断阻塞包管理器.
@@ -46,7 +51,34 @@ func (w *debOutput) Write(p []byte) (int, error) {
 	keep := min(len(p), debOutputLimit-len(w.body))
 	w.body = append(w.body, p[:keep]...)
 	w.truncated = w.truncated || keep < len(p)
+	w.tailTruncated = w.tailTruncated || len(w.tail)+len(p) > debLogTailLimit
+	if len(p) >= debLogTailLimit {
+		w.tail = append(w.tail[:0], p[len(p)-debLogTailLimit:]...)
+	} else {
+		drop := max(0, len(w.tail)+len(p)-debLogTailLimit)
+		w.tail = w.tail[:copy(w.tail, w.tail[drop:])]
+		w.tail = append(w.tail, p...)
+	}
 	return len(p), nil
+}
+
+// result 生成包含截断标记的命令结果.
+func (w *debOutput) result(exit int, err error) debCommandResult {
+	text := string(w.body)
+	if w.truncated {
+		text += "\n[output truncated]"
+	}
+	tail := w.tail
+	// 尾部窗口可能从UTF-8字符中间开始, 跳过残缺字节.
+	if w.tailTruncated {
+		for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+			tail = tail[1:]
+		}
+	}
+	return debCommandResult{
+		output: text, tail: string(tail), exit: exit, err: err,
+		truncated: w.truncated, tailTruncated: w.tailTruncated,
+	}
 }
 
 // runDebCommand 对查询和修改命令都执行调用方给定的硬超时.
@@ -74,11 +106,7 @@ func runDebCommand(timeout time.Duration, args ...string) debCommandResult {
 	if ctx.Err() != nil {
 		err = ctx.Err()
 	}
-	text := string(output.body)
-	if output.truncated {
-		text += "\n[output truncated]"
-	}
-	return debCommandResult{text, exit, err}
+	return output.result(exit, err)
 }
 
 // validDebName 限定单个Debian包名, 禁止APT模式、架构选择符或参数混入.
@@ -143,11 +171,25 @@ func debAPTArgs(action, target string) []string {
 
 // failure 为有界命令结果补充阶段, 不隐藏退出码及执行失败原因.
 func (r debCommandResult) failure(stage string) error {
+	if r.truncated {
+		return fmt.Errorf("%s exited %d: %w; output: %s; tail: %s", stage, r.exit, r.err, r.output, r.logTail())
+	}
 	return fmt.Errorf("%s exited %d: %w; output: %s", stage, r.exit, r.err, r.output)
 }
 
-// logTail 只保留命令输出尾部, 避免 apt 下载进度占满默认 Warn 日志.
-// 标记放在保留内容前面, 与命令缓冲的前缀截断标记区分.
+// logTail 返回去除首尾空白的尾部摘要, 超限时在开头添加截断标记.
 func (r debCommandResult) logTail() string {
-	return utils.TruncStrTail(strings.TrimSpace(r.output), debLogTailRunes, "[log tail truncated]\n")
+	tail := r.tail
+	if tail == "" && !r.tailTruncated {
+		// 内部测试可能只设置output.
+		tail = r.output
+	}
+	tail = strings.TrimSpace(tail)
+	if utf8.RuneCountInString(tail) > debLogTailRunes {
+		return utils.TruncStrTail(tail, debLogTailRunes, debLogTailMarker)
+	}
+	if r.tailTruncated {
+		return debLogTailMarker + tail
+	}
+	return tail
 }

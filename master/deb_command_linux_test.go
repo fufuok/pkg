@@ -40,6 +40,34 @@ func TestDebLinuxCommands(t *testing.T) {
 	}
 }
 
+// TestDebCommandKeepsActualTail 验证超长stdout/stderr的真实末尾及退出码.
+func TestDebCommandKeepsActualTail(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		exit int
+	}{{"success", 0}, {"failure", 1}} {
+		t.Run(tc.name, func(t *testing.T) {
+			const suffix = "FINAL-DPKG-DIAGNOSTIC"
+			result := runDebCommand(10*time.Second, sysenv.BinSh, "-c", `printf '%s\n' "$1"; printf '%s\n' "$2" >&2; exit "$3"`,
+				"deb-output", strings.Repeat("p", debOutputLimit+4096), suffix, fmt.Sprint(tc.exit))
+			if result.exit != tc.exit || (result.err != nil) != (tc.exit != 0) {
+				t.Fatalf("command exited %d, want %d: %v", result.exit, tc.exit, result.err)
+			}
+			if got := result.logTail(); !strings.HasSuffix(got, suffix) {
+				t.Errorf("log tail lost the final diagnostic; tail bytes=%d", len(got))
+			}
+			if result.err != nil && !strings.Contains(result.failure("install").Error(), suffix) {
+				t.Error("failure lost the final diagnostic")
+			}
+			// 日志尾部不能改变原有解析前缀.
+			wantPrefix := strings.Repeat("p", debOutputLimit) + "\n[output truncated]"
+			if result.output != wantPrefix {
+				t.Errorf("query prefix changed: bytes=%d, want=%d", len(result.output), len(wantPrefix))
+			}
+		})
+	}
+}
+
 // TestDebLinuxVersions 验证真实Debian排序和缺包处理, 不写入宿主数据库.
 func TestDebLinuxVersions(t *testing.T) {
 	if _, err := os.Stat(debDpkg); err != nil {

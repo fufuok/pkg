@@ -1,7 +1,10 @@
 package common
 
 import (
+	"sync/atomic"
+
 	"github.com/imroc/req/v3"
+	"github.com/rs/zerolog"
 
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/json"
@@ -20,7 +23,7 @@ var (
 	ReqDownload *req.Client
 
 	// HTTP 客户端调试模式
-	reqDebug bool
+	reqDebug atomic.Bool
 )
 
 func initReq() {
@@ -34,18 +37,19 @@ func initReq() {
 //go:norace
 func loadReq() {
 	cfg := config.Config().SYSConf
+	debug := cfg.ReqDebug
 	req.SetTimeout(cfg.ReqTimeoutDuration).
 		SetCommonRetryCount(cfg.ReqMaxRetries).
 		SetCommonRetryHook(retryRequestHook)
-	if reqDebug == cfg.ReqDebug {
+	if reqDebug.Load() == debug {
 		return
 	}
-	reqDebug = cfg.ReqDebug
-	Log().Warn().Bool("req_debug", reqDebug).Msg("Request debug switch changed")
+	reqDebug.Store(debug)
+	Log().Warn().Bool("req_debug", debug).Msg("Request debug switch changed")
 	req.SetLogger(NewAppLogger())
 	ReqUpload.SetLogger(NewAppLogger())
 	ReqDownload.SetLogger(NewAppLogger())
-	if reqDebug {
+	if debug {
 		// 默认客户端 dump 头和正文, 方便开发调试; 敏感场景由调用方主动关 ReqDebug 或改用专用客户端.
 		// dump 必须进 logger, 不能落到 stdout; 热开 ReqDebug 时生产进程标准输出通常无人收.
 		// 上传/下载客户端仍分别隐藏文件体, 避免大文件或二进制内容刷屏.
@@ -100,12 +104,14 @@ func applyReqDebugDump(client *req.Client, requestBody, responseBody bool) {
 // resp 在网络错误时可能没有底层 http.Response, 此时只保留 error 和已有 URL.
 // 事件必须在本函数内派发, 不能把未完成的 zerolog 事件返回给其他函数.
 func retryRequestHook(resp *req.Response, err error) {
-	// ReqDebug 用无级别事件, 不受默认 Warn 过滤; 生产仍走抽样 Warn.
-	ev := LogSampled().Warn()
-	if reqDebug {
-		ev = Log().Log()
+	// 同一事件的级别和正文使用入口状态, 避免热切换时混用两份配置.
+	debug := reqDebug.Load()
+	// 先选 logger 和级别再创建事件, 避免调试分支消耗共享 Warn/Error 采样额度.
+	log, level := LogSampled(), zerolog.WarnLevel
+	if debug {
+		log, level = Log(), zerolog.NoLevel
 	}
-	ev = ev.Err(err)
+	ev := log.WithLevel(level).Err(err)
 	if resp == nil {
 		ev.Msg("Retrying request")
 		return
@@ -117,19 +123,19 @@ func retryRequestHook(resp *req.Response, err error) {
 		if resp.Request.RawURL != "" {
 			ev = ev.Str("url", resp.Request.RawURL)
 		}
-		if body := reqDebugBody(resp.Request.Body); body != "" {
+		if body := reqDebugBody(resp.Request.Body, debug); body != "" {
 			ev = ev.Str("req_body", body)
 		}
 	}
-	if body := reqDebugBody(resp.Bytes()); body != "" {
+	if body := reqDebugBody(resp.Bytes(), debug); body != "" {
 		ev = ev.Str("resp_body", body)
 	}
 	ev.Msg("Retrying request")
 }
 
 // reqDebugBody 仅在 ReqDebug 时返回截断后的正文, 空体或关闭调试时返回空串.
-func reqDebugBody(body []byte) string {
-	if !reqDebug || len(body) == 0 {
+func reqDebugBody(body []byte, debug bool) string {
+	if !debug || len(body) == 0 {
 		return ""
 	}
 	if len(body) > reqDebugBodyMaxLen {
