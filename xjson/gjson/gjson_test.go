@@ -144,6 +144,12 @@ var basicJSON = `  {"age":100, "name":{"here":"B\\\"R"},
 	"lastly":{"end...ing":"soon","yay":"final"}
 }`
 
+// TestPathMalformedJSON 验证畸形对象反向扫描到文档起点时不崩溃, 不约束无效输入的路径值.
+func TestPathMalformedJSON(t *testing.T) {
+	doc := `{"b:"2}`
+	Get(doc, "b:").Path(doc)
+}
+
 func TestPath(t *testing.T) {
 	json := basicJSON
 	r := Get(json, "@this")

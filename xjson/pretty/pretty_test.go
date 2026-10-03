@@ -571,3 +571,31 @@ func TestNaN(t *testing.T) {
 		}
 	}
 }
+
+// assertUglyInPlaceCompact 以标准库为参照, 检查原地压缩不会破坏转义或字符串内部空格.
+func assertUglyInPlaceCompact(t *testing.T, js any) {
+	t.Helper()
+	src := fmt.Sprintf("%s", js)
+	ugly := UglyInPlace([]byte(src))
+	var buf bytes.Buffer
+	err := json.Compact(&buf, []byte(src))
+	if err != nil {
+		panic(err)
+	}
+	if buf.String() != string(ugly) {
+		t.Fatalf("for '%s', expected '%s', got '%s'", src, buf.Bytes(), ugly)
+	}
+}
+
+// TestUglyInPlaceEscapedStrings 覆盖前导空白导致读写位置错开的转义边界.
+func TestUglyInPlaceEscapedStrings(t *testing.T) {
+	assertUglyInPlaceCompact(t, `  ["\\", "a b"]`)
+	assertUglyInPlaceCompact(t, `  ["\\\\", "a b"]`)
+	assertUglyInPlaceCompact(t, "\t\n"+`  ["\\\\", "a b"]`)
+	assertUglyInPlaceCompact(t, ` ["a\" b", "c d"]`)
+	assertUglyInPlaceCompact(t, ` ["\\\" x", "a b"]`)
+	assertUglyInPlaceCompact(t, `   ["\\\" x", "a b"]`)
+	assertUglyInPlaceCompact(t, `  {"a":"\\", "b":"c d"}`)
+	assertUglyInPlaceCompact(t, ` {"\\":"a b", "nested": [{"quote":"\\\"", "text":"c d"}]}`)
+	assertUglyInPlaceCompact(t, `  {"\\":"a b", "nested": [{"quote":"\\\"", "text":"c d"}]}`)
+}

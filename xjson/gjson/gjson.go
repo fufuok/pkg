@@ -3381,10 +3381,14 @@ func bytesString(b []byte) string {
 	return *(*string)(unsafe.Pointer(&b))
 }
 
+// revSquash 反向跳过一个值; 畸形 JSON 可能已扫描到起点, 空输入保持为空.
 func revSquash(json string) string {
 	// reverse squash
 	// expects that the tail character is a ']' or '}' or ')' or '"'
 	// squash the value, ignoring all nested arrays and objects.
+	if len(json) == 0 {
+		return json
+	}
 	i := len(json) - 1
 	var depth int
 	if json[i] != '"' {

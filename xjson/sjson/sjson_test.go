@@ -352,3 +352,38 @@ func TestIssue61(t *testing.T) {
 		t.Fail()
 	}
 }
+
+// TestDeleteOptions 验证新增删除入口在 nil 和优化提示下保留路径, 错误及字符串只读语义.
+func TestDeleteOptions(t *testing.T) {
+	for _, test := range []struct {
+		name, input, path, want string
+		wantErr                 bool
+	}{
+		{"object", `{"a":1,"b":2}`, "a", `{"b":2}`, false},
+		{"array", `[1,2,3]`, "1", `[1,3]`, false},
+		{"escaped_key", `{"a.b":1,"c":2}`, `a\.b`, `{"c":2}`, false},
+		{"missing", `{"a":1}`, "b", `{"a":1}`, false},
+		{"empty_path", `{"a":1}`, "", `{"a":1}`, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, options := range []*Options{nil, {}, {Optimistic: true, ReplaceInPlace: true}} {
+				var saved Options
+				if options != nil {
+					saved = *options
+				}
+				input := test.input
+				got, err := DeleteOptions(input, test.path, options)
+				if got != test.want || (err != nil) != test.wantErr {
+					t.Errorf("DeleteOptions = (%q, %v), want (%q, error=%t)", got, err, test.want, test.wantErr)
+				}
+				if input != test.input || (options != nil && *options != saved) {
+					t.Fatal("DeleteOptions modified input or options")
+				}
+				gotBytes, err := DeleteBytesOptions([]byte(test.input), test.path, options)
+				if string(gotBytes) != test.want || (err != nil) != test.wantErr {
+					t.Errorf("DeleteBytesOptions = (%q, %v), want (%q, error=%t)", gotBytes, err, test.want, test.wantErr)
+				}
+			}
+		})
+	}
+}

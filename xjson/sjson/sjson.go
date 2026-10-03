@@ -489,9 +489,21 @@ func Delete(json, path string) (string, error) {
 	return Set(json, path, dtype{})
 }
 
+// DeleteOptions deletes a value from json for the specified path, with the given options.
+// 路径和错误语义与 Delete 一致; options 可为 nil, 字符串输入不会原地修改.
+func DeleteOptions(json, path string, options *Options) (string, error) {
+	return SetOptions(json, path, dtype{}, options)
+}
+
 // DeleteBytes deletes a value from json for the specified path.
 func DeleteBytes(json []byte, path string) ([]byte, error) {
 	return SetBytes(json, path, dtype{})
+}
+
+// DeleteBytesOptions deletes a value from json for the specified path, with the given options.
+// options 可为 nil; 选项沿用 SetBytesOptions 的提示语义, 不保证原地复用输入.
+func DeleteBytesOptions(json []byte, path string, options *Options) ([]byte, error) {
+	return SetBytesOptions(json, path, dtype{}, options)
 }
 
 type stringHeader struct {

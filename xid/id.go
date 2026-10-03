@@ -242,14 +242,15 @@ func (id *ID) UnmarshalText(text []byte) error {
 }
 
 // UnmarshalJSON implements encoding/json Unmarshaler interface
+// 仅接受 JSON 字符串或 null, 类型错误时保留原 ID.
 func (id *ID) UnmarshalJSON(b []byte) error {
 	s := string(b)
 	if s == "null" {
 		*id = nilID
 		return nil
 	}
-	// Check the slice length to prevent panic on passing it to UnmarshalText()
-	if len(b) < 2 {
+	// 检查长度及两端引号, 防止合法 JSON 数字被截成编码 ID.
+	if len(b) < 2 || b[0] != '"' || b[len(b)-1] != '"' {
 		return ErrInvalidID
 	}
 	return id.UnmarshalText(b[1 : len(b)-1])

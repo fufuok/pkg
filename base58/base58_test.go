@@ -43,6 +43,9 @@ var invalidStringTests = []struct {
 	{"4kl8", ""},
 	{"0OIl", ""},
 	{"!@#$%^&*()-_=+~`", ""},
+	// 非 ASCII rune 和无效 UTF-8 都必须返回空结果, 不能越界访问解码表.
+	{"abcd\xd80", ""},
+	{"abcd\U000020BF", ""},
 }
 
 var hexTests = []struct {

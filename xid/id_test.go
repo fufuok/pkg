@@ -204,6 +204,36 @@ func TestIDJSONUnmarshalingError(t *testing.T) {
 	}
 }
 
+// TestIDJSONTypeBoundary 验证只接受带引号的编码 ID 或 null, 拒绝 JSON 数字冒充 ID.
+func TestIDJSONTypeBoundary(t *testing.T) {
+	want := ID{0x4d, 0x88, 0xe1, 0x5b, 0x60, 0xf4, 0x86, 0xe4, 0x28, 0x41, 0x2d, 0xc9}
+	for _, input := range []string{"1000000000000000000001", "true", "[]", "{}"} {
+		id := want
+		if err := json.Unmarshal([]byte(input), &id); err != ErrInvalidID {
+			t.Errorf("Unmarshal(%s) error = %v, want %v", input, err, ErrInvalidID)
+		}
+		if id != want {
+			t.Errorf("Unmarshal(%s) changed receiver", input)
+		}
+	}
+	// 直接调用接口也必须校验两端引号, 不能仅依赖 JSON 解码器的语法检查.
+	for _, input := range []string{"", `"`, `[9m4e2mr0ui3e8a215n4g]`, `"9m4e2mr0ui3e8a215n4g]`, `[9m4e2mr0ui3e8a215n4g"`} {
+		id := want
+		if err := id.UnmarshalJSON([]byte(input)); err != ErrInvalidID || id != want {
+			t.Errorf("UnmarshalJSON(%q) = (%v, %v), want unchanged ID and %v", input, id, err, ErrInvalidID)
+		}
+	}
+	for _, input := range []string{`"9m4e2mr0ui3e8a215n4g"`, "null"} {
+		id := want
+		if err := json.Unmarshal([]byte(input), &id); err != nil {
+			t.Fatalf("Unmarshal(%s): %v", input, err)
+		}
+		if (input == "null" && !id.IsNil()) || (input != "null" && id != want) {
+			t.Errorf("Unmarshal(%s) = %v", input, id)
+		}
+	}
+}
+
 func TestIDDriverValue(t *testing.T) {
 	id := ID{0x4d, 0x88, 0xe1, 0x5b, 0x60, 0xf4, 0x86, 0xe4, 0x28, 0x41, 0x2d, 0xc9}
 	got, err := id.Value()

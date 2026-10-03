@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"math"
 	"testing"
 
 	"github.com/fufuok/pkg/assert"
@@ -18,6 +19,14 @@ func TestHumanBaseBytes(t *testing.T) {
 		{42000000, 1000, "42 MB"},
 		{44040192, 1024, "42 MB"},
 		{44040192123, 1024, "42000 MB"},
+		{31450000, 1000, "31 MB"},
+		{31500000, 1000, "32 MB"},
+		{30500000, 1000, "31 MB"},
+		{32500000, 1000, "33 MB"},
+		{33500000, 1000, "34 MB"},
+		{32977715, 1024, "31 MB"},
+		{34078720, 1024, "33 MB"},
+		{9950, 1000, "10 KB"},
 	}
 	for _, v := range tests {
 		got := HumanBaseBytes(v.in, v.base, sizes)
@@ -53,6 +62,14 @@ func TestParseHumanBytes(t *testing.T) {
 		exp uint64
 	}{
 		{"42", 42},
+		{"9007199254740993", 9007199254740993},
+		{"9,007,199,254,740,993 B", 9007199254740993},
+		{"18446744073709551615", math.MaxUint64},
+		{"18446744073709551615 B", math.MaxUint64},
+		{"18446744073709551615 bps", math.MaxUint64},
+		{"18446744073709551 KB", 18446744073709551000},
+		{"18014398509481983 KiB", 18446744073709550592},
+		{"18446744073709 Mbps", 18446744073709000000},
 		{"42MB", 42000000},
 		{"42MiB", 44040192},
 		{"42mb", 42000000},
@@ -67,6 +84,9 @@ func TestParseHumanBytes(t *testing.T) {
 		{"42.5MB", 42500000},
 		{"42.5MiB", 44564480},
 		{"42.5 MB", 42500000},
+		{"42.5\tMB\n", 42500000},
+		{".5 B", 0},
+		{"42. B", 42},
 		{"42.5 Mbps", 42500000},
 		{"42.5 MiB", 44564480},
 		// No need to say B
@@ -110,20 +130,20 @@ func TestMustParseHumanBytes(t *testing.T) {
 	assert.Equal(t, uint64(123), MustParseHumanBytes("-42.5Mi", 123))
 	assert.Equal(t, uint64(0), MustParseHumanBytes("x"))
 	assert.Equal(t, uint64(0), MustParseHumanBytes(""))
+	assert.Equal(t, uint64(math.MaxUint64), MustParseHumanBytes("18446744073709551615", 123))
+	assert.Equal(t, uint64(123), MustParseHumanBytes("18446744073709551616", 123))
 }
 
 func TestParseHumanBytesErrors(t *testing.T) {
-	got, err := ParseHumanBytes("84 JB")
-	if err == nil {
-		t.Errorf("Expected error, got %v", got)
-	}
-	_, err = ParseHumanBytes("")
-	if err == nil {
-		t.Errorf("Expected error parsing nothing")
-	}
-	got, err = ParseHumanBytes("16 EiB")
-	if err == nil {
-		t.Errorf("Expected error, got %v", got)
+	// 保留既有非法输入策略, 并覆盖精确整数乘法的溢出边界.
+	for _, input := range []string{
+		"84 JB", "", "16 EiB", "18446744073709551616", "184467440737095516150 EB",
+		"18446744073709552 KB", "18014398509481984 KiB", "18446744073710 Mbps",
+		"18.5 EB", "18446744073709551615.0 B", " 42 MB", "-42 MB", "42 RB", "42 QB",
+	} {
+		if got, err := ParseHumanBytes(input); err == nil {
+			t.Errorf("Expected error for %q, got %v", input, got)
+		}
 	}
 }
 
@@ -185,8 +205,10 @@ func TestHumanBytes(t *testing.T) {
 		{"HumanIntBytes(5.5GB)", HumanIntBytes(5.5 * GByte), "5.5 GB"},
 		{"HumanIntIBytes(5.5GiB)", HumanIntIBytes(5.5 * GiByte), "5.5 GiB"},
 
+		{"HumanKbps(0)", HumanKbps(0), "0 bps"},
 		{"HumanKbps(1023)", HumanKbps(1023), "1.0 Kbps"},
 		{"HumanKbps(1024)", HumanKbps(1024), "1.0 Kbps"},
+		{"HumanKbps(31450000)", HumanKbps(31450000), "31 Mbps"},
 		{"HumanIntKbps(5.5GB)", HumanIntKbps(5.5 * GByte), "5.5 Gbps"},
 	} {
 		assert.Equal(t, v.expected, v.actual, v.title)

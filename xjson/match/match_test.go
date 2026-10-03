@@ -491,7 +491,7 @@ func TestLimit(t *testing.T) {
 func TestSuffix(t *testing.T) {
 	sufmatch := func(t *testing.T, str, pat string, exstr, expat string, exok bool) {
 		t.Helper()
-		rstr, rpat, rok := matchTrimSuffix(str, pat)
+		rstr, rpat, rok := matchTrimSuffix(str, pat, false)
 		if rstr != exstr || rpat != expat || rok != exok {
 			t.Fatalf(
 				"for '%s' '%s', expected '%s' '%s' '%t', got '%s' '%s' '%t'",
@@ -508,4 +508,53 @@ func TestSuffix(t *testing.T) {
 	sufmatch(t, "f?ello", "*\\?ello", "f", "*", true)
 	sufmatch(t, "f?ello", "**\\?ello", "f", "**", true)
 	sufmatch(t, "f?el*o", "**\\?el\\*o", "f", "**", true)
+}
+
+// TestNoCase 同步上游样例, 验证忽略 ASCII 大小写时的通配符和后缀匹配.
+func TestNoCase(t *testing.T) {
+	if Match("Hello", "*hello") {
+		t.Fatal()
+	}
+	if !MatchNoCase("Hello", "*hello") {
+		t.Fatal()
+	}
+	if !MatchNoCase("hello", "*hello") {
+		t.Fatal()
+	}
+	if !MatchNoCase("HElLO", "*LL*") {
+		t.Fatal()
+	}
+	if !MatchNoCase("HelLO", "*eLL*") {
+		t.Fatal()
+	}
+	if !MatchNoCase("HelLO", "****eLL****") {
+		t.Fatal()
+	}
+}
+
+// TestNoCaseBoundaries 验证新增入口仅折叠 ASCII, 并保留转义和复杂度终止边界.
+func TestNoCaseBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		str, pattern string
+		want         bool
+	}{
+		{"Hello", "hELLo", true},
+		{"Hello*", `hELLO\*`, true},
+		{"Hello?", `*O\?`, true},
+		{"É", "é", false},
+		{"É", "É", true},
+		{"Hello", "world", false},
+	} {
+		if got := MatchNoCase(test.str, test.pattern); got != test.want {
+			t.Errorf("MatchNoCase(%q, %q) = %t, want %t", test.str, test.pattern, got, test.want)
+		}
+		got, stopped := MatchLimitNoCase(test.str, test.pattern, 100)
+		if got != test.want || stopped {
+			t.Errorf("MatchLimitNoCase(%q, %q) = (%t, %t), want (%t, false)", test.str, test.pattern, got, stopped, test.want)
+		}
+	}
+	matched, stopped := MatchLimitNoCase(strings.Repeat("A", 40), `*a*a*a*a*a*a*a*a*a*a*a*a*a*a*a*"*a*`, 100)
+	if matched || !stopped {
+		t.Fatalf("expected complexity limit, got (%t, %t)", matched, stopped)
+	}
 }

@@ -27,6 +27,7 @@ var bigRadix = [...]*big.Int{
 var bigRadix10 = big.NewInt(58 * 58 * 58 * 58 * 58 * 58 * 58 * 58 * 58 * 58) // 58^10
 
 // Decode decodes a modified base58 string to a byte slice.
+// 非法字符返回空切片, 包括非 ASCII 字符和无效 UTF-8.
 func Decode(b string) []byte {
 	answer := big.NewInt(0)
 	scratch := new(big.Int)
@@ -52,6 +53,11 @@ func Decode(b string) []byte {
 
 		total := uint64(0)
 		for _, v := range t[:n] {
+			// range 按 rune 读取, 必须先限制范围才能索引固定 256 项的表.
+			if v > 255 {
+				return []byte("")
+			}
+
 			tmp := b58[v]
 			if tmp == 255 {
 				return []byte("")

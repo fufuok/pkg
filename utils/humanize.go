@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"math"
+	"math/bits"
 	"strconv"
 	"strings"
 	"unicode"
@@ -74,7 +75,8 @@ func Logn(n, b float64) float64 {
 	return math.Log(n) / math.Log(b)
 }
 
-// HumanBaseBytes 数字的数量级表示
+// HumanBaseBytes 按指定进制格式化数量级, 最大单位不超过 sizes 的末项.
+// 原始值小于 10 时直接输出整数, 其他值缩放后最多保留一位小数, 按上游规则四舍五入一次.
 func HumanBaseBytes(v uint64, base float64, sizes []string) string {
 	if v < 10 {
 		return fmt.Sprintf("%d %s", v, sizes[0])
@@ -85,7 +87,13 @@ func HumanBaseBytes(v uint64, base float64, sizes []string) string {
 		e = n
 	}
 	suffix := sizes[int(e)]
-	val := math.Floor(float64(v)/math.Pow(base, e)*10+0.5) / 10
+	val := float64(v) / math.Pow(base, e)
+	// 按未舍入值选择精度, 避免先取一位小数再取整数而误越过舍入边界.
+	rounding := 1.0
+	if val < 10 {
+		rounding = 10
+	}
+	val = math.Floor(val*rounding+0.5) / rounding
 	f := "%.0f %v"
 	if val < 10 {
 		f = "%.1f %v"
@@ -143,7 +151,8 @@ func HumanKbps(v uint64) string {
 	return HumanBaseBytes(v, 1000, sizes)
 }
 
-// ParseHumanBytes 解析数字的数量级表示
+// ParseHumanBytes 解析数字的数量级表示, 整数输入在 uint64 范围内精确换算.
+// 小数沿用 float64 换算并截去不足一字节的部分, 非法单位或溢出返回错误.
 // e.g. ParseHumanBytes("42 MB") -> 42000000, nil
 // e.g. ParseHumanBytes("42 mib") -> 44040192, nil
 func ParseHumanBytes(s string) (uint64, error) {
@@ -170,15 +179,24 @@ func ParseHumanBytes(s string) (uint64, error) {
 	}
 
 	extra := ToLower(strings.TrimSpace(s[lastDigit:]))
-	if m, ok := bytesSizeTable[extra]; ok {
-		f *= float64(m)
-		if f >= math.MaxUint64 {
+	m, ok := bytesSizeTable[extra]
+	if !ok {
+		return 0, fmt.Errorf("unhandled size name: %v", extra)
+	}
+	// 整数不经过浮点乘法, 保留 2^53 以上的精度并接受完整 uint64 范围.
+	if !strings.ContainsRune(num, '.') {
+		if v, perr := strconv.ParseUint(num, 10, 64); perr == nil {
+			if hi, lo := bits.Mul64(v, m); hi == 0 {
+				return lo, nil
+			}
 			return 0, fmt.Errorf("too large: %v", s)
 		}
-		return uint64(f), nil
 	}
-
-	return 0, fmt.Errorf("unhandled size name: %v", extra)
+	f *= float64(m)
+	if f >= math.MaxUint64 {
+		return 0, fmt.Errorf("too large: %v", s)
+	}
+	return uint64(f), nil
 }
 
 // MustParseHumanBytes 解析数字的数量级表示

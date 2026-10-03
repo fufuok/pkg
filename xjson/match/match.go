@@ -5,6 +5,14 @@ import (
 	"unicode/utf8"
 )
 
+const (
+	rNoMatch result = iota
+	rMatch
+	rStop
+)
+
+var maxRuneBytes = [...]byte{244, 143, 191, 191}
+
 // Match returns true if str matches pattern. This is a very
 // simple wildcard match where '*' matches on any number characters
 // and '?' matches on any one character.
@@ -19,11 +27,25 @@ import (
 //	'?'         matches any single non-Separator character
 //	c           matches character c (c != '*', '?', '\\')
 //	'\\' c      matches character c
+//
+// 默认保持大小写敏感, 不对匹配复杂度设置上限.
 func Match(str, pattern string) bool {
+	return match0(str, pattern, false)
+}
+
+// MatchNoCase is the same as Match but performs a case-insensitive match.
+// Such that string "Hello World" with match with lower case pattern "hello*"
+// 仅忽略 ASCII 字母大小写, 其他 Unicode 字符仍按原值匹配.
+func MatchNoCase(str, pattern string) bool {
+	return match0(str, pattern, true)
+}
+
+// match0 统一普通和 ASCII 大小写不敏感匹配, 此入口不限制匹配复杂度.
+func match0(str, pattern string, nocase bool) bool {
 	if pattern == "*" {
 		return true
 	}
-	return match(str, pattern, 0, nil, -1) == rMatch
+	return match(str, pattern, 0, nil, -1, nocase) == rMatch
 }
 
 // MatchLimit is the same as Match but will limit the complexity of the match
@@ -35,12 +57,26 @@ func Match(str, pattern string) bool {
 // encounters a sandwiched wildcard pattern, such as: `user:*:name`.
 // Everytime it calls itself a counter is incremented.
 // The operation is stopped when counter > maxcomp*len(str).
+// 大小写敏感匹配与忽略大小写入口共用预算规则, 超限时通过 stopped 标识.
 func MatchLimit(str, pattern string, maxcomp int) (matched, stopped bool) {
+	return matchLimit0(str, pattern, maxcomp, false)
+}
+
+// MatchLimitNoCase 使用与 MatchLimit 相同的复杂度预算, 仅忽略 ASCII 字母大小写.
+// 超出预算时返回 stopped, 调用方应将其与普通不匹配区分.
+func MatchLimitNoCase(str, pattern string, maxcomp int,
+) (matched, stopped bool) {
+	return matchLimit0(str, pattern, maxcomp, true)
+}
+
+// matchLimit0 共享普通和忽略大小写模式的计数器, 保留 MatchLimit 的终止语义.
+func matchLimit0(str, pattern string, maxcomp int, nocase bool,
+) (matched, stopped bool) {
 	if pattern == "*" {
 		return true, false
 	}
 	counter := 0
-	r := match(str, pattern, len(str), &counter, maxcomp)
+	r := match(str, pattern, len(str), &counter, maxcomp, nocase)
 	if r == rStop {
 		return false, true
 	}
@@ -49,13 +85,17 @@ func MatchLimit(str, pattern string, maxcomp int) (matched, stopped bool) {
 
 type result int
 
-const (
-	rNoMatch result = iota
-	rMatch
-	rStop
-)
+// tolower 只折叠 ASCII 大写字母, 不执行 Unicode 大小写归一化.
+func tolower(r rune) rune {
+	if r >= 'A' && r <= 'Z' {
+		return r + 32
+	}
+	return r
+}
 
-func match(str, pat string, slen int, counter *int, maxcomp int) result {
+// match 递归匹配通配符, 所有递归分支共享复杂度预算和大小写模式.
+func match(str, pat string, slen int, counter *int, maxcomp int, nocase bool,
+) result {
 	// check complexity limit
 	if maxcomp > -1 {
 		if *counter > slen*maxcomp {
@@ -96,7 +136,7 @@ func match(str, pat string, slen int, counter *int, maxcomp int) result {
 
 			// Match and trim any non-wildcard suffix characters.
 			var ok bool
-			str, pat, ok = matchTrimSuffix(str, pat)
+			str, pat, ok = matchTrimSuffix(str, pat, nocase)
 			if !ok {
 				return rNoMatch
 			}
@@ -107,7 +147,7 @@ func match(str, pat string, slen int, counter *int, maxcomp int) result {
 			}
 
 			// Perform recursive wildcard search.
-			r := match(str, pat[1:], slen, counter, maxcomp)
+			r := match(str, pat[1:], slen, counter, maxcomp, nocase)
 			if r != rNoMatch {
 				return r
 			}
@@ -125,6 +165,9 @@ func match(str, pat string, slen int, counter *int, maxcomp int) result {
 				if ps == 0 {
 					return rNoMatch
 				}
+			}
+			if nocase {
+				sc, pc = tolower(sc), tolower(pc)
 			}
 			if sc != pc {
 				return rNoMatch
@@ -152,7 +195,8 @@ func match(str, pat string, slen int, counter *int, maxcomp int) result {
 //
 // Any matched characters will be trimmed from both the target
 // string and the pattern.
-func matchTrimSuffix(str, pat string) (string, string, bool) {
+// 大小写模式与前向匹配一致, 反向扫描仍保留通配符和转义边界.
+func matchTrimSuffix(str, pat string, nocase bool) (string, string, bool) {
 	// It's expected that the pattern has at least two bytes and the first byte
 	// is a wildcard star '*'
 	match := true
@@ -173,6 +217,9 @@ func matchTrimSuffix(str, pat string) (string, string, bool) {
 			break
 		}
 		sc, ss := utf8.DecodeLastRuneInString(str)
+		if nocase {
+			pc, sc = tolower(pc), tolower(sc)
+		}
 		if !((pc == '?' && !esc) || pc == sc) {
 			match = false
 			break
@@ -182,8 +229,6 @@ func matchTrimSuffix(str, pat string) (string, string, bool) {
 	}
 	return str, pat, match
 }
-
-var maxRuneBytes = [...]byte{244, 143, 191, 191}
 
 // Allowable parses the pattern and determines the minimum and maximum allowable
 // values that the pattern can represent.
