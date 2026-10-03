@@ -8,6 +8,7 @@ import (
 )
 
 // Ref: dustin/go-humanize
+// TestHumanBigByteParsing 验证小数单位换算及不足一字节时截断, 不限制小数位数.
 func TestHumanBigByteParsing(t *testing.T) {
 	tests := []struct {
 		in  string
@@ -45,6 +46,15 @@ func TestHumanBigByteParsing(t *testing.T) {
 		{"42.5 Mi", 44564480},
 		{"1,005.03 MB", 1005030000},
 		{"1,005.03 Mbps", 1005030000},
+		// 预期值独立按整数除法计算: 203*2^40/100 和 70712*2^30/100.
+		{"2.03 TiB", 2232008604385},
+		{"2.03tib", 2232008604385},
+		{"2.0300TIB", 2232008604385},
+		{"707.12 GiB", 759264318586},
+		{"707.12gib", 759264318586},
+		{"707.1200GIB", 759264318586},
+		{"0.99 B", 0},
+		{"1.99 B", 1},
 		// Large testing, breaks when too much larger than
 		// this.
 		{"12.5 EB", uint64(12.5 * float64(EByte))},
@@ -69,6 +79,39 @@ func TestHumanBigByteParsing(t *testing.T) {
 func TestMustParseHumanBigBytes(t *testing.T) {
 	assert.Equal(t, uint64(44564480), MustParseHumanBigBytes("42.5Mi").Uint64())
 	assert.Equal(t, (&big.Int{}).SetUint64(123), MustParseHumanBigBytes("-42.5Mi", (&big.Int{}).SetUint64(123)))
+}
+
+// TestMustParseHumanBigBytesDecimal 验证小数成功值及失败回退, 调用不得改写调用方的默认值.
+func TestMustParseHumanBigBytesDecimal(t *testing.T) {
+	defaultVal := big.NewInt(123)
+	for _, tc := range []struct {
+		input string
+		want  string
+	}{
+		{"2.03 TiB", "2232008604385"},
+		{"2.0300tib", "2232008604385"},
+		{"707.12 GiB", "759264318586"},
+		{"707.1200GIB", "759264318586"},
+		{"0.99 B", "0"},
+	} {
+		got := MustParseHumanBigBytes(tc.input, defaultVal)
+		if got == nil || got.String() != tc.want {
+			t.Fatalf("MustParseHumanBigBytes(%q) = %v, want %s", tc.input, got, tc.want)
+		}
+		// 成功结果独立于默认值, 调用方后续修改结果也不应污染备用值.
+		got.SetInt64(0)
+		if defaultVal.String() != "123" {
+			t.Fatalf("MustParseHumanBigBytes(%q) changed default to %v", tc.input, defaultVal)
+		}
+	}
+	for _, input := range []string{"", "-2.03 TiB", "707.12 JB"} {
+		if got := MustParseHumanBigBytes(input, defaultVal); got != defaultVal || defaultVal.String() != "123" {
+			t.Errorf("MustParseHumanBigBytes(%q) = %v, want unchanged default", input, got)
+		}
+		if got := MustParseHumanBigBytes(input); got != nil {
+			t.Errorf("MustParseHumanBigBytes(%q) = %v, want nil without default", input, got)
+		}
+	}
 }
 
 func TestHumanBigByteErrors(t *testing.T) {

@@ -76,7 +76,7 @@ func Logn(n, b float64) float64 {
 }
 
 // HumanBaseBytes 按指定进制格式化数量级, 最大单位不超过 sizes 的末项.
-// 原始值小于 10 时直接输出整数, 其他值缩放后最多保留一位小数, 按上游规则四舍五入一次.
+// 未缩放的值输出整数, 缩放后固定保留两位小数; 这是本地显示策略, 不用于无损序列化.
 func HumanBaseBytes(v uint64, base float64, sizes []string) string {
 	if v < 10 {
 		return fmt.Sprintf("%d %s", v, sizes[0])
@@ -87,19 +87,30 @@ func HumanBaseBytes(v uint64, base float64, sizes []string) string {
 		e = n
 	}
 	suffix := sizes[int(e)]
-	val := float64(v) / math.Pow(base, e)
-	// 按未舍入值选择精度, 避免先取一位小数再取整数而误越过舍入边界.
-	rounding := 1.0
-	if val < 10 {
-		rounding = 10
+	if e == 0 {
+		return fmt.Sprintf("%d %s", v, suffix)
 	}
-	val = math.Floor(val*rounding+0.5) / rounding
-	f := "%.0f %v"
-	if val < 10 {
-		f = "%.1f %v"
+	unit := math.Pow(base, e)
+	if unit >= 1 && unit < 1<<64 && unit == math.Trunc(unit) {
+		// SI/IEC 等整数单位直接计算百分位, 避免 1005 B 的浮点换算误舍入为 1.00 KB.
+		scale := uint64(unit)
+		whole := v / scale
+		// 只将余数乘 100, 商小于 100, 128 位除法不会溢出.
+		hi, lo := bits.Mul64(v%scale, 100)
+		fraction, remainder := bits.Div64(hi, lo, scale)
+		// 用减法比较半分边界, 避免将余数翻倍时溢出; 显示进位不改变已选单位.
+		if remainder >= scale-remainder {
+			fraction++
+			if fraction == 100 {
+				whole++
+				fraction = 0
+			}
+		}
+		return fmt.Sprintf("%d.%02d %s", whole, fraction, suffix)
 	}
-
-	return fmt.Sprintf(f, val, suffix)
+	// 自定义非整数单位沿用浮点换算, 只在目标两位小数上舍入一次.
+	val := math.Floor(float64(v)/unit*100+0.5) / 100
+	return fmt.Sprintf("%.2f %s", val, suffix)
 }
 
 // HumanGBMB 转为 ** GB ** MB
@@ -131,21 +142,21 @@ func HumanIntKbps(v int) string {
 }
 
 // HumanBytes 1 KB = 1000 B
-// e.g. HumanBytes(82854982) -> 83 MB
+// e.g. HumanBytes(82854982) -> 82.85 MB
 func HumanBytes(v uint64) string {
 	sizes := []string{"B", "KB", "MB", "GB", "TB", "PB", "EB"}
 	return HumanBaseBytes(v, 1000, sizes)
 }
 
 // HumanIBytes 1 KiB = 1024 B
-// e.g. HumanIBytes(82854982) -> 79 MiB
+// e.g. HumanIBytes(82854982) -> 79.02 MiB
 func HumanIBytes(v uint64) string {
 	sizes := []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
 	return HumanBaseBytes(v, 1024, sizes)
 }
 
 // HumanKbps 1 Kbps = 1000 bit, 传输速率(bit per second, 位每秒)
-// e.g. HumanKbps(82854982) -> 83 Mbps
+// e.g. HumanKbps(82854982) -> 82.85 Mbps
 func HumanKbps(v uint64) string {
 	sizes := []string{"bps", "Kbps", "Mbps", "Gbps", "Tbps", "Pbps", "Ebps"}
 	return HumanBaseBytes(v, 1000, sizes)
