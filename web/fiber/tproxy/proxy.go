@@ -1,12 +1,17 @@
 package tproxy
 
 import (
+	"crypto/tls"
+	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/fufuok/pkg/utils"
 	"github.com/fufuok/pkg/xhash"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/proxy"
+	"github.com/valyala/fasthttp"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
@@ -19,20 +24,70 @@ const (
 	HeaderXProxyPass     = "X-Proxy-Pass"
 )
 
-// ProxyHandler 请求代理
+// upstreamClient 在实际发送前固定配置的上游协议, 不沿用客户端入站连接的 TLS 状态.
+// 嵌入 HostClient 保留连接管理、超时和原有负载均衡接口.
+type upstreamClient struct {
+	*fasthttp.HostClient
+	scheme string
+}
+
+// DoDeadline 在 Balancer 重解析请求 URI 后设置协议, 避免提前设置的 scheme 被覆盖.
+func (client *upstreamClient) DoDeadline(req *fasthttp.Request, resp *fasthttp.Response, deadline time.Time) error {
+	req.URI().SetScheme(client.scheme)
+	return client.HostClient.DoDeadline(req, resp, deadline)
+}
+
+// ProxyHandler 为管理员配置的固定可信 HTTP(S) 上游创建代理.
+//
+// 支持 IPv4/IPv6 和私网上游, 不使用 Fiber 全局目标限制策略; backendServers 不得
+// 来自客户端请求. 裸 host:port 仍按 HTTP 处理, 无显式端口时使用协议默认端口.
+// backendHost 为空时保留原请求 Host, 非空时使用构造期快照; 请求路径和查询串透传.
+// 空列表、无法解析的 URL、非 HTTP(S) 或缺主机在构造时 panic.
+// 拨号和传输错误清空残留响应后返回原错误, 由调用方决定状态码和回包格式.
+// HTTPS 保持证书校验, 不跟随上游重定向.
 //
 // 示例:
 //
-//	backendHost := "1.2.3.4:555"
-//	backendServers := []string{"http://1.2.3.4:555"}
+//	backendHost := "upstream.example:8080"
+//	backendServers := []string{"http://upstream.example:8080"}
 //	proxyHandler := ProxyHandler(backendServers, 1*time.Second, backendHost)
-//	app.Use("/test/ff", proxyHandler)
-//	6.6.6.6 请求: http://localhost:666/test/ff -> http://1.2.3.4:555/test/ff
-//	在 1.2.3.4 服务中 GetClientIP(c) 能获取到真实客户端请求IP: 6.6.6.6
+//	app.Use("/es/", proxyHandler)
 func ProxyHandler(backendServers []string, timeout time.Duration, backendHost string) fiber.Handler {
+	if len(backendServers) == 0 {
+		panic("tproxy: backend servers cannot be empty")
+	}
+	clients := make([]fasthttp.BalancingClient, 0, len(backendServers))
+	for _, server := range backendServers {
+		// 保留原 Balancer 的裸地址兼容, 只解析固定目标, 不在构造期依赖 DNS.
+		address := strings.TrimSpace(server)
+		if !strings.Contains(address, "://") {
+			address = "http://" + address
+		}
+		upstream, err := url.Parse(address)
+		if err != nil {
+			panic(fmt.Errorf("tproxy: parse upstream: %w", err))
+		}
+		if (upstream.Scheme != "http" && upstream.Scheme != "https") || upstream.Hostname() == "" {
+			panic(fmt.Errorf("tproxy: invalid HTTP(S) upstream %q", server))
+		}
+		clients = append(clients, &upstreamClient{
+			HostClient: &fasthttp.HostClient{
+				Addr:                     fasthttp.AddMissingPort(upstream.Host, upstream.Scheme == "https"),
+				IsTLS:                    upstream.Scheme == "https",
+				TLSConfig:                &tls.Config{MinVersion: tls.VersionTLS12},
+				MaxConns:                 proxy.ConfigDefault.MaxConnsPerHost,
+				NoDefaultUserAgentHeader: true,
+				DisablePathNormalizing:   true,
+				DialDualStack:            true,
+			},
+			scheme: upstream.Scheme,
+		})
+	}
+	// 自管固定目标拨号, 此策略只固定 Balancer 的 HTTP 头清理行为.
+	policy := proxy.DefaultSecurityPolicy()
 	proxyHandler := proxy.Balancer(proxy.Config{
-		Servers: backendServers,
-		Timeout: timeout,
+		Client:         &fasthttp.LBClient{Clients: clients, Timeout: timeout},
+		SecurityPolicy: &policy,
 		ModifyRequest: func(c fiber.Ctx) error {
 			if backendHost != "" {
 				c.Request().Header.Set("Host", backendHost)
@@ -41,7 +96,14 @@ func ProxyHandler(backendServers []string, timeout time.Duration, backendHost st
 			return nil
 		},
 	})
-	return proxyHandler
+	return func(c fiber.Ctx) error {
+		if err := proxyHandler(c); err != nil {
+			// 读体中断可能残留上游响应头和正文, 不能让调用方的错误回包继承它们.
+			c.Response().Reset()
+			return err
+		}
+		return nil
+	}
 }
 
 // SetClientIP 首个代理加密客户端 IP, 中间代理透传
