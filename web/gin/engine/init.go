@@ -107,6 +107,9 @@ func newEngine(setup App, cfg config.WebConf) (*gin.Engine, error) {
 
 	app.Use(middleware.RecoveryWithLog(true))
 
+	// 让 gin.Context 的 Done、Err、Value 回退到请求 Context.
+	app.ContextWithFallback = true
+
 	app = setup(app)
 
 	app.TrustedPlatform = cfg.TrustedPlatform

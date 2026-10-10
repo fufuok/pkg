@@ -35,6 +35,7 @@ func TestNewEngineRecoversPanic(t *testing.T) {
 
 	app, err := newEngine(setup, config.WebConf{})
 	assert.Nil(t, err)
+	assert.True(t, app.ContextWithFallback)
 
 	// panic 路由应被恢复中间件捕获并返回 500
 	w := httptest.NewRecorder()
