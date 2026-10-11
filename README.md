@@ -33,7 +33,7 @@
 
 ## 示例
 
-见: [examples](examples)
+见: [应用规范范本](examples/pkgapp/README.md) 和 [多服务示例](examples/multiserver/main.go).
 
 ## 敏感信息加密
 
