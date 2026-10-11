@@ -25,15 +25,24 @@ func SYSStatsDesc() map[string]any {
 			"LocalTime":   "本地时间",
 		},
 		"Host": map[string]string{
-			"InternalIPv4":   "内网IPv4地址",
-			"ExternalIPv4":   "外网IPv4地址",
-			"NumCpus":        "CPU核心数",
-			"LoadAvg":        "系统负载(1分钟, 5分钟, 15分钟)",
-			"CPUPercent":     "系统整体CPU使用率(所有核心的平均值)",
-			"MemTotal":       "总内存大小",
-			"MemAvailable":   "可用内存大小",
-			"MemUsed":        "已使用内存大小",
-			"MemUsedPercent": "内存使用百分比",
+			"InternalIPv4":      "内网IPv4地址",
+			"ExternalIPv4":      "外网IPv4地址",
+			"NumCpus":           "CPU核心数",
+			"LoadAvg":           "系统负载(1分钟, 5分钟, 15分钟)",
+			"CPUPercent":        "系统整体CPU使用率(所有核心的平均值)",
+			"MemTotal":          "总内存大小",
+			"MemAvailable":      "可用内存大小",
+			"MemUsed":           "已使用内存大小",
+			"MemUsedPercent":    "内存使用百分比",
+			"Load1":             "系统1分钟负载原始值",
+			"Load5":             "系统5分钟负载原始值",
+			"Load15":            "系统15分钟负载原始值",
+			"MemTotalBytes":     "总内存字节数",
+			"MemAvailableBytes": "可用内存字节数",
+			"FileHandlesUsed":   "系统已使用文件句柄数",
+			"FileHandlesLimit":  "系统文件句柄上限",
+			"CollectedAt":       "主机资源采集时间",
+			"ResourceErrors":    "主机资源采集失败项",
 		},
 	}
 }
@@ -54,6 +63,11 @@ func MetricStatsDesc() map[string]any {
 			"GoMaxProcs":     "最大并发核心数",
 			"NumConnections": "网络连接数",
 			"NumOpenFiles":   "打开文件描述符数",
+			"FDUsed":         "当前进程文件描述符数",
+			"FDSoftLimit":    "当前进程文件描述符软限制",
+			"MemRSSBytes":    "当前进程物理内存字节数",
+			"OSCollectedAt":  "进程操作系统资源采集时间",
+			"ResourceErrors": "进程资源采集失败项",
 		},
 		"Memory": map[string]string{
 			"TotalAlloc":           "程序启动后累计内存分配量",
@@ -107,6 +121,38 @@ func MetricStatsDesc() map[string]any {
 			"GoPoolRunning":       "Go协程池正在运行的任务数",
 			"GoPoolIdleWorkers":   "Go协程池的空闲工作协程数",
 			"GoPoolTotalWorkers":  "Go协程池的总工作协程数",
+		},
+	}
+}
+
+// NetworkStatsDesc 网络资源累计指标注释.
+func NetworkStatsDesc() map[string]any {
+	return map[string]any{
+		"CollectedAt": "网络资源采集时间",
+		"Errors":      "网络资源采集失败项",
+		"Interfaces": map[string]string{
+			"BytesRecv":   "接口接收累计字节数",
+			"BytesSent":   "接口发送累计字节数",
+			"PacketsRecv": "接口接收累计包数",
+			"PacketsSent": "接口发送累计包数",
+			"ErrorsRecv":  "接口接收累计错误数",
+			"ErrorsSent":  "接口发送累计错误数",
+			"DropsRecv":   "接口接收累计丢弃数",
+			"DropsSent":   "接口发送累计丢弃数",
+		},
+		"UDP": map[string]string{
+			"InDatagrams":  "IPv4 UDP 接收累计数据报数",
+			"OutDatagrams": "IPv4 UDP 发送累计数据报数",
+			"InErrors":     "IPv4 UDP 接收累计错误数",
+			"RcvbufErrors": "IPv4 UDP 接收缓冲区错误数",
+			"SndbufErrors": "IPv4 UDP 发送缓冲区错误数",
+			"NoPorts":      "IPv4 UDP 目标端口不存在次数",
+		},
+		"TCP": map[string]string{
+			"OutSegs":         "TCP 发送累计段数",
+			"RetransSegs":     "TCP 重传累计段数",
+			"ListenOverflows": "TCP 监听溢出累计次数",
+			"ListenDrops":     "TCP 监听丢弃累计次数",
 		},
 	}
 }

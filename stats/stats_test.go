@@ -3,13 +3,16 @@ package stats
 import (
 	"errors"
 	"math"
+	"os"
 	"runtime"
 	"runtime/metrics"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/fufuok/bytespool"
+	psnet "github.com/shirou/gopsutil/v3/net"
 	"github.com/shirou/gopsutil/v3/process"
 
 	"github.com/fufuok/pkg/config"
@@ -46,6 +49,108 @@ func TestGetMemoryStats(t *testing.T) {
 		"FragmentationPercent": "50.00%",
 	}
 	assertMapValues(t, got, want)
+}
+
+// TestMainStatsResourceCache 验证连接和 FD 枚举在 TTL 内只执行一次, 并且新增字段保持可读数值.
+func TestMainStatsResourceCache(t *testing.T) {
+	mainOnce.Do(func() {
+		if p, err := process.NewProcess(int32(os.Getpid())); err == nil {
+			mainProcess = p
+		}
+	})
+	if mainProcess == nil {
+		t.Skip("process metrics unavailable")
+	}
+	oldConnections, oldFDs, oldOpenFiles, oldRlimit := numConnectionsOf, numFDsOf, openFilesOf, rlimitOf
+	oldSnapshot := mainResourceCache.snapshot
+	t.Cleanup(func() {
+		numConnectionsOf, numFDsOf, openFilesOf, rlimitOf = oldConnections, oldFDs, oldOpenFiles, oldRlimit
+		mainResourceCache.snapshot = oldSnapshot
+	})
+	var connectionsCalls, fdCalls, limitCalls atomic.Int32
+	numConnectionsOf = func(*process.Process) ([]psnet.ConnectionStat, error) {
+		connectionsCalls.Add(1)
+		return []psnet.ConnectionStat{{}}, nil
+	}
+	numFDsOf = func(*process.Process) (int32, error) {
+		fdCalls.Add(1)
+		return 17, nil
+	}
+	rlimitOf = func(*process.Process) ([]process.RlimitStat, error) {
+		limitCalls.Add(1)
+		return []process.RlimitStat{{Resource: process.RLIMIT_NOFILE, Soft: 128}}, nil
+	}
+	openFilesOf = oldOpenFiles
+	mainResourceCache.snapshot = mainResourceSnapshot{}
+
+	first := MainStats()
+	second := MainStats()
+	if first["FDUsed"] != int32(17) || first["FDSoftLimit"] != uint64(128) || first["NumConnections"] != 1 {
+		t.Fatalf("resource fields = %#v", first)
+	}
+	if second["FDUsed"] != int32(17) || connectionsCalls.Load() != 1 || fdCalls.Load() != 1 || limitCalls.Load() != 1 {
+		t.Fatalf("resource cache calls = connections:%d fd:%d limit:%d stats:%#v", connectionsCalls.Load(), fdCalls.Load(), limitCalls.Load(), second)
+	}
+	mainResourceCache.snapshot.refreshedAt = time.Now().Add(-resourceCacheTTL)
+	MainStats()
+	if connectionsCalls.Load() != 2 || fdCalls.Load() != 2 || limitCalls.Load() != 2 {
+		t.Fatalf("expired resource cache calls = connections:%d fd:%d limit:%d", connectionsCalls.Load(), fdCalls.Load(), limitCalls.Load())
+	}
+	numConnectionsOf = func(*process.Process) ([]psnet.ConnectionStat, error) {
+		return nil, errors.New("fixture connections failed")
+	}
+	numFDsOf = func(*process.Process) (int32, error) { return 0, errors.New("fixture fd failed") }
+	openFilesOf = func(*process.Process) ([]process.OpenFilesStat, error) {
+		return nil, errors.New("fixture open files failed")
+	}
+	rlimitOf = func(*process.Process) ([]process.RlimitStat, error) { return nil, errors.New("fixture limit failed") }
+	mainResourceCache.snapshot.refreshedAt = time.Now().Add(-resourceCacheTTL)
+	failed := MainStats()
+	if failed["NumOpenFiles"] != int32(0) || failed["FDUsed"] != nil || failed["FDSoftLimit"] != nil {
+		t.Fatalf("failed resource fields = %#v", failed)
+	}
+	if len(failed["ResourceErrors"].([]string)) != 3 {
+		t.Fatalf("failed resource errors = %#v", failed["ResourceErrors"])
+	}
+}
+
+// TestNetworkStatsCache 验证可选网络采集仅在过期时读取, 且返回值不会污染内部缓存.
+func TestNetworkStatsCache(t *testing.T) {
+	oldIO, oldProto, oldTCP, oldSnapshot := networkIOCountersOf, networkProtoCountersOf, tcpExtCountersOf, networkCache.snapshot
+	t.Cleanup(func() {
+		networkIOCountersOf, networkProtoCountersOf, tcpExtCountersOf = oldIO, oldProto, oldTCP
+		networkCache.snapshot = oldSnapshot
+	})
+	var ioCalls, protoCalls, tcpCalls atomic.Int32
+	networkIOCountersOf = func(bool) ([]psnet.IOCountersStat, error) {
+		ioCalls.Add(1)
+		return []psnet.IOCountersStat{{Name: "fixture0", BytesRecv: 9, PacketsRecv: 3}}, nil
+	}
+	networkProtoCountersOf = func([]string) ([]psnet.ProtoCountersStat, error) {
+		protoCalls.Add(1)
+		return []psnet.ProtoCountersStat{{Protocol: "udp", Stats: map[string]int64{"InDatagrams": 4}}}, nil
+	}
+	tcpExtCountersOf = func() (map[string]int64, error) {
+		tcpCalls.Add(1)
+		return map[string]int64{"ListenDrops": 2}, nil
+	}
+	networkCache.snapshot = networkSnapshot{}
+
+	first := NetworkStats()
+	interfaces := first["Interfaces"].(map[string]any)
+	interfaces["fixture0"].(map[string]any)["BytesRecv"] = uint64(999)
+	second := NetworkStats()
+	if second["Interfaces"].(map[string]any)["fixture0"].(map[string]any)["BytesRecv"] != uint64(9) {
+		t.Fatalf("network cache was mutated: %#v", second)
+	}
+	if ioCalls.Load() != 1 || protoCalls.Load() != 1 || tcpCalls.Load() != 1 {
+		t.Fatalf("network cache calls = io:%d proto:%d tcp:%d", ioCalls.Load(), protoCalls.Load(), tcpCalls.Load())
+	}
+	networkCache.snapshot.refreshedAt = time.Now().Add(-resourceCacheTTL)
+	NetworkStats()
+	if ioCalls.Load() != 2 || protoCalls.Load() != 2 || tcpCalls.Load() != 2 {
+		t.Fatalf("expired network cache calls = io:%d proto:%d tcp:%d", ioCalls.Load(), protoCalls.Load(), tcpCalls.Load())
+	}
 }
 
 // TestGetGCStats 验证无 GC 和最近多次 GC 两类统计分支.
@@ -277,6 +382,10 @@ func TestWebAndDescriptionStats(t *testing.T) {
 	metricDesc := MetricStatsDesc()
 	if _, ok := metricDesc["Scheduler"].(map[string]any); !ok {
 		t.Fatalf("metric description Scheduler = %#v", metricDesc["Scheduler"])
+	}
+	networkDesc := NetworkStatsDesc()
+	if _, ok := networkDesc["Interfaces"].(map[string]string); !ok {
+		t.Fatalf("network description Interfaces = %#v", networkDesc["Interfaces"])
 	}
 	webDesc := WebStatsDesc()
 	if webDesc["HTTPS"] == "" || webDesc["BodyLimit"] == "" {
