@@ -46,7 +46,7 @@ var (
 
 	logAlarmWriter = newAlarmWriter(zerolog.WarnLevel)
 	logCurrentConf config.LogConf
-	logAlarmOnConf bool
+	logAlarmOnConf atomic.Bool
 )
 
 var disabledLogger = zerolog.Nop()
@@ -78,9 +78,10 @@ func LogAlarm() *zerolog.Logger {
 	return Log()
 }
 
+// initLogger 初始化日志格式和记录器, 报警开关由启动及 Runtime 显式激活.
 func initLogger() {
 	initZerolog()
-	logAlarmOnConf = config.AlarmOn.Load()
+	logAlarmOnConf.Store(config.AlarmOn.Load())
 	AppLoggerUseSampler = !config.Debug
 	if err := loadLogger(); err != nil {
 		log.Fatalln("Failed to initialize logger:", err, "\nbye.")
@@ -109,21 +110,20 @@ func initZerolog() {
 	}
 }
 
+// loadLogger 根据同一份配置构建记录器, 仅在成功后缓存配置, 使失败配置可以重试.
+// 生命周期负责串行调用; 报警 writer 可并发读取已激活的开关.
 func loadLogger() error {
 	alarmOn := config.AlarmOn.Load()
-	if logAlarmOnConf != alarmOn {
-		logAlarmOnConf = alarmOn
+	if logAlarmOnConf.Swap(alarmOn) != alarmOn {
 		if l := Log(); l != nil {
-			l.Warn().Bool("alarm_on", logAlarmOnConf).Msg("Alarm switch changed")
+			l.Warn().Bool("alarm_on", alarmOn).Msg("Alarm switch changed")
 		}
 	}
 	cfg := config.Config().LogConf
 	if logCurrentConf == cfg {
 		return nil
 	}
-	logCurrentConf = cfg
-
-	if err := newLogger(); err != nil {
+	if err := newLogger(cfg); err != nil {
 		return err
 	}
 
@@ -140,21 +140,21 @@ func loadLogger() error {
 		ErrorSampler: sampler,
 	}).With().Bool("sampling", true).Logger()
 	logSampled.Store(&newLogSampled)
+	logCurrentConf = cfg
 
 	Log().Warn().Str("version", config.Version).Str("tz", config.DefaultTimeZone).
 		Str("app_name", config.AppName).Str("bin_name", config.BinName).Str("deb_name", config.DebName).
 		Int("cpus", runtime.NumCPU()).Int("procs", runtime.GOMAXPROCS(0)).
-		Bool("alarm_on", logAlarmOnConf).Str("alarm_code", cfg.AlarmCode).Bool("app_sampler", AppLoggerUseSampler).
+		Bool("alarm_on", alarmOn).Str("alarm_code", cfg.AlarmCode).Bool("app_sampler", AppLoggerUseSampler).
 		Msg("Logger sssinitialized")
 	return nil
 }
 
-// 日志配置
+// newLogger 使用传入的配置构建通用和报警记录器, 文件打开失败时保留旧记录器.
 // 1. Debug 调试时, 日志高亮输出到控制台
 // 2. 非调试模式时, 日志输出到文件(可选关闭高亮, 可选 JSON 输出, 保存最近 10 个 30 天内的日志)
-func newLogger() (err error) {
+func newLogger(cfg config.LogConf) (err error) {
 	var wr io.Writer
-	cfg := config.Config().LogConf
 	wr = zerolog.ConsoleWriter{Out: os.Stdout, NoColor: cfg.NoColor, TimeFormat: LogTimeFormat}
 	if !config.Debug {
 		wr, err = lumberjack.NewRoller(
@@ -203,7 +203,7 @@ func newAlarmWriter(level zerolog.Level) *alarmWriter {
 
 // Write 发送报警消息到接口
 func (w *alarmWriter) Write(p []byte) (n int, err error) {
-	if logAlarmOnConf && !w.off.Load() {
+	if logAlarmOnConf.Load() && !w.off.Load() {
 		fn := w.fn
 		if fn == nil {
 			fn = genAlarmJson

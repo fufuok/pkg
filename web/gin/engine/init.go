@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/logger"
@@ -69,7 +68,7 @@ func RunGroups(groups ...ServerGroup) {
 		log.Fatalln("Failed to initialize whitelist/blacklist config:", err, "\nbye.")
 	}
 
-	eg := errgroup.Group{}
+	var wg sync.WaitGroup
 	for _, group := range groups {
 		if group.Setup == nil {
 			log.Fatalln("Failed to start HTTP/HTTPS Server: setup cannot be nil\nbye.")
@@ -82,15 +81,14 @@ func RunGroups(groups ...ServerGroup) {
 		if cfg.Name == "" {
 			cfg.Name = config.AppName
 		}
-		eg.Go(func() error {
-			return runOne(group.Setup, cfg, group.Name)
+		wg.Go(func() {
+			if err := runOne(group.Setup, cfg, group.Name); err != nil {
+				log.Fatalln("Failed to start HTTP/HTTPS Server ["+cfg.Name+"]:", err, "\nbye.")
+			}
 		})
 	}
-	// fail-fast: 任一端口组监听失败都会使 eg.Wait 返回错误并终止整个进程,
-	// 即一个端口冲突/占用会拖垮全部端口组. 这是有意的"启动期即暴露配置错误"取舍.
-	if err := eg.Wait(); err != nil {
-		log.Fatalln("Failed to start HTTP/HTTPS Server groups:", err, "\nbye.")
-	}
+	// 错误在对应任务中直接退出, 不等待其他长驻监听; 正常情况下持续等待服务.
+	wg.Wait()
 }
 
 // newEngine 按既定顺序构建并配置 gin.Engine: 先注册恢复中间件, 再注册业务路由, 最后应用代理信任配置.
@@ -119,6 +117,7 @@ func newEngine(setup App, cfg config.WebConf) (*gin.Engine, error) {
 	return app, nil
 }
 
+// runOne 构建服务并等待全部监听; 构建错误返回给入口, 监听错误直接退出整个进程.
 func runOne(setup App, cfg config.WebConf, groupName ...string) error {
 	app, err := newEngine(setup, cfg)
 	if err != nil {
@@ -130,7 +129,7 @@ func runOne(setup App, cfg config.WebConf, groupName ...string) error {
 	}
 	registerApp(app, name, cfg.TrustedProxies, cfg.TrustedPlatform)
 
-	eg := errgroup.Group{}
+	var wg sync.WaitGroup
 	if cfg.ServerHttpsAddr != "" {
 		for rawAddr := range strings.SplitSeq(cfg.ServerHttpsAddr, ",") {
 			// trim 并跳过空地址, 避免 http.Server{Addr: ""} 误绑 :443/:80 及前后空格导致监听失败
@@ -138,7 +137,7 @@ func runOne(setup App, cfg config.WebConf, groupName ...string) error {
 			if addr == "" {
 				continue
 			}
-			eg.Go(func() error {
+			wg.Go(func() {
 				logger.Warn().Str("addr", addr).Str("service", cfg.Name).Msg("HTTPS server started")
 				server := &http.Server{
 					Addr:              addr,
@@ -146,7 +145,9 @@ func runOne(setup App, cfg config.WebConf, groupName ...string) error {
 					ErrorLog:          log.New(io.Discard, "", 0), // 禁用底层服务器错误日志 (TLS 握手/连接重置等)
 					ReadHeaderTimeout: 5 * time.Second,            // 防止 Slowloris 攻击
 				}
-				return server.ListenAndServeTLS(cfg.CertFile, cfg.KeyFile)
+				if err := server.ListenAndServeTLS(cfg.CertFile, cfg.KeyFile); err != nil {
+					log.Fatalln("Failed to start HTTPS Server ["+cfg.Name+"] on "+addr+":", err, "\nbye.")
+				}
 			})
 		}
 	}
@@ -156,7 +157,7 @@ func runOne(setup App, cfg config.WebConf, groupName ...string) error {
 		if addr == "" {
 			continue
 		}
-		eg.Go(func() error {
+		wg.Go(func() {
 			logger.Warn().Str("addr", addr).Str("service", cfg.Name).Msg("HTTP server started")
 			server := &http.Server{
 				Addr:              addr,
@@ -164,12 +165,12 @@ func runOne(setup App, cfg config.WebConf, groupName ...string) error {
 				ErrorLog:          log.New(io.Discard, "", 0), // 禁用底层服务器错误日志 (TLS 握手/连接重置等)
 				ReadHeaderTimeout: 5 * time.Second,            // 防止 Slowloris 攻击
 			}
-			return server.ListenAndServe()
+			if err := server.ListenAndServe(); err != nil {
+				log.Fatalln("Failed to start HTTP Server ["+cfg.Name+"] on "+addr+":", err, "\nbye.")
+			}
 		})
 	}
-	if err := eg.Wait(); err != nil {
-		return err
-	}
+	wg.Wait()
 	return nil
 }
 

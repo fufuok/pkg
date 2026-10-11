@@ -38,14 +38,13 @@ type RequestsLimiter struct {
 	limitReached fiber.Handler
 }
 
+// Allow 判定并登记一次准入, Handler 在请求返回时释放计数.
+// 负值只关闭上限检查, 保留在途数量以支持运行中重新开启限制.
 func (r *RequestsLimiter) Allow() bool {
-	if r.limit.Load() < 0 {
-		return true
-	}
-
 	for {
 		n := r.running.Load()
-		if n >= r.limit.Load() {
+		limit := r.limit.Load()
+		if limit >= 0 && n >= limit {
 			return false
 		}
 		if r.running.CompareAndSwap(n, n+1) {

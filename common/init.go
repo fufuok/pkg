@@ -1,7 +1,7 @@
 package common
 
 import (
-	"errors"
+	"fmt"
 
 	"github.com/fufuok/pkg/myip"
 
@@ -40,10 +40,10 @@ func (m *M) Start() error {
 	return nil
 }
 
-// Runtime 重新加载配置时运行
+// Runtime 更新日志和请求配置; 日志初始化失败时保留根因并停止本模块的后续更新.
 func (m *M) Runtime() error {
 	if err := loadLogger(); err != nil {
-		return errors.New("unable to reinitialize logger")
+		return fmt.Errorf("unable to reinitialize logger: %w", err)
 	}
 	loadReq()
 	return nil

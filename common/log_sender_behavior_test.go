@@ -58,11 +58,11 @@ func TestLogSenderBatchFlushAndFailure(t *testing.T) {
 	assertCommonHTTPBody(t, bodies, `[{"kind":"timer"}]`)
 	stopSender()
 
-	postAPI = server.URL
+	cfg.LogConf.PostAPI = server.URL
 	PostLog([]byte(`{"kind":"immediate"}`))
 	assertCommonHTTPBody(t, bodies, `{"kind":"immediate"}`)
 
-	postAPI = ""
+	cfg.LogConf.PostAPI = ""
 	beforeEmptyAPI := submissions.Load()
 	bb := buffer.Get()
 	_, _ = bb.Write([]byte(`,{"kind":"discarded"}`))
@@ -84,7 +84,7 @@ func TestLogSenderBatchFlushAndFailure(t *testing.T) {
 		}
 	}))
 	t.Cleanup(failingServer.Close)
-	postAPI = failingServer.URL
+	cfg.LogConf.PostAPI = failingServer.URL
 	PostLog([]byte(`{"kind":"failure"}`))
 	select {
 	case <-failedRequests:

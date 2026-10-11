@@ -190,7 +190,9 @@ func TestZipDirAndUnzipDir(t *testing.T) {
 	})
 	entries := make(map[string]*zip.File, len(reader.File))
 	for _, file := range reader.File {
-		entries[strings.ReplaceAll(file.Name, "\\", "/")] = file
+		// ZIP 条目必须使用正斜杠, 不能靠读取端归一化掩盖 Windows 路径问题.
+		assert.False(t, strings.Contains(file.Name, "\\"))
+		entries[file.Name] = file
 	}
 	assert.NotNil(t, entries["empty/"])
 	assert.NotNil(t, entries["nested/"])

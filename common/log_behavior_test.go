@@ -179,7 +179,7 @@ func TestAlarmDataAndDeliveryContract(t *testing.T) {
 	assertCommonHTTPBody(t, bodies, `"kind":"sync"`)
 
 	logAlarmWriter = newAlarmWriter(zerolog.WarnLevel)
-	logAlarmOnConf = true
+	logAlarmOnConf.Store(true)
 	SetAlarmLevel(zerolog.WarnLevel)
 	SetAlarmFunc(func(string, []byte) []byte { return []byte(`{"kind":"writer"}`) })
 	SetAlarmOn()

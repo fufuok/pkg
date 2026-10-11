@@ -30,10 +30,9 @@ func preserveCommonPackageState(t *testing.T) {
 	oldLogAlarm := logAlarm.Load()
 	oldLogAlarmWriter := logAlarmWriter
 	oldLogCurrentConf := logCurrentConf
-	oldLogAlarmOnConf := logAlarmOnConf
+	oldLogAlarmOnConf := logAlarmOnConf.Load()
 	oldDisabledLogger := disabledLogger
 	oldLogChan := LogChan
-	oldPostAPI := postAPI
 	oldReqUpload := ReqUpload
 	oldReqDownload := ReqDownload
 	oldReqDebug := reqDebug.Load()
@@ -66,9 +65,8 @@ func preserveCommonPackageState(t *testing.T) {
 	logAlarm.Store(nil)
 	logAlarmWriter = newAlarmWriter(zerolog.WarnLevel)
 	logCurrentConf = config.LogConf{}
-	logAlarmOnConf = false
+	logAlarmOnConf.Store(false)
 	LogChan = nil
-	postAPI = ""
 	ReqUpload = nil
 	ReqDownload = nil
 	reqDebug.Store(false)
@@ -93,10 +91,9 @@ func preserveCommonPackageState(t *testing.T) {
 		logAlarm.Store(oldLogAlarm)
 		logAlarmWriter = oldLogAlarmWriter
 		logCurrentConf = oldLogCurrentConf
-		logAlarmOnConf = oldLogAlarmOnConf
+		logAlarmOnConf.Store(oldLogAlarmOnConf)
 		disabledLogger = oldDisabledLogger
 		LogChan = oldLogChan
-		postAPI = oldPostAPI
 		ReqUpload = oldReqUpload
 		ReqDownload = oldReqDownload
 		reqDebug.Store(oldReqDebug)

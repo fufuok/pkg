@@ -3,6 +3,7 @@ package xfile
 import (
 	"archive/zip"
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -240,19 +241,25 @@ func CopyFile(srcFile, dstFile string) error {
 	return err
 }
 
-// ZipDir 目录打包为 zip 文件
-func ZipDir(srcDir, zipFilePath string) error {
+// ZipDir 将目录打包为 zip 文件, 条目统一使用正斜杠.
+// 遍历、ZIP 收尾和目标文件关闭错误均返回, 失败时可能保留未完成的输出文件.
+func ZipDir(srcDir, zipFilePath string) (err error) {
 	zipFile, err := os.Create(zipFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to create zip file: %w", err)
 	}
 	defer func() {
-		_ = zipFile.Close()
+		if closeErr := zipFile.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to close zip file: %w", closeErr))
+		}
 	}()
 
 	zipWriter := zip.NewWriter(zipFile)
 	defer func() {
-		_ = zipWriter.Close()
+		// 收尾写入目录索引可能是首次真正写磁盘, 必须保留错误及此前的失败.
+		if closeErr := zipWriter.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to finalize zip file: %w", closeErr))
+		}
 	}()
 
 	err = filepath.Walk(srcDir, func(filePath string, info os.FileInfo, err error) error {
@@ -269,6 +276,7 @@ func ZipDir(srcDir, zipFilePath string) error {
 		if relPath == "." {
 			return nil
 		}
+		relPath = filepath.ToSlash(relPath)
 
 		// 创建 zip 文件中的文件或目录
 		if info.IsDir() {

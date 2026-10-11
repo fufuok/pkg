@@ -4,10 +4,10 @@ import (
 	"errors"
 	"log"
 	"strings"
+	"sync"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/compress"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/json"
@@ -41,9 +41,7 @@ func Run(setup App, webConf ...config.WebConf) {
 	if err := initMiddlewareCache(cfg); err != nil {
 		log.Fatalln("Failed to initialize whitelist/blacklist config:", err, "\nbye.")
 	}
-	if err := runOne(setup, cfg); err != nil {
-		log.Fatalln("Failed to start HTTP/HTTPS Server ["+cfg.Name+"]:", err, "\nbye.")
-	}
+	runOne(setup, cfg)
 }
 
 // RunGroups 启用多组 Web 服务. 每组使用独立 fiber.App 和独立路由表,
@@ -57,7 +55,7 @@ func RunGroups(groups ...ServerGroup) {
 		log.Fatalln("Failed to initialize whitelist/blacklist config:", err, "\nbye.")
 	}
 
-	eg := errgroup.Group{}
+	var wg sync.WaitGroup
 	for _, group := range groups {
 		if group.Setup == nil {
 			log.Fatalln("Failed to start HTTP/HTTPS Server: setup cannot be nil\nbye.")
@@ -70,15 +68,12 @@ func RunGroups(groups ...ServerGroup) {
 		if cfg.Name == "" {
 			cfg.Name = config.AppName
 		}
-		eg.Go(func() error {
-			return runOne(group.Setup, cfg)
+		wg.Go(func() {
+			runOne(group.Setup, cfg)
 		})
 	}
-	// fail-fast: 任一端口组监听失败都会使 eg.Wait 返回错误并终止整个进程,
-	// 即一个端口冲突/占用会拖垮全部端口组. 这是有意的"启动期即暴露配置错误"取舍.
-	if err := eg.Wait(); err != nil {
-		log.Fatalln("Failed to start HTTP/HTTPS Server groups:", err, "\nbye.")
-	}
+	// 错误在对应任务中直接退出, 不等待其他长驻监听; 正常情况下持续等待服务.
+	wg.Wait()
 }
 
 // newApp 按既定顺序构建并配置 fiber.App: 先注册恢复/压缩中间件, 再注册业务路由.
@@ -109,10 +104,11 @@ func newApp(setup App, cfg config.WebConf) *fiber.App {
 	return setup(app)
 }
 
-func runOne(setup App, cfg config.WebConf) error {
+// runOne 构建服务并等待全部监听; 任一监听错误直接退出整个进程.
+func runOne(setup App, cfg config.WebConf) {
 	app := newApp(setup, cfg)
 
-	eg := errgroup.Group{}
+	var wg sync.WaitGroup
 	if cfg.ServerHttpsAddr != "" {
 		for rawAddr := range strings.SplitSeq(cfg.ServerHttpsAddr, ",") {
 			// trim 并跳过空地址, 避免空串或前后空格导致监听失败
@@ -120,14 +116,15 @@ func runOne(setup App, cfg config.WebConf) error {
 			if addr == "" {
 				continue
 			}
-			eg.Go(func() (err error) {
+			wg.Go(func() {
 				logger.Warn().Str("addr", addr).Str("service", cfg.Name).Msg("HTTPS server started")
-				err = app.Listen(addr, fiber.ListenConfig{
+				if err := app.Listen(addr, fiber.ListenConfig{
 					DisableStartupMessage: true,
 					CertFile:              cfg.CertFile,
 					CertKeyFile:           cfg.KeyFile,
-				})
-				return
+				}); err != nil {
+					log.Fatalln("Failed to start HTTPS Server ["+cfg.Name+"] on "+addr+":", err, "\nbye.")
+				}
 			})
 		}
 	}
@@ -137,18 +134,16 @@ func runOne(setup App, cfg config.WebConf) error {
 		if addr == "" {
 			continue
 		}
-		eg.Go(func() (err error) {
+		wg.Go(func() {
 			logger.Warn().Str("addr", addr).Str("service", cfg.Name).Msg("HTTP server started")
-			err = app.Listen(addr, fiber.ListenConfig{
+			if err := app.Listen(addr, fiber.ListenConfig{
 				DisableStartupMessage: true,
-			})
-			return
+			}); err != nil {
+				log.Fatalln("Failed to start HTTP Server ["+cfg.Name+"] on "+addr+":", err, "\nbye.")
+			}
 		})
 	}
-	if err := eg.Wait(); err != nil {
-		return err
-	}
-	return nil
+	wg.Wait()
 }
 
 // 请求错误处理

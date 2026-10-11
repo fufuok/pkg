@@ -11,13 +11,8 @@ import (
 	"github.com/fufuok/pkg/config"
 )
 
-var (
-	// LogChan 日志缓存队列
-	LogChan *chanx.UnboundedChan[[]byte]
-
-	// 日志发送接口地址
-	postAPI string
-)
+// LogChan 日志缓存队列
+var LogChan *chanx.UnboundedChan[[]byte]
 
 func initLogSender() {
 	LogChan = NewChanx[[]byte](config.ChanxInitCap)
@@ -31,7 +26,6 @@ func logSender() {
 	num := 0
 	bb := buffer.Get()
 	cfg := config.Config().LogConf
-	postAPI = cfg.PostAPI
 	lastLoadTime := time.Now()
 	interval := cfg.PostIntervalDuration
 	ticker := time.NewTicker(interval)
@@ -43,7 +37,6 @@ func logSender() {
 			if t.Sub(lastLoadTime) > config.DefaultLoadConfigInterval {
 				lastLoadTime = t
 				cfg = config.Config().LogConf
-				postAPI = cfg.PostAPI
 				if interval != cfg.PostIntervalDuration {
 					interval = cfg.PostIntervalDuration
 					ticker.Reset(interval)
@@ -78,8 +71,10 @@ func logSender() {
 	}
 }
 
+// postLog 转交批次缓冲区给发送任务, 固定提交时的接口地址, 避免异步读取变化中的配置.
 func postLog(bb *buffer.Buffer) {
-	if postAPI == "" {
+	api := config.Config().LogConf.PostAPI
+	if api == "" {
 		bb.Put()
 		return
 	}
@@ -91,22 +86,23 @@ func postLog(bb *buffer.Buffer) {
 	// 推送日志数据到接口 POST JSON
 	_ = ants.Submit(func() {
 		defer bb.Put()
-		if _, err := req.SetBodyJsonBytes(bb.B).Post(postAPI); err != nil {
-			LogSampled().Warn().Err(err).Str("api", postAPI).Msg("Posting log")
+		if _, err := req.SetBodyJsonBytes(bb.B).Post(api); err != nil {
+			LogSampled().Warn().Err(err).Str("api", api).Msg("Posting log")
 		}
 	})
 }
 
-// PostLog 立即推送日志到 ES
+// PostLog 异步推送日志, 使用调用时已发布的接口地址, 不依赖 sender 的周期配置刷新.
 func PostLog(bs []byte) {
-	if postAPI == "" {
+	api := config.Config().LogConf.PostAPI
+	if api == "" {
 		return
 	}
 
 	// 推送日志数据到接口 POST JSON
 	_ = ants.Submit(func() {
-		if _, err := req.SetBodyJsonBytes(bs).Post(postAPI); err != nil {
-			LogSampled().Warn().Err(err).Str("api", postAPI).Msg("Posting log")
+		if _, err := req.SetBodyJsonBytes(bs).Post(api); err != nil {
+			LogSampled().Warn().Err(err).Str("api", api).Msg("Posting log")
 		}
 	})
 }
