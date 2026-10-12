@@ -95,7 +95,7 @@ examples/pkgapp
 | 协程池 | `github.com/fufuok/ants` | 不引入其他 worker pool |
 | 缓存 | `github.com/fufuok/cache`、`github.com/fufuok/freelru` | 不引入 ristretto、bigcache 等同类库 |
 | 环境变量 | `github.com/joho/godotenv` | 不引入另一套 env 解析器 |
-| 系统指标 | `github.com/shirou/gopsutil/v3` | 不混用 v4 或其他采集库 |
+| 系统指标 | `github.com/fufuok/pkg/stats`, 非 Linux 基础采集使用 pkg 已采用的 `gopsutil/v3` | 不另建采集器或混用其他采集库 |
 | 命令执行 | `github.com/go-cmd/cmd` | 不直接散落 `exec.Command` 包装 |
 
 pkg 已经封装的能力优先调用 pkg. 只有 pkg 没有对应封装时, 才直接依赖上表中的库.
@@ -205,6 +205,10 @@ graph LR
 - `/sys/stats/pwd~~/ok`: 运行状态.
 - `/sys/stats/pwd~~/ok/desc`: pkg 指标说明.
 
+运行状态按 `SYS`、`METRIC`、`NETWORK`、`WEB` 和示例 `APP` 分组. `METRIC` 直接使用 `MetricStats()`, 已包含 `Main`、`Memory` 和 `Scheduler`; `/desc` 对应 pkg 的四组指标说明. `SYS`、`METRIC.Main` 和 `NETWORK` 的操作系统字段各自最多每 30 秒按访问刷新, 没有后台采集; 应用时间和 Go 运行时字段仍实时读取. CPU 是两次成功读取之间的均值, 首次采样不代表实时负载. `NumConnections` 是未采集占位 0, 不代表实际零连接; 采集失败结合 `ResourceErrors` 或 `Errors` 判断, 不支持的扩展字段正常省略.
+
+`NETWORK` 直接使用可选的 `NetworkStats()`, 展示主机网络命名空间的累计计数, 不代表当前进程独占流量或速率. Linux 提供接口、IPv4 UDP 和 IPv4/IPv6 合计 TCP 计数; 非 Linux 只提供支持的接口计数. 范本只展示原始值, 指标含义见 `/desc`.
+
 `/sys/stats` 的后续路径完全由 `web_conf.stats_path` 决定, 可以热加载修改. 例如配置 `/pwd~~/ok`, 则请求 `/sys/stats/pwd~~/ok`; 空值或不匹配返回 404. 这相当于简单路径密码, 知道路径即可访问.
 
 示例默认只监听 loopback. 复制后若把监听地址改成 `0.0.0.0` 并允许公网访问, 继续使用公开的示例路径, 外部用户即可请求统计接口并看到主机、进程和配置路径等信息. 公网部署至少改成私有且难猜的路径并使用 HTTPS; URL 仍可能留在代理或访问日志中. 需要更严格访问控制时再使用 pkg 现有白名单或鉴权能力.
@@ -267,7 +271,7 @@ assert opened["message"] == "hello pkgapp", opened
 print(opened)
 ```
 
-修改 `env/pkgapp.env` 的 `PKGAPP_MESSAGE`, 等待 watcher 重新加载后确认状态变化; `local.env` 如配置同名变量会继续覆盖主 env. 最后按 Ctrl+C 确认生命周期退出. 范本不保留测试文件, pkg 通用能力的回归测试放在 pkg 对应包, 应用特有边界按实际业务验证.
+启动日志出现 `Watching` 后, 修改 `env/pkgapp.env` 的 `PKGAPP_MESSAGE`, 等待 watcher 重新加载后确认状态变化; `local.env` 如配置同名变量会继续覆盖主 env. 最后按 Ctrl+C 确认生命周期退出. 范本不保留测试文件, pkg 通用能力的回归测试放在 pkg 对应包, 应用特有边界按实际业务验证.
 
 复制时按开头提示词同步项目身份及文件, 在新项目根执行以下命令取得 pkg 最新发布版本, 并按该版本 `go.mod` 对齐 Go 和需要直接依赖的常用三方库:
 

@@ -3,7 +3,7 @@ module github.com/fufuok/pkgapp
 go 1.27.0
 
 require (
-	github.com/fufuok/pkg v1.3.8
+	github.com/fufuok/pkg v1.3.10
 	github.com/gin-gonic/gin v1.12.0
 )
 

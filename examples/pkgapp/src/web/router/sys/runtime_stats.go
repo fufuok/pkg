@@ -41,12 +41,10 @@ func runtimeStats() map[string]any {
 	web := stats.WebStats()
 	web["Elapsed"] = time.Since(start).String()
 	return map[string]any{
-		"SYS": stats.SYSStats(),
-		"METRIC": map[string]any{
-			"Main":   stats.MainStats(),
-			"Metric": stats.MetricStats(),
-		},
-		"WEB": web,
+		"SYS":     stats.SYSStats(),
+		"METRIC":  stats.MetricStats(),
+		"NETWORK": stats.NetworkStats(),
+		"WEB":     web,
 		"APP": map[string]any{
 			"Ticks":      service.Ticks(),
 			"Generation": service.Generation(),
