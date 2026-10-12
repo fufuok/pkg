@@ -1,0 +1,99 @@
+version: "2"
+run:
+  # 只约束 golangci-lint 自身; 卡住的 go list 仍需 Makefile 里的 GNU timeout 兜底.
+  # staticcheck/unused 是全程序分析, CI 冷缓存会远慢于本机热缓存.
+  # 外层硬超时再留 1 分钟, 避免内部取消后子进程仍被 timeout 杀掉.
+  timeout: 15m
+  tests: false
+  allow-parallel-runners: true
+  # CI 先 go mod download, lint 阶段禁止隐式拉模块, 避免代理/sumdb 静默挂死.
+  modules-download-mode: readonly
+  relative-path-mode: gomod
+  # CI 2 核 RSS 约 1.6GB, 4 核冷分析约 2.5GB. 不回到 8 核, 避免峰值继续放大.
+  concurrency: 4
+linters:
+  # v2 默认 standard; 不写 none 时 enable 会叠加上 unused/staticcheck/govet 等.
+  default: none
+  enable:
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - contextcheck
+    - cyclop
+    - durationcheck
+    - errchkjson
+    - errorlint
+    - exhaustive
+    - fatcontext
+    - funlen
+    - gocheckcompilerdirectives
+    - gochecksumtype
+    - gocognit
+    - gocyclo
+    - gosec
+    - ineffassign
+    - loggercheck
+    - maintidx
+    - makezero
+    - musttag
+    - nestif
+    - nilerr
+    - nilnesserr
+    - noctx
+    - perfsprint
+    - prealloc
+    - protogetter
+    - reassign
+    - recvcheck
+    - rowserrcheck
+    - spancheck
+    - sqlclosecheck
+    - staticcheck
+    - testifylint
+    - unparam
+    - unused
+    - zerologlint
+  disable:
+    - gosmopolitan
+    - noctx
+  settings:
+    cyclop:
+      max-complexity: 15
+    funlen:
+      lines: 100
+      statements: 80
+      ignore-comments: true
+    gosec:
+      excludes:
+        - G115
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - cyclop
+        path: (.+)_test\.go
+    paths:
+      - tmp
+      - third_party$
+      - builtin$
+      - examples$
+severity:
+  default: error
+  rules:
+    - linters:
+        - dupl
+      severity: info
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - tmp
+      - third_party$
+      - builtin$
+      - examples$

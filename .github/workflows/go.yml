@@ -41,3 +41,16 @@ jobs:
 
       - name: Run Test With Standard JSON
         run: go test -tags=std_json -v ./...
+
+      # pkgapp 是独立模块, 根模块的 ./... 不会检查它.
+      - name: Build pkgapp
+        working-directory: examples/pkgapp/src
+        run: go build ./...
+
+      - name: Vet pkgapp
+        working-directory: examples/pkgapp/src
+        run: go vet ./...
+
+      - name: Build pkgapp With Standard JSON
+        working-directory: examples/pkgapp/src
+        run: go build -tags=std_json ./...

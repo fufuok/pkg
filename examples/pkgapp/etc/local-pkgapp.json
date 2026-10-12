@@ -1,0 +1,36 @@
+{
+  "__local": "本地主配置. 由 env/pkgapp.default.env 的 MAIN_CONFIG_FILE 在启动时选中.",
+  "sys_conf": {
+    "__watcher_interval": "主程序和配置文件监控间隔. 空值默认 2m, 小于 30s 时回退默认值.",
+    "watcher_interval": "30s",
+    "__env_files": "主 env 之后继续加载的 env 文件. 相对路径基于 env/, 后加载的优先.",
+    "env_files": ["local.env"],
+    "__skip_remote_config": "该文件存在时跳过远端拉取. 相对路径基于进程工作目录, 示例统一从项目根目录启动, 不受 -p 影响.",
+    "skip_remote_config": "env/skip_remote_config.lock"
+  },
+  "main_conf": {
+    "__main_conf": "远端主配置. pkg 忽略 JSON 中的 path, 固定写回当前主配置 etc/local-pkgapp.json.",
+    "method": "GetDataSource",
+    "__secret_name": "留空表示示例不启用远端密钥. 填写后必须提供可解密的非空环境变量.",
+    "secret_name": "",
+    "api": "",
+    "__interval": "小于 30 秒时禁用拉取, 避免示例在没有数据源时循环报错.",
+    "interval": 0,
+    "random_wait": 1
+  },
+  "log_conf": {
+    "__level": "本地示例使用 Debug, 便于观察热加载日志.",
+    "__file": "留空时 pkg 相对可执行文件目录使用 ../log/pkgapp.log, 按示例布局构建后日志落在 log/.",
+    "level": 0
+  },
+  "web_conf": {
+    "__server_addr": "本地配置使用另一个 loopback 端口, 便于和默认配置区分.",
+    "server_addr": "127.0.0.1:18081",
+    "stats_path": "/pwd~~/ok",
+    "trusted_proxies": ["127.0.0.1/32", "::1/128"]
+  },
+  "app_conf": {
+    "message": "hello from local pkgapp",
+    "heartbeat_spec": "*/2 * * * * *"
+  }
+}

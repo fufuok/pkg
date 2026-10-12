@@ -1,0 +1,43 @@
+{
+  "__pkgapp": "pkg 公共配置示例. __ 开头的字段会被解码器忽略, 只作注释.",
+  "sys_conf": {
+    "__watcher_interval": "主程序和配置文件监控间隔. 空值默认 2m, 小于 30s 时回退默认值.",
+    "watcher_interval": "30s",
+    "__env_files": "主 env 之后继续加载的 env 文件. 相对路径基于 env/, 后加载的优先, 缺失文件忽略.",
+    "env_files": ["local.env"],
+    "__skip_remote_config": "该文件存在时跳过远端拉取. 相对路径基于进程工作目录, 示例统一从项目根目录启动, 不受 -p 影响.",
+    "skip_remote_config": "env/skip_remote_config.lock"
+  },
+  "main_conf": {
+    "__main_conf": "远端主配置. pkg 会忽略这里的 path, 固定写回当前选中的主配置, 再由 watcher 热加载.",
+    "__method": "pkg 已注册 GetDataSource. 它按数据源协议拉取并在内容变化时写文件, 示例不自定义方法.",
+    "method": "GetDataSource",
+    "__secret_name": "接口密钥的环境变量名. 一旦填写, pkg 必须能用基础密钥解密出非空值, 否则拒绝启动.",
+    "secret_name": "",
+    "__api": "数据源 URL, token 和时间参数由 pkg 追加. 示例默认不启用周期拉取.",
+    "api": "",
+    "__interval": "拉取间隔秒数. 小于 30 时 pkg 不启动拉取循环.",
+    "interval": 0,
+    "__random_wait": "每轮拉取前的最大随机等待秒数. 小于等于 0 时使用 pkg 默认 120.",
+    "random_wait": 1
+  },
+  "log_conf": {
+    "__level": "日志级别: -1 Trace, 0 Debug, 1 Info, 2 Warn, 3 Error.",
+    "level": 1,
+    "__file": "留空时 pkg 相对可执行文件目录使用 ../log/pkgapp.log, 按示例布局构建后日志落在 log/."
+  },
+  "web_conf": {
+    "__server_addr": "HTTP 监听地址. 修改后需要重启, engine.Run 不在进程内切换监听.",
+    "server_addr": "127.0.0.1:18080",
+    "__stats_path": "/sys/stats 必须携带的隐藏前缀. 示例直接读取本字段, 不在 app_conf 再定义一份.",
+    "stats_path": "/pwd~~/ok",
+    "__trusted_proxies": "仅这些代理写入的转发头会被 Gin 信任.",
+    "trusted_proxies": ["127.0.0.1/32", "::1/128"]
+  },
+  "app_conf": {
+    "__app_conf": "业务配置. 只放本项目字段, 不复制 pkg 已管理的公共配置.",
+    "message": "hello from pkgapp",
+    "__heartbeat_spec": "6 段 cron 表达式. 空值使用代码默认值, 热更时按任务名替换.",
+    "heartbeat_spec": "*/2 * * * * *"
+  }
+}
