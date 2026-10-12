@@ -5,7 +5,6 @@ import (
 	"os"
 	"runtime"
 	"runtime/metrics"
-	"strings"
 	"sync"
 	"time"
 
@@ -13,11 +12,6 @@ import (
 	"github.com/fufuok/bytespool"
 	"github.com/fufuok/pkg/utils"
 	"github.com/rs/zerolog"
-	"github.com/shirou/gopsutil/v3/cpu"
-	"github.com/shirou/gopsutil/v3/load"
-	"github.com/shirou/gopsutil/v3/mem"
-	"github.com/shirou/gopsutil/v3/net"
-	"github.com/shirou/gopsutil/v3/process"
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
@@ -25,64 +19,61 @@ import (
 	"github.com/fufuok/pkg/master"
 )
 
+// resourceCacheTTL 只限制调用触发的刷新频率, 不注册定时器或启动采集协程.
+const resourceCacheTTL = 30 * time.Second
+
 var (
-	mainProcess *process.Process
-	mainOnce    sync.Once
-	mainStatsMu sync.Mutex
+	systemCache  statsCache
+	mainCache    statsCache
+	networkCache statsCache
 
-	// resourceCacheTTL 限制连接和文件描述符枚举频率. 统计接口没有调用时不会启动后台采集.
-	resourceCacheTTL = 30 * time.Second
-
-	// memoryInfoOf 读取当前进程内存信息.
-	// 默认走 gopsutil Process.MemoryInfo; 包内测试可替换以覆盖失败和 nil 返回, 不支持并行改写.
-	memoryInfoOf        = (*process.Process).MemoryInfo
-	numConnectionsOf    = (*process.Process).Connections
-	numFDsOf            = (*process.Process).NumFDs
-	openFilesOf         = (*process.Process).OpenFiles
-	rlimitOf            = (*process.Process).Rlimit
-	systemFileHandlesOf = systemFileHandles
-
-	networkIOCountersOf    = net.IOCounters
-	networkProtoCountersOf = net.ProtoCounters
-	tcpExtCountersOf       = readTCPExtCounters
+	// 三个采集入口供包内测试替换, 测试不得并行改写.
+	collectSystemStatsOf  = collectSystemStats
+	collectMainStatsOf    = collectMainStats
+	collectNetworkStatsOf = collectNetworkStats
 )
 
-// mainResourceSnapshot 仅保存需要枚举内核表的进程资源. CPU Percent 保留原有每次调用基线,
-// 因此不放入缓存, 也不把整个 MainStats 快照化.
-type mainResourceSnapshot struct {
-	collectedAt  time.Time
-	refreshedAt  time.Time
-	connections  int
-	fdUsed       int32
-	fdOK         bool
-	fdSoftLimit  uint64
-	limitOK      bool
-	resourceErrs []string
-}
-
-var mainResourceCache struct {
+// statsCache 保存一类操作系统快照. 锁覆盖刷新, 防止并发请求重复采集.
+type statsCache struct {
 	sync.Mutex
-	snapshot mainResourceSnapshot
-}
-
-type networkInterfaceSnapshot struct {
-	bytesRecv, bytesSent                         uint64
-	packetsRecv, packetsSent                     uint64
-	errorsRecv, errorsSent, dropsRecv, dropsSent uint64
-}
-
-type networkSnapshot struct {
-	collectedAt time.Time
 	refreshedAt time.Time
-	interfaces  map[string]networkInterfaceSnapshot
-	udp         map[string]int64
-	tcp         map[string]int64
-	errors      []string
+	values      map[string]any
 }
 
-var networkCache struct {
-	sync.Mutex
-	snapshot networkSnapshot
+// read 仅在访问且过期时采集. 采集戳使用本机时间, 不受应用业务校时影响.
+// 返回独立对象, 调用方修改 map 或错误切片不会污染后续响应.
+func (c *statsCache) read(collect func() map[string]any, timeKey string) map[string]any {
+	c.Lock()
+	defer c.Unlock()
+	if c.values == nil || time.Since(c.refreshedAt) >= resourceCacheTTL {
+		collectedAt := time.Now()
+		c.values = collect()
+		c.values[timeKey] = collectedAt
+		c.refreshedAt = time.Now()
+	}
+	return cloneStatsMap(c.values)
+}
+
+// cloneStatsMap 复制统计入口使用的嵌套映射和错误切片, 保留原有公开动态类型.
+func cloneStatsMap(src map[string]any) map[string]any {
+	dst := make(map[string]any, len(src))
+	for key, value := range src {
+		switch v := value.(type) {
+		case map[string]any:
+			dst[key] = cloneStatsMap(v)
+		case map[string]int64:
+			counters := make(map[string]int64, len(v))
+			for name, count := range v {
+				counters[name] = count
+			}
+			dst[key] = counters
+		case []string:
+			dst[key] = append([]string(nil), v...)
+		default:
+			dst[key] = value
+		}
+	}
+	return dst
 }
 
 // SYSStats 系统信息. 主机动态资源最多每30秒读取一次, 其余应用和时间字段仍实时生成.
@@ -123,75 +114,12 @@ func SYSStats() map[string]any {
 		"NumCpus":      runtime.NumCPU(),
 		"NodeInfo":     config.Config().NodeConf.NodeInfo,
 	}
-	for key, value := range systemResourceStats() {
+	for key, value := range systemCache.read(collectSystemStatsOf, "CollectedAt") {
 		host[key] = value
 	}
 	stats["Host"] = host
 
 	return stats
-}
-
-// systemResourceStats 读取主机动态资源并返回展示值和机器可读原始值.
-// 失败项保持缺省, 避免把采集失败伪装成零值; 缓存锁覆盖整个刷新过程, 并发只执行一次.
-func systemResourceStats() map[string]any {
-	resourceCacheMu.Lock()
-	defer resourceCacheMu.Unlock()
-	if time.Since(resourceCacheAt) < resourceCacheTTL && resourceCacheValues != nil {
-		return cloneStatsMap(resourceCacheValues)
-	}
-
-	values := make(map[string]any)
-	var resourceErrors []string
-	if avg, err := load.Avg(); err == nil {
-		values["LoadAvg"] = fmt.Sprintf("%.2f, %.2f, %.2f", avg.Load1, avg.Load5, avg.Load15)
-		values["Load1"], values["Load5"], values["Load15"] = avg.Load1, avg.Load5, avg.Load15
-	} else {
-		resourceErrors = append(resourceErrors, "load")
-	}
-	if cpuPercent, err := cpu.Percent(0, false); err == nil && len(cpuPercent) > 0 {
-		values["CPUPercent"] = fmt.Sprintf("%.2f%%", cpuPercent[0])
-	} else {
-		resourceErrors = append(resourceErrors, "cpu")
-	}
-	if memStat, err := mem.VirtualMemory(); err == nil {
-		values["MemTotal"] = utils.HumanIBytes(memStat.Total)
-		values["MemAvailable"] = utils.HumanIBytes(memStat.Available)
-		values["MemUsed"] = utils.HumanIBytes(memStat.Used)
-		values["MemUsedPercent"] = fmt.Sprintf("%.2f%%", memStat.UsedPercent)
-		values["MemTotalBytes"], values["MemAvailableBytes"] = memStat.Total, memStat.Available
-	} else {
-		resourceErrors = append(resourceErrors, "memory")
-	}
-	if used, limit, err := systemFileHandlesOf(); err == nil {
-		values["FileHandlesUsed"], values["FileHandlesLimit"] = used, limit
-	} else {
-		resourceErrors = append(resourceErrors, "file_handles")
-	}
-	if len(resourceErrors) > 0 {
-		values["ResourceErrors"] = resourceErrors
-	}
-	values["CollectedAt"] = common.GTimeNow()
-	resourceCacheAt, resourceCacheValues = time.Now(), values
-	return cloneStatsMap(values)
-}
-
-var (
-	resourceCacheMu     sync.Mutex
-	resourceCacheAt     time.Time
-	resourceCacheValues map[string]any
-)
-
-// cloneStatsMap 复制浅层统计映射, 避免调用方修改缓存中的切片或嵌套数据.
-func cloneStatsMap(src map[string]any) map[string]any {
-	dst := make(map[string]any, len(src))
-	for key, value := range src {
-		if errs, ok := value.([]string); ok {
-			dst[key] = append([]string(nil), errs...)
-			continue
-		}
-		dst[key] = value
-	}
-	return dst
 }
 
 // getMemoryStats 获取内存相关指标
@@ -509,230 +437,25 @@ func BytesPoolStats(topN int, ps ...*bytespool.CapacityPools) map[string]any {
 	return ms
 }
 
-// MainStats 主程序系统指标.
-// MemoryInfo 失败时省略 MemRSS/MemVMS/MemSwap, 其余字段仍返回; 进程句柄不可用时返回 nil.
-// 连接和文件描述符枚举最多每30秒执行一次, 以避免每个 stats 请求重复读取内核表.
+// MainStats 返回主程序指标. 操作系统字段最多每30秒按需读取一次,
+// Go 运行时字段每次调用更新. CPU 为两次成功读取之间的均值, 采样窗口可超过30秒.
+// NumConnections 不再采集, 保留 int(0) 占位, 不代表实际连接数为0.
+// NumThreads/CPUPercent/MemPercent 失败时保留旧类型零占位, 应结合 ResourceErrors 判断有效性.
+// Linux FD 为允许少量偏差的目录总数; 新增字段不支持或失败时缺省, NumOpenFiles 回退 int(0).
 func MainStats() map[string]any {
-	mainStatsMu.Lock()
-	defer mainStatsMu.Unlock()
-	mainOnce.Do(func() {
-		if p, err := process.NewProcess(int32(os.Getpid())); err == nil {
-			mainProcess = p
-		}
-	})
-	if mainProcess == nil {
-		return nil
-	}
-
-	numThreads, _ := mainProcess.NumThreads()
-	cpuPercent, _ := mainProcess.Percent(0)
-	// 失败时 memInfo 可能为 nil, 后续组装必须判空, 不能忽略错误后直接解引用.
-	memInfo, _ := memoryInfoOf(mainProcess)
-	memPercent, _ := mainProcess.MemoryPercent()
-
-	resource := mainResourceStats(mainProcess)
-
-	stats := map[string]any{
-		"ProcessPid":   mainProcess.Pid,
-		"NumThreads":   numThreads,
-		"CPUPercent":   fmt.Sprintf("%.2f%%", cpuPercent),
-		"MemPercent":   fmt.Sprintf("%.2f%%", memPercent),
-		"NumGoroutine": runtime.NumGoroutine(),
-		"NumCgoCall":   utils.Comma(runtime.NumCgoCall()),
-		"GoMaxProcs":   runtime.GOMAXPROCS(0),
-	}
-	stats["NumConnections"] = resource.connections
-	// 保留旧字段和旧的失败回退0行为. Linux 优先使用 NumFDs, 不再逐项 Readlink.
-	stats["NumOpenFiles"] = resource.fdUsed
-	if resource.fdOK {
-		stats["FDUsed"] = resource.fdUsed
-	}
-	if resource.limitOK {
-		stats["FDSoftLimit"] = resource.fdSoftLimit
-	}
-	if len(resource.resourceErrs) > 0 {
-		stats["ResourceErrors"] = append([]string(nil), resource.resourceErrs...)
-	}
-	// MemoryInfo 失败时只省略三块内存字段, 其余进程指标仍返回.
-	if memInfo != nil {
-		stats["MemRSS"] = utils.HumanIBytes(memInfo.RSS)
-		stats["MemVMS"] = utils.HumanIBytes(memInfo.VMS)
-		stats["MemSwap"] = utils.HumanIBytes(memInfo.Swap)
-		stats["MemRSSBytes"] = memInfo.RSS
-	}
-	stats["OSCollectedAt"] = resource.collectedAt
+	stats := mainCache.read(collectMainStatsOf, "OSCollectedAt")
+	stats["ProcessPid"] = int32(os.Getpid())
+	stats["NumGoroutine"] = runtime.NumGoroutine()
+	stats["NumCgoCall"] = utils.Comma(runtime.NumCgoCall())
+	stats["GoMaxProcs"] = runtime.GOMAXPROCS(0)
 	return stats
 }
 
-// mainResourceStats 获取连接、FD和软限制快照. 失败的新增字段保持未知, 旧连接字段仍按兼容约定返回0.
-func mainResourceStats(p *process.Process) mainResourceSnapshot {
-	now := time.Now()
-	mainResourceCache.Lock()
-	defer mainResourceCache.Unlock()
-	if now.Sub(mainResourceCache.snapshot.refreshedAt) < resourceCacheTTL && !mainResourceCache.snapshot.refreshedAt.IsZero() {
-		return cloneMainResourceSnapshot(mainResourceCache.snapshot)
-	}
-
-	snapshot := mainResourceSnapshot{collectedAt: common.GTimeNow(), refreshedAt: now}
-	if conns, err := numConnectionsOf(p); err == nil {
-		snapshot.connections = len(conns)
-	} else {
-		snapshot.resourceErrs = append(snapshot.resourceErrs, "connections")
-	}
-	if fds, err := numFDsOf(p); err == nil {
-		snapshot.fdUsed, snapshot.fdOK = fds, true
-	} else if files, fallbackErr := openFilesOf(p); fallbackErr == nil {
-		// 仅在 NumFDs 不支持的平台回退, 避免改变旧版本的公开字段行为.
-		snapshot.fdUsed, snapshot.fdOK = int32(len(files)), true
-	} else {
-		snapshot.resourceErrs = append(snapshot.resourceErrs, "file_descriptors")
-	}
-	if limits, err := rlimitOf(p); err == nil {
-		for _, limit := range limits {
-			if limit.Resource == process.RLIMIT_NOFILE && limit.Soft > 0 && limit.Soft < ^uint64(0) {
-				snapshot.fdSoftLimit, snapshot.limitOK = limit.Soft, true
-				break
-			}
-		}
-	} else {
-		snapshot.resourceErrs = append(snapshot.resourceErrs, "fd_limit")
-	}
-	mainResourceCache.snapshot = snapshot
-	return cloneMainResourceSnapshot(snapshot)
-}
-
-// cloneMainResourceSnapshot 复制资源快照, 防止调用方修改错误切片.
-func cloneMainResourceSnapshot(src mainResourceSnapshot) mainResourceSnapshot {
-	src.resourceErrs = append([]string(nil), src.resourceErrs...)
-	return src
-}
-
-// NetworkStats 返回主机网络命名空间的累计计数. 函数是可选入口, 只在调用且缓存过期时读取系统计数,
-// 不启动后台任务; 返回值不代表当前进程独占流量, 调用方应使用 CollectedAt 做相邻差分.
+// NetworkStats 返回主机网络命名空间的累计计数, 不代表当前进程独占流量.
+// 这是独立可选入口, 最多每30秒按访问刷新, 没有后台采集.
+// 差分时应跳过重复采集戳、时间回退及计数重置; IPv4 UDP、IPv4/IPv6 合计 TCP 与接口全协议口径不同.
 func NetworkStats() map[string]any {
-	now := time.Now()
-	networkCache.Lock()
-	defer networkCache.Unlock()
-	if now.Sub(networkCache.snapshot.refreshedAt) < resourceCacheTTL && !networkCache.snapshot.refreshedAt.IsZero() {
-		return networkSnapshotMap(networkCache.snapshot)
-	}
-
-	snapshot := collectNetworkSnapshot()
-	networkCache.snapshot = snapshot
-	return networkSnapshotMap(snapshot)
-}
-
-// collectNetworkSnapshot 读取三类累计计数; 每类失败只影响自己的字段.
-func collectNetworkSnapshot() networkSnapshot {
-	snapshot := networkSnapshot{collectedAt: common.GTimeNow(), refreshedAt: time.Now(), interfaces: make(map[string]networkInterfaceSnapshot)}
-	collectNetworkInterfaces(&snapshot)
-	collectNetworkProtocols(&snapshot)
-	collectTCPExt(&snapshot)
-	return snapshot
-}
-
-// collectNetworkInterfaces 读取各接口累计字节、包、错误和丢弃计数, 不做接口合计.
-func collectNetworkInterfaces(snapshot *networkSnapshot) {
-	counters, err := networkIOCountersOf(true)
-	if err != nil {
-		snapshot.errors = append(snapshot.errors, "interfaces")
-		return
-	}
-	for _, counter := range counters {
-		snapshot.interfaces[counter.Name] = networkInterfaceSnapshot{
-			bytesRecv: counter.BytesRecv, bytesSent: counter.BytesSent,
-			packetsRecv: counter.PacketsRecv, packetsSent: counter.PacketsSent,
-			errorsRecv: counter.Errin, errorsSent: counter.Errout,
-			dropsRecv: counter.Dropin, dropsSent: counter.Dropout,
-		}
-	}
-}
-
-// collectNetworkProtocols 读取 IPv4 UDP/TCP 累计计数, 不将协议计数解释为进程独占流量.
-func collectNetworkProtocols(snapshot *networkSnapshot) {
-	protocols, err := networkProtoCountersOf([]string{"udp", "tcp"})
-	if err != nil {
-		snapshot.errors = append(snapshot.errors, "protocols")
-		return
-	}
-	for _, protocol := range protocols {
-		if protocol.Protocol != "udp" && protocol.Protocol != "tcp" {
-			continue
-		}
-		values := make(map[string]int64, len(protocol.Stats))
-		for key, value := range protocol.Stats {
-			values[key] = value
-		}
-		if protocol.Protocol == "udp" {
-			snapshot.udp = values
-		} else {
-			snapshot.tcp = values
-		}
-	}
-}
-
-// collectTCPExt 追加 Linux TcpExt 的监听溢出和丢弃计数, 其他平台保留基础 TCP 数据.
-func collectTCPExt(snapshot *networkSnapshot) {
-	tcpExt, err := tcpExtCountersOf()
-	if err == nil {
-		if snapshot.tcp == nil {
-			snapshot.tcp = make(map[string]int64)
-		}
-		for key, value := range tcpExt {
-			snapshot.tcp[key] = value
-		}
-		return
-	}
-	// TcpExt 在非 Linux 平台不存在, 不让它覆盖已成功的接口和 UDP/TCP 基础计数.
-	if len(snapshot.tcp) > 0 || len(snapshot.interfaces) > 0 {
-		snapshot.errors = append(snapshot.errors, "tcp_ext")
-	}
-}
-
-// networkSnapshotMap 将内部快照转换为独立 map, 保证返回对象与缓存相互隔离.
-func networkSnapshotMap(snapshot networkSnapshot) map[string]any {
-	result := map[string]any{"CollectedAt": snapshot.collectedAt}
-	interfaces := make(map[string]any, len(snapshot.interfaces))
-	for name, counter := range snapshot.interfaces {
-		interfaces[name] = map[string]any{
-			"BytesRecv": counter.bytesRecv, "BytesSent": counter.bytesSent,
-			"PacketsRecv": counter.packetsRecv, "PacketsSent": counter.packetsSent,
-			"ErrorsRecv": counter.errorsRecv, "ErrorsSent": counter.errorsSent,
-			"DropsRecv": counter.dropsRecv, "DropsSent": counter.dropsSent,
-		}
-	}
-	if len(interfaces) > 0 {
-		result["Interfaces"] = interfaces
-	}
-	if values := protocolSnapshotMap(snapshot.udp, []string{"InDatagrams", "OutDatagrams", "InErrors", "RcvbufErrors", "SndbufErrors", "NoPorts"}); len(values) > 0 {
-		result["UDP"] = values
-	}
-	if values := protocolSnapshotMap(snapshot.tcp, []string{"OutSegs", "RetransSegs", "ListenOverflows", "ListenDrops"}); len(values) > 0 {
-		result["TCP"] = values
-	}
-	if len(snapshot.errors) > 0 {
-		result["Errors"] = append([]string(nil), snapshot.errors...)
-	}
-	return result
-}
-
-// protocolSnapshotMap 仅导出看板约定字段, 避免把平台私有协议字段变成公开契约.
-func protocolSnapshotMap(values map[string]int64, keys []string) map[string]int64 {
-	if len(values) == 0 {
-		return nil
-	}
-	result := make(map[string]int64, len(keys))
-	for _, key := range keys {
-		if value, ok := values[key]; ok {
-			result[key] = value
-			continue
-		}
-		// gopsutil 使用 /proc/net/snmp 的原始小写字段名, 对外统一 PascalCase.
-		if value, ok := values[strings.ToLower(key)]; ok {
-			result[key] = value
-		}
-	}
-	return result
+	return networkCache.read(collectNetworkStatsOf, "CollectedAt")
 }
 
 func WebStats() map[string]any {

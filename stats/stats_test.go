@@ -1,20 +1,18 @@
 package stats
 
 import (
-	"errors"
 	"math"
-	"os"
 	"runtime"
 	"runtime/metrics"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/fufuok/bytespool"
-	psnet "github.com/shirou/gopsutil/v3/net"
-	"github.com/shirou/gopsutil/v3/process"
 
+	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/json"
 	"github.com/fufuok/pkg/utils"
@@ -51,106 +49,106 @@ func TestGetMemoryStats(t *testing.T) {
 	assertMapValues(t, got, want)
 }
 
-// TestMainStatsResourceCache 验证连接和 FD 枚举在 TTL 内只执行一次, 并且新增字段保持可读数值.
-func TestMainStatsResourceCache(t *testing.T) {
-	mainOnce.Do(func() {
-		if p, err := process.NewProcess(int32(os.Getpid())); err == nil {
-			mainProcess = p
-		}
-	})
-	if mainProcess == nil {
-		t.Skip("process metrics unavailable")
-	}
-	oldConnections, oldFDs, oldOpenFiles, oldRlimit := numConnectionsOf, numFDsOf, openFilesOf, rlimitOf
-	oldSnapshot := mainResourceCache.snapshot
+// TestStatsLazyCaches 验证三个入口独立按访问刷新, 并发访问只执行一次且操作系统字段一起缓存.
+func TestStatsLazyCaches(t *testing.T) {
+	config.InitTester()
+	t.Cleanup(config.StopTester)
+	preserveStatsCache(t, &systemCache)
+	preserveStatsCache(t, &mainCache)
+	preserveStatsCache(t, &networkCache)
+	oldSystem, oldMain, oldNetwork := collectSystemStatsOf, collectMainStatsOf, collectNetworkStatsOf
 	t.Cleanup(func() {
-		numConnectionsOf, numFDsOf, openFilesOf, rlimitOf = oldConnections, oldFDs, oldOpenFiles, oldRlimit
-		mainResourceCache.snapshot = oldSnapshot
+		collectSystemStatsOf, collectMainStatsOf, collectNetworkStatsOf = oldSystem, oldMain, oldNetwork
 	})
-	var connectionsCalls, fdCalls, limitCalls atomic.Int32
-	numConnectionsOf = func(*process.Process) ([]psnet.ConnectionStat, error) {
-		connectionsCalls.Add(1)
-		return []psnet.ConnectionStat{{}}, nil
+	var systemCalls, mainCalls, networkCalls atomic.Int32
+	collectSystemStatsOf = func() map[string]any { systemCalls.Add(1); return map[string]any{"MemTotalBytes": uint64(1024)} }
+	collectMainStatsOf = func() map[string]any {
+		mainCalls.Add(1)
+		return map[string]any{"NumConnections": 0, "NumOpenFiles": 17, "FDUsed": int32(17), "FDSoftLimit": uint64(128), "ResourceErrors": []string{"fixture"}}
 	}
-	numFDsOf = func(*process.Process) (int32, error) {
-		fdCalls.Add(1)
-		return 17, nil
+	collectNetworkStatsOf = func() map[string]any {
+		networkCalls.Add(1)
+		return map[string]any{"UDP": map[string]int64{"InDatagrams": 9}}
 	}
-	rlimitOf = func(*process.Process) ([]process.RlimitStat, error) {
-		limitCalls.Add(1)
-		return []process.RlimitStat{{Resource: process.RLIMIT_NOFILE, Soft: 128}}, nil
-	}
-	openFilesOf = oldOpenFiles
-	mainResourceCache.snapshot = mainResourceSnapshot{}
-
 	first := MainStats()
+	first["ResourceErrors"].([]string)[0] = "mutated"
+	var wg sync.WaitGroup
+	for range 32 {
+		wg.Go(func() { _ = MainStats() })
+	}
+	wg.Wait()
 	second := MainStats()
-	if first["FDUsed"] != int32(17) || first["FDSoftLimit"] != uint64(128) || first["NumConnections"] != 1 {
-		t.Fatalf("resource fields = %#v", first)
+	assertMapValues(t, second, map[string]any{"NumOpenFiles": 17, "NumConnections": 0, "FDUsed": int32(17), "FDSoftLimit": uint64(128)})
+	if second["ResourceErrors"].([]string)[0] != "fixture" || first["OSCollectedAt"] != second["OSCollectedAt"] {
+		t.Fatalf("cached process snapshot changed: %#v", second)
 	}
-	if second["FDUsed"] != int32(17) || connectionsCalls.Load() != 1 || fdCalls.Load() != 1 || limitCalls.Load() != 1 {
-		t.Fatalf("resource cache calls = connections:%d fd:%d limit:%d stats:%#v", connectionsCalls.Load(), fdCalls.Load(), limitCalls.Load(), second)
+	if mainCalls.Load() != 1 || systemCalls.Load() != 0 || networkCalls.Load() != 0 {
+		t.Fatalf("unexpected collection counts: main=%d system=%d network=%d", mainCalls.Load(), systemCalls.Load(), networkCalls.Load())
 	}
-	mainResourceCache.snapshot.refreshedAt = time.Now().Add(-resourceCacheTTL)
+	SYSStats()
+	SYSStats()
+	NetworkStats()
+	NetworkStats()
+	if systemCalls.Load() != 1 || networkCalls.Load() != 1 {
+		t.Fatal("cache hit recollected OS fields")
+	}
+	mainCache.refreshedAt = time.Now().Add(-resourceCacheTTL)
 	MainStats()
-	if connectionsCalls.Load() != 2 || fdCalls.Load() != 2 || limitCalls.Load() != 2 {
-		t.Fatalf("expired resource cache calls = connections:%d fd:%d limit:%d", connectionsCalls.Load(), fdCalls.Load(), limitCalls.Load())
-	}
-	numConnectionsOf = func(*process.Process) ([]psnet.ConnectionStat, error) {
-		return nil, errors.New("fixture connections failed")
-	}
-	numFDsOf = func(*process.Process) (int32, error) { return 0, errors.New("fixture fd failed") }
-	openFilesOf = func(*process.Process) ([]process.OpenFilesStat, error) {
-		return nil, errors.New("fixture open files failed")
-	}
-	rlimitOf = func(*process.Process) ([]process.RlimitStat, error) { return nil, errors.New("fixture limit failed") }
-	mainResourceCache.snapshot.refreshedAt = time.Now().Add(-resourceCacheTTL)
-	failed := MainStats()
-	if failed["NumOpenFiles"] != int32(0) || failed["FDUsed"] != nil || failed["FDSoftLimit"] != nil {
-		t.Fatalf("failed resource fields = %#v", failed)
-	}
-	if len(failed["ResourceErrors"].([]string)) != 3 {
-		t.Fatalf("failed resource errors = %#v", failed["ResourceErrors"])
+	if mainCalls.Load() != 2 || systemCalls.Load() != 1 || networkCalls.Load() != 1 {
+		t.Fatal("expiry refreshed unrelated groups")
 	}
 }
 
-// TestNetworkStatsCache 验证可选网络采集仅在过期时读取, 且返回值不会污染内部缓存.
-func TestNetworkStatsCache(t *testing.T) {
-	oldIO, oldProto, oldTCP, oldSnapshot := networkIOCountersOf, networkProtoCountersOf, tcpExtCountersOf, networkCache.snapshot
-	t.Cleanup(func() {
-		networkIOCountersOf, networkProtoCountersOf, tcpExtCountersOf = oldIO, oldProto, oldTCP
-		networkCache.snapshot = oldSnapshot
-	})
-	var ioCalls, protoCalls, tcpCalls atomic.Int32
-	networkIOCountersOf = func(bool) ([]psnet.IOCountersStat, error) {
-		ioCalls.Add(1)
-		return []psnet.IOCountersStat{{Name: "fixture0", BytesRecv: 9, PacketsRecv: 3}}, nil
+// TestNetworkStatsCacheIsolation 验证嵌套接口映射、协议映射和失败切片不泄漏缓存引用.
+func TestNetworkStatsCacheIsolation(t *testing.T) {
+	preserveStatsCache(t, &networkCache)
+	old := collectNetworkStatsOf
+	t.Cleanup(func() { collectNetworkStatsOf = old })
+	collectNetworkStatsOf = func() map[string]any {
+		return map[string]any{
+			"Interfaces": map[string]any{"fixture0": map[string]any{"BytesRecv": uint64(9)}},
+			"UDP":        map[string]int64{"InDatagrams": 4},
+			"Errors":     []string{"fixture"},
+		}
 	}
-	networkProtoCountersOf = func([]string) ([]psnet.ProtoCountersStat, error) {
-		protoCalls.Add(1)
-		return []psnet.ProtoCountersStat{{Protocol: "udp", Stats: map[string]int64{"InDatagrams": 4}}}, nil
-	}
-	tcpExtCountersOf = func() (map[string]int64, error) {
-		tcpCalls.Add(1)
-		return map[string]int64{"ListenDrops": 2}, nil
-	}
-	networkCache.snapshot = networkSnapshot{}
-
 	first := NetworkStats()
-	interfaces := first["Interfaces"].(map[string]any)
-	interfaces["fixture0"].(map[string]any)["BytesRecv"] = uint64(999)
+	first["Interfaces"].(map[string]any)["fixture0"].(map[string]any)["BytesRecv"] = uint64(999)
+	first["UDP"].(map[string]int64)["InDatagrams"] = 999
+	first["Errors"].([]string)[0] = "mutated"
 	second := NetworkStats()
-	if second["Interfaces"].(map[string]any)["fixture0"].(map[string]any)["BytesRecv"] != uint64(9) {
+	if second["Interfaces"].(map[string]any)["fixture0"].(map[string]any)["BytesRecv"] != uint64(9) || second["UDP"].(map[string]int64)["InDatagrams"] != 4 || second["Errors"].([]string)[0] != "fixture" {
 		t.Fatalf("network cache was mutated: %#v", second)
 	}
-	if ioCalls.Load() != 1 || protoCalls.Load() != 1 || tcpCalls.Load() != 1 {
-		t.Fatalf("network cache calls = io:%d proto:%d tcp:%d", ioCalls.Load(), protoCalls.Load(), tcpCalls.Load())
+}
+
+// TestStatsCollectionClock 验证三个采集戳不受业务时钟偏移影响, 刷新才会更新戳.
+func TestStatsCollectionClock(t *testing.T) {
+	config.InitTester()
+	t.Cleanup(config.StopTester)
+	oldOffset := common.GetClockOffset()
+	common.SetClockOffset(time.Hour)
+	t.Cleanup(func() { common.SetClockOffset(oldOffset - time.Duration(common.ClockOffsetAdjust)) })
+	preserveStatsCache(t, &systemCache)
+	preserveStatsCache(t, &mainCache)
+	preserveStatsCache(t, &networkCache)
+	before := time.Now()
+	stamps := []any{SYSStats()["Host"].(map[string]any)["CollectedAt"], MainStats()["OSCollectedAt"], NetworkStats()["CollectedAt"]}
+	after := time.Now()
+	for _, stamp := range stamps {
+		value, ok := stamp.(time.Time)
+		if !ok || value.Before(before) || value.After(after) {
+			t.Fatalf("collection timestamp = %v, expected local sample time", stamp)
+		}
 	}
-	networkCache.snapshot.refreshedAt = time.Now().Add(-resourceCacheTTL)
-	NetworkStats()
-	if ioCalls.Load() != 2 || protoCalls.Load() != 2 || tcpCalls.Load() != 2 {
-		t.Fatalf("expired network cache calls = io:%d proto:%d tcp:%d", ioCalls.Load(), protoCalls.Load(), tcpCalls.Load())
-	}
+}
+
+// preserveStatsCache 隔离测试使用的缓存内容, 避免真实采样与伪造结果互相影响.
+// 缓存及采集函数为进程级全局状态, 测试必须串行, 启动的采集调用须在 cleanup 前结束.
+func preserveStatsCache(t *testing.T, cache *statsCache) {
+	t.Helper()
+	oldAt, oldValues := cache.refreshedAt, cache.values
+	cache.refreshedAt, cache.values = time.Time{}, nil
+	t.Cleanup(func() { cache.refreshedAt, cache.values = oldAt, oldValues })
 }
 
 // TestGetGCStats 验证无 GC 和最近多次 GC 两类统计分支.
@@ -295,67 +293,6 @@ func TestRuntimeStatsContracts(t *testing.T) {
 	if _, ok := combined["BytesPool"].(map[string]any); !ok {
 		t.Fatalf("combined bytes pool stats = %#v", combined["BytesPool"])
 	}
-}
-
-// TestMainStatsOmitsMemoryFieldsWhenMemoryInfoFails 验证 MemoryInfo 失败时不 panic.
-// 四个项目的 /sys/stats 都走 MetricStats -> MainStats, 这里同时钉住两条入口.
-func TestMainStatsOmitsMemoryFieldsWhenMemoryInfoFails(t *testing.T) {
-	preserveMemoryInfoOf(t)
-	memoryInfoOf = func(*process.Process) (*process.MemoryInfoStat, error) {
-		return nil, errors.New("fixture memory info failed")
-	}
-
-	main := MainStats()
-	if main == nil {
-		t.Fatal("MainStats returned nil after MemoryInfo failure")
-	}
-	if pid, ok := main["ProcessPid"].(int32); !ok || pid <= 0 {
-		t.Fatalf("process pid = %#v", main["ProcessPid"])
-	}
-	if _, ok := main["NumGoroutine"].(int); !ok {
-		t.Fatalf("goroutine count = %#v", main["NumGoroutine"])
-	}
-	for _, key := range []string{"MemRSS", "MemVMS", "MemSwap"} {
-		if _, ok := main[key]; ok {
-			t.Fatalf("MainStats kept %s after MemoryInfo failure: %#v", key, main[key])
-		}
-	}
-
-	metricsStats := MetricStats()
-	gotMain, ok := metricsStats["Main"].(map[string]any)
-	if !ok || gotMain == nil {
-		t.Fatalf("MetricStats Main = %#v", metricsStats["Main"])
-	}
-	if _, ok := gotMain["MemRSS"]; ok {
-		t.Fatalf("MetricStats kept MemRSS after MemoryInfo failure: %#v", gotMain)
-	}
-}
-
-// TestMainStatsKeepsMemoryFieldsWhenMemoryInfoSucceeds 验证成功路径仍输出三块内存字段.
-func TestMainStatsKeepsMemoryFieldsWhenMemoryInfoSucceeds(t *testing.T) {
-	preserveMemoryInfoOf(t)
-	memoryInfoOf = func(*process.Process) (*process.MemoryInfoStat, error) {
-		return &process.MemoryInfoStat{RSS: 1024, VMS: 2048, Swap: 0}, nil
-	}
-
-	main := MainStats()
-	if main == nil {
-		t.Fatal("MainStats returned nil on MemoryInfo success")
-	}
-	assertMapValues(t, main, map[string]any{
-		"MemRSS":  utils.HumanIBytes(1024),
-		"MemVMS":  utils.HumanIBytes(2048),
-		"MemSwap": utils.HumanIBytes(0),
-	})
-}
-
-// preserveMemoryInfoOf 保存进程内存查询函数并在测试结束时恢复.
-func preserveMemoryInfoOf(t *testing.T) {
-	t.Helper()
-	old := memoryInfoOf
-	t.Cleanup(func() {
-		memoryInfoOf = old
-	})
 }
 
 // TestWebAndDescriptionStats 验证 Web 开关映射及三类描述入口的稳定锚点.

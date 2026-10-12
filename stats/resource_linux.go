@@ -3,97 +3,193 @@
 package stats
 
 import (
-	"bufio"
 	"errors"
+	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
 
-// systemFileHandles 读取内核文件句柄总量. file-nr 三列依次为已分配、未使用和上限,
-// 这里只返回前两列相减后的使用量, 与单个进程 FD 不是同一统计口径.
-func systemFileHandles() (used, limit uint64, err error) {
-	data, err := os.ReadFile("/proc/sys/fs/file-nr")
+var (
+	// 分别由 systemCache 和 mainCache 的锁保护, 首次读取只建立 CPU 差分基线.
+	lastSystemCPU cpuTime
+	lastMainCPU   cpuTime
+	lastMainTicks uint64
+)
+
+// cpuTime 仅保存总 CPU tick、空闲 tick 和内核逻辑 CPU 数, 不展开每核指标.
+type cpuTime struct {
+	total, idle uint64
+	cores       int
+}
+
+// procPath 统一使用 HOST_PROC 指定的 procfs, 避免同一快照混用宿主和容器来源.
+func procPath(name string) string {
+	root := os.Getenv("HOST_PROC")
+	if root == "" {
+		root = "/proc"
+	}
+	return filepath.Join(root, name)
+}
+
+// collectSystemStats 只读取少量 procfs 文本, 不调用 gopsutil 或等待采样间隔.
+// 内存使用量近似为总量减可用量; 首次 CPU 为0, 后续为两次成功读取之间的均值.
+// 30秒只限制访问触发的刷新频率, 无访问或读取失败时 CPU 采样窗口可能更长.
+func collectSystemStats() map[string]any {
+	values := make(map[string]any)
+	data, err := os.ReadFile(procPath("loadavg"))
+	if err == nil {
+		var loads [3]float64
+		loads, err = parseLoadAvg(string(data))
+		if err == nil {
+			values["LoadAvg"] = fmt.Sprintf("%.2f, %.2f, %.2f", loads[0], loads[1], loads[2])
+			values["Load1"], values["Load5"], values["Load15"] = loads[0], loads[1], loads[2]
+		}
+	}
+	if err != nil {
+		addStatsError(values, "ResourceErrors", "load")
+	}
+	if current, err := readCPUTime(); err == nil {
+		percent := float64(0)
+		if lastSystemCPU.total > 0 && current.total > lastSystemCPU.total && current.idle >= lastSystemCPU.idle {
+			total, idle := current.total-lastSystemCPU.total, current.idle-lastSystemCPU.idle
+			if idle <= total {
+				percent = 100 * float64(total-idle) / float64(total)
+			}
+		}
+		values["CPUPercent"] = fmt.Sprintf("%.2f%%", percent)
+		lastSystemCPU = current
+	} else {
+		addStatsError(values, "ResourceErrors", "cpu")
+	}
+	if total, available, err := readMemoryInfo(); err == nil {
+		setSystemMemory(values, total, available)
+	} else {
+		addStatsError(values, "ResourceErrors", "memory")
+	}
+	data, err = os.ReadFile(procPath("sys/fs/file-nr"))
+	if err == nil {
+		var used, limit uint64
+		used, limit, err = parseSystemFileHandles(string(data))
+		if err == nil {
+			values["FileHandlesUsed"], values["FileHandlesLimit"] = used, limit
+		}
+	}
+	if err != nil {
+		addStatsError(values, "ResourceErrors", "file_handles")
+	}
+	return values
+}
+
+// parseLoadAvg 只解析 loadavg 的前三列, 忽略线程数等附加字段.
+func parseLoadAvg(text string) ([3]float64, error) {
+	var values [3]float64
+	fields := strings.Fields(text)
+	if len(fields) < len(values) {
+		return values, errors.New("invalid loadavg format")
+	}
+	for i := range values {
+		value, err := strconv.ParseFloat(fields[i], 64)
+		if err != nil {
+			return values, fmt.Errorf("invalid loadavg value: %w", err)
+		}
+		values[i] = value
+	}
+	return values, nil
+}
+
+// readProcValues 按键读取 status/meminfo 的整数, 忽略其他字段和单位, 调用方负责 kB 换算.
+func readProcValues(name string, keys []string) (map[string]uint64, error) {
+	data, err := os.ReadFile(procPath(name))
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string]uint64, len(keys))
+	for line := range strings.SplitSeq(string(data), "\n") {
+		key, text, ok := strings.Cut(line, ":")
+		if !ok || !slices.Contains(keys, key) {
+			continue
+		}
+		fields := strings.Fields(text)
+		if len(fields) == 0 {
+			return nil, fmt.Errorf("missing %s in %s", key, name)
+		}
+		value, err := strconv.ParseUint(fields[0], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid %s in %s: %w", key, name, err)
+		}
+		values[key] = value
+	}
+	return values, nil
+}
+
+// readMemoryInfo 优先使用 MemAvailable, 旧内核退回 Free+Buffers+Cached 的粗略估计.
+func readMemoryInfo() (total, available uint64, err error) {
+	values, err := readProcValues("meminfo", []string{"MemTotal", "MemAvailable", "MemFree", "Buffers", "Cached"})
 	if err != nil {
 		return 0, 0, err
 	}
-	return parseSystemFileHandles(string(data))
+	total = values["MemTotal"] * 1024
+	if total == 0 {
+		return 0, 0, errors.New("MemTotal not found or zero")
+	}
+	available, ok := values["MemAvailable"]
+	if !ok {
+		available = values["MemFree"] + values["Buffers"] + values["Cached"]
+	}
+	return total, min(total, available*1024), nil
 }
 
-// readTCPExtCounters 读取内核 TcpExt 中与监听溢出相关的累计计数.
-func readTCPExtCounters() (map[string]int64, error) {
-	file, err := os.Open("/proc/net/netstat")
+// readCPUTime 读取总 CPU tick 和核数. guest 已计入 user/nice, 不再次累加.
+func readCPUTime() (cpuTime, error) {
+	data, err := os.ReadFile(procPath("stat"))
 	if err != nil {
-		return nil, err
+		return cpuTime{}, err
 	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		header := scanner.Text()
-		if !strings.HasPrefix(header, "TcpExt:") {
-			continue
+	var value cpuTime
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if strings.HasPrefix(line, "cpu ") {
+			fields := strings.Fields(line)
+			if len(fields) < 5 {
+				return value, errors.New("invalid CPU stat format")
+			}
+			for i := 1; i < min(len(fields), 9); i++ {
+				ticks, err := strconv.ParseUint(fields[i], 10, 64)
+				if err != nil {
+					return value, fmt.Errorf("invalid CPU tick: %w", err)
+				}
+				value.total += ticks
+				if i == 4 || i == 5 {
+					value.idle += ticks
+				}
+			}
+		} else if strings.HasPrefix(line, "cpu") {
+			value.cores++
 		}
-		if !scanner.Scan() {
-			break
-		}
-		values := scanner.Text()
-		result, err := parseTcpExtLine(header, values)
-		if err != nil {
-			return nil, err
-		}
-		if len(result) == 0 {
-			return nil, errors.New("TcpExt listen counters not found")
-		}
-		return result, nil
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
+	if value.total == 0 || value.cores == 0 {
+		return value, errors.New("CPU counters not found")
 	}
-	return nil, errors.New("TcpExt counters not found")
+	return value, nil
 }
 
-// parseSystemFileHandles 解析 file-nr 的固定三列, 对列缺失、非数字和计数回退返回错误.
+// parseSystemFileHandles 解析 file-nr 的已分配、未使用和上限, 返回全系统使用量.
 func parseSystemFileHandles(text string) (used, limit uint64, err error) {
 	fields := strings.Fields(text)
 	if len(fields) < 3 {
 		return 0, 0, errors.New("invalid file-nr format")
 	}
-	allocated, err := strconv.ParseUint(fields[0], 10, 64)
-	if err != nil {
-		return 0, 0, err
+	var counters [3]uint64
+	for i := range counters {
+		counters[i], err = strconv.ParseUint(fields[i], 10, 64)
+		if err != nil {
+			return 0, 0, fmt.Errorf("invalid file-nr counter: %w", err)
+		}
 	}
-	unused, err := strconv.ParseUint(fields[1], 10, 64)
-	if err != nil {
-		return 0, 0, err
-	}
-	limit, err = strconv.ParseUint(fields[2], 10, 64)
-	if err != nil {
-		return 0, 0, err
-	}
-	if allocated < unused {
+	if counters[0] < counters[1] {
 		return 0, 0, errors.New("invalid file-nr counters")
 	}
-	return allocated - unused, limit, nil
-}
-
-// parseTcpExtLine 按 TcpExt 头部列名匹配所需字段, 忽略内核版本新增列.
-func parseTcpExtLine(header, values string) (map[string]int64, error) {
-	headerFields := strings.Fields(strings.TrimPrefix(header, "TcpExt:"))
-	valueFields := strings.Fields(strings.TrimPrefix(values, "TcpExt:"))
-	if len(headerFields) != len(valueFields) {
-		return nil, errors.New("invalid TcpExt format")
-	}
-	result := make(map[string]int64, 2)
-	for i, name := range headerFields {
-		if name != "ListenOverflows" && name != "ListenDrops" {
-			continue
-		}
-		value, err := strconv.ParseInt(valueFields[i], 10, 64)
-		if err != nil {
-			return nil, err
-		}
-		result[name] = value
-	}
-	return result, nil
+	return counters[0] - counters[1], counters[2], nil
 }

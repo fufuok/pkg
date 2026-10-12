@@ -29,10 +29,10 @@ func SYSStatsDesc() map[string]any {
 			"ExternalIPv4":      "外网IPv4地址",
 			"NumCpus":           "CPU核心数",
 			"LoadAvg":           "系统负载(1分钟, 5分钟, 15分钟)",
-			"CPUPercent":        "系统整体CPU使用率(所有核心的平均值)",
+			"CPUPercent":        "系统CPU使用率, Linux为两次成功读取间均值, 窗口可超过30秒, 首次为0",
 			"MemTotal":          "总内存大小",
 			"MemAvailable":      "可用内存大小",
-			"MemUsed":           "已使用内存大小",
+			"MemUsed":           "已使用内存估计值(总量减可用量)",
 			"MemUsedPercent":    "内存使用百分比",
 			"Load1":             "系统1分钟负载原始值",
 			"Load5":             "系统5分钟负载原始值",
@@ -41,7 +41,7 @@ func SYSStatsDesc() map[string]any {
 			"MemAvailableBytes": "可用内存字节数",
 			"FileHandlesUsed":   "系统已使用文件句柄数",
 			"FileHandlesLimit":  "系统文件句柄上限",
-			"CollectedAt":       "主机资源采集时间",
+			"CollectedAt":       "主机资源本机采集时间, 最多30秒按需刷新",
 			"ResourceErrors":    "主机资源采集失败项",
 		},
 	}
@@ -52,22 +52,22 @@ func MetricStatsDesc() map[string]any {
 	return map[string]any{
 		"Main": map[string]string{
 			"ProcessPid":     "进程ID",
-			"NumThreads":     "线程数量",
-			"CPUPercent":     "当前进程CPU使用率(相对于单个CPU核心)",
-			"MemPercent":     "内存使用百分比",
+			"NumThreads":     "线程数量(int32), 失败或未采集时为0占位",
+			"CPUPercent":     "进程CPU使用率(单核100%), 成功读取间均值, 窗口可超过30秒, 首次或失败时为0",
+			"MemPercent":     "内存使用百分比, 失败时保留0占位",
 			"MemRSS":         "物理内存使用量",
 			"MemVMS":         "虚拟内存使用量",
 			"MemSwap":        "交换内存使用量",
 			"NumGoroutine":   "Goroutine数量",
 			"NumCgoCall":     "CGO调用次数",
 			"GoMaxProcs":     "最大并发核心数",
-			"NumConnections": "网络连接数",
-			"NumOpenFiles":   "打开文件描述符数",
-			"FDUsed":         "当前进程文件描述符数",
+			"NumConnections": "不再采集, 保留int(0)兼容占位, 不代表实际连接数",
+			"NumOpenFiles":   "Linux近似FD数(int), 不支持或失败时为0",
+			"FDUsed":         "Linux近似FD数, 包含采样及并发变化的偏差; 未采集时缺省",
 			"FDSoftLimit":    "当前进程文件描述符软限制",
 			"MemRSSBytes":    "当前进程物理内存字节数",
-			"OSCollectedAt":  "进程操作系统资源采集时间",
-			"ResourceErrors": "进程资源采集失败项",
+			"OSCollectedAt":  "进程操作系统字段本机采集时间, 最多30秒按需刷新",
+			"ResourceErrors": "进程资源采集失败项, 旧字段零占位不代表实测零值",
 		},
 		"Memory": map[string]string{
 			"TotalAlloc":           "程序启动后累计内存分配量",
@@ -128,7 +128,7 @@ func MetricStatsDesc() map[string]any {
 // NetworkStatsDesc 网络资源累计指标注释.
 func NetworkStatsDesc() map[string]any {
 	return map[string]any{
-		"CollectedAt": "网络资源采集时间",
+		"CollectedAt": "网络资源本机采集时间, 最多30秒按需刷新",
 		"Errors":      "网络资源采集失败项",
 		"Interfaces": map[string]string{
 			"BytesRecv":   "接口接收累计字节数",
