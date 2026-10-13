@@ -97,8 +97,11 @@ examples/pkgapp
 | 环境变量 | `github.com/joho/godotenv` | 不引入另一套 env 解析器 |
 | 系统指标 | `github.com/fufuok/pkg/stats`, 非 Linux 基础采集使用 pkg 已采用的 `gopsutil/v3` | 不另建采集器或混用其他采集库 |
 | 命令执行 | `github.com/go-cmd/cmd` | 不直接散落 `exec.Command` 包装 |
+| 原生 SQL 助手 | `github.com/fufuok/pkg/sqldb` | SQL、驱动、连接池和 schema 由应用管理 |
 
 pkg 已经封装的能力优先调用 pkg. 只有 pkg 没有对应封装时, 才直接依赖上表中的库.
+
+使用 `database/sql` 的业务仓储可按需调用 `WithTx`、`WithTxValue`、`ForEach` 和 `Collect`, 参见 [sqldb 使用契约](../../sqldb/README.md) 和 [独立 SQLite 演示](../sqldb/README.md). 使用前将项目的 pkg 依赖升级到 v1.3.11 或更新版本. 本范本不配置数据库; 应用持有连接池并在退出时关闭, 既有 GORM 项目继续使用其事务和查询能力.
 
 本范本直接依赖已发布的 pkg, 不使用本地 `replace`. pkg 的 Gin 引擎默认启用 `ContextWithFallback`, `gin.Context` 的取消、超时和上下文值可回退到 `Request.Context`; 应用无需重复设置.
 

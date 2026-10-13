@@ -54,3 +54,32 @@ jobs:
       - name: Build pkgapp With Standard JSON
         working-directory: examples/pkgapp/src
         run: go build -tags=std_json ./...
+
+      # 独立示例先验证声明的发布依赖, 不受开发 workspace 影响.
+      - name: Build sqldb Example
+        working-directory: examples/sqldb
+        env:
+          GOWORK: 'off'
+        shell: pwsh
+        run: go build -o (Join-Path $env:RUNNER_TEMP 'sqldb-example') .
+
+      - name: Vet sqldb Example
+        working-directory: examples/sqldb
+        env:
+          GOWORK: 'off'
+        run: go vet ./...
+
+      - name: Run sqldb Example
+        working-directory: examples/sqldb
+        env:
+          GOWORK: 'off'
+        run: go run .
+
+      # 根模块检查后再联调当前 checkout, SQLite 驱动不进入根模块依赖.
+      - name: Run sqldb Example With Current pkg
+        shell: pwsh
+        run: |
+          $env:GOWORK = Join-Path $env:RUNNER_TEMP 'sqldb-example.work'
+          go work init . ./examples/sqldb
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go -C examples/sqldb run .

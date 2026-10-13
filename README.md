@@ -35,6 +35,8 @@
 
 见: [应用规范范本](examples/pkgapp/README.md) 和 [多服务示例](examples/multiserver/main.go).
 
+原生 SQL 按需使用 [sqldb 事务与结果集助手](sqldb/README.md), 可运行 [SQLite 内存数据库示例](examples/sqldb/README.md).
+
 ## 敏感信息加密
 
 见: [tools/README.md](tools/README.md)
