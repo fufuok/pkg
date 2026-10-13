@@ -1,41 +1,39 @@
 # pkgapp
 
-`examples/pkgapp` 是可运行的 pkg 应用规范范本, 也是新项目骨架和 AI 参照. 业务代码只读取、展示和调用 pkg 已封装的能力, 不额外封装配置框架或远端协议.
+`examples/pkgapp` 是可运行的 pkg 应用规范范本, 用于新项目搭建和旧项目迁移. 范本业务只演示 pkg 已有能力, 实际业务按项目需求实现.
 
 ## AI 提示词
 
 ```text
 请先阅读 https://github.com/fufuok/pkg/blob/main/examples/pkgapp/README.md,
-取得 examples/pkgapp 的完整内容, 包括源码、etc、env、两级 Makefile、
-.golangci.yml 和 bin/log 中的目录占位文件. 无法取得完整范本时明确说明缺失资料.
+取得 examples/pkgapp 的完整内容, 包括 src、etc、env、两级 Makefile、
+.golangci.yml 和 bin/log 目录占位文件. 缺失资料时说明影响, API 以所选 pkg 版本源码为准.
 
-按项目方案 <方案名称或链接> 落地新项目骨架.
+任务: <新建项目 / 迁移旧项目>; 项目目录: <路径>; 方案: <需求或链接>.
 AppName: <项目名>; Go module: <模块路径>; BinName: <小写二进制名>;
-DebName: <安装包名>.
+DebName: <安装包名>. 迁移时未要求变更的项目身份和模块路径沿用现有值.
 
-把范本内容放在新项目根目录, 保留 src 为独立 Go module.
-同步 main.go 的三个项目身份、module/import 路径、BinName 对应的配置和 env 文件名、
-MAIN_CONFIG_FILE、应用 env 前缀、Makefile 的 BIN_NAME、心跳任务名及 README 请求示例.
-src/Makefile 的 GO_MOD 保持 github.com/fufuok/pkg, 它用于设置 pkg/config 的构建信息.
+新建项目按范本布局落在项目根目录, 保留 src 为独立 Go module.
+迁移旧项目先梳理入口、模块、配置和部署的对应关系, 再按模块调整, 不用范本覆盖现有业务和配置.
+除方案明确要求外, 保持既有接口、协议、数据、配置及部署行为兼容.
 
-除项目身份、模块路径和方案要求的业务逻辑外, 系统基础代码以 pkgapp 为规范范本:
-保持相同的目录层次、文件名、函数名、变量名、代码位置和组织方式.
-保留 main.go 的身份设置与模块注册、conf 的配置加载与快照、各模块 init.go 的
-M/Start/Runtime/Stop、global.go 的生命周期状态, 以及 web/router/api 和 sys 的分层.
-只按实际业务增删模块和字段; 需要偏离范本时, 先说明业务原因及影响, 不自行改名或重组.
+系统基础代码沿用范本的目录、文件名、函数名、变量名和组织方式, 不自行改名或重组.
+保留薄 main.go、conf 配置快照、模块 init.go 的 M/Start/Runtime/Stop 及 Web 的 api/sys 分层;
+按需增删业务模块和字段, global.go 仅承载需跨文件共享的业务生命周期状态. 必要偏离说明原因和影响.
+同步项目身份、module/import、配置和 env 文件名、MAIN_CONFIG_FILE、应用 env 前缀及 BIN_NAME.
+src/Makefile 的 GO_MOD 保持 github.com/fufuok/pkg, 用于注入 pkg/config 的构建信息.
 
-直接使用 pkg 的配置、生命周期、日志、Web、定时任务、统计、pubsub、sysenv、json、
-加密和签名能力, 不另建配置框架、远端协议、补偿逻辑或同类封装层.
-初始化时使用 pkg 最新发布版本, 执行 go -C src get github.com/fufuok/pkg@latest.
-Go 版本和常用三方库的选型、版本以该 pkg 版本的 go.mod 为准, 不另选同类库;
-执行 go -C src mod tidy, 用新项目的 go.mod/go.sum 记录解析后的依赖.
-按下方「敏感信息加密」引用的 pkg/tools 文档为新 AppName 生成 BASE_SECRET_KEY.
-其他敏感配置按业务需要设置, 保留的配置使用新基础密钥加密, 不复制演示密文;
-删除未使用的演示接口及其配置、校验. 启用签名时客户端使用签名密钥明文.
-代码注释仅摘录并适配当前项目需要的机制和边界, 不要求照抄.
+公共能力优先复用 pkg, 依赖选型遵循本文, 不另建同类配置框架或远端协议.
+新项目使用 pkg 最新发布版本: go -C src get github.com/fufuok/pkg@latest.
+旧项目先核对 Go、pkg 及相关直接依赖的兼容性, 再按方案升级, 不批量升级无关依赖.
+Go 版本满足所选 pkg 的 go.mod 要求, 相关常用库的选型和版本跟随 pkg;
+在实际模块目录执行 go mod tidy, 用 go.mod/go.sum 固定实际解析结果, 不提交本机 replace.
 
-完成后执行本 README 的格式化、build、vet、lint、启动、请求、热加载和退出验证.
-范本保持极简, 无须为复制骨架补示例测试; 新项目按实际业务补必要测试.
+复用基础骨架, 删除无业务需要的演示接口、任务及其配置和校验; 注释只保留适用的机制与边界.
+新项目按 pkg/tools 文档为 AppName 生成 BASE_SECRET_KEY, 不复制演示密文.
+旧项目保留现有密钥和密文兼容, 变更 AppName 或密钥时同步处理重加密和兼容.
+完成后按项目实际执行格式化、build、vet、lint、现有测试及运行验证,
+覆盖实际接口、启停和保留的热加载能力. 项目 README 记录实际架构、配置和运行方式, 不照抄示例.
 ```
 
 ## 目录
@@ -76,13 +74,13 @@ examples/pkgapp
 - 只有跨文件共享且需要随生命周期启停的状态才进入 `global.go`.
 - 应用配置使用 `atomic.Pointer[AppMainConf]`, 通过 `conf.App()` 读取; pkg 提供的通用程序配置通过 `conf.Main()` 读取. 返回对象只读, 不得直接修改.
 - 路由文件只注册路径和处理请求, 不保存跨请求可变状态.
-- 业务代码只做简单读写和展示. 配置和模块错误返回给 pkg/master 处理, 请求错误就地返回 HTTP 状态, 不增加补偿框架.
+- 业务逻辑留在应用模块, 公共能力复用 pkg. 配置和模块错误返回给 pkg/master 处理, 请求错误就地返回 HTTP 状态, 不增加无需求的通用框架.
 - 导入 `github.com/fufuok/pkg/json` 时包名保持 `json`.
 - Go 版本和常用三方库跟随下方「依赖选型」, 不另选同类库.
 
 ## 依赖选型
 
-初始化新项目时使用 pkg 最新发布版本, Go 版本至少满足该版本 `go.mod` 的要求, 建议使用相同的 Go 版本. 常用三方库的选型和依赖版本跟随该 pkg 版本的 `go.mod`; 下表列出对应能力, 不另选同类库. `go.mod` 和 `go.sum` 记录实际解析的版本, 后续升级显式更新依赖并重新验证.
+新项目使用 pkg 最新发布版本, Go 版本至少满足该版本 `go.mod` 的要求. 常用三方库的选型和相关依赖版本跟随所选 pkg 的 `go.mod`, 只引入实际需要的库; 下表列出对应能力, 不另选同类库. 旧项目迁移先核对兼容性, 只调整本次迁移涉及的依赖. `go.mod` 和 `go.sum` 记录实际解析的版本, 升级后重新验证.
 
 | 能力 | 使用 pkg 已采用的库 | 不另选 |
 | --- | --- | --- |
