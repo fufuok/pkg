@@ -30,6 +30,14 @@ func (q *Queue[T]) Enqueue(value T) {
 	q.queue.Enqueue(value)
 }
 
+// EnqueueCount 返回此队列实例创建以来的累计 Enqueue 调用数, 出队不会扣减.
+// 只读取既有分片计数器, 不清零计数, 不推进 RateState 的速率采样窗口.
+// 并发读写安全, 但不提供各分片同一时刻的原子快照; 计数在实际发布元素前递增,
+// 因此不能用它判断当前可出队数量或消费完成量. 读取成本与分片数成正比.
+func (q *Queue[T]) EnqueueCount() uint64 {
+	return q.enqueueCount.Load()
+}
+
 // Dequeue 从队列中获取数据并更新计数器 (仅单消费者!!!)
 func (q *Queue[T]) Dequeue() T {
 	value := q.queue.Dequeue()
