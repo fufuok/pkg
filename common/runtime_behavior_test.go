@@ -106,6 +106,8 @@ func TestSetClockOffsetBoundary(t *testing.T) {
 
 // TestCommonProductionLifecycleSubprocess 在独立进程验证完整 Start/Stop, 避免污染父进程资源.
 func TestCommonProductionLifecycleSubprocess(t *testing.T) {
+	// 仅给新子进程选择 UTC 宿主, 验证直接 Start 也会采用应用默认 UTC+8.
+	t.Setenv("TZ", "UTC")
 	tests := []struct {
 		name     string
 		scenario string
@@ -148,6 +150,7 @@ func TestCommonProductionLifecycleSubprocessHelper(t *testing.T) {
 	config.Debug = true
 	config.InitTester()
 	defer config.StopTester()
+	start := StartTime
 	cfg := config.Config()
 	cfg.LogConf.PostBatchNum = 10
 	cfg.LogConf.PostBatchBytes = 1024
@@ -164,6 +167,11 @@ func TestCommonProductionLifecycleSubprocessHelper(t *testing.T) {
 	}()
 	if err := m.Start(); err != nil {
 		t.Fatalf("start common lifecycle: %v", err)
+	}
+	_, offset := time.Now().Zone()
+	if time.Local != config.DefaultTimeLocation || offset != 8*60*60 ||
+		StartTime != start {
+		t.Fatal("common start did not apply the default application time location")
 	}
 	if ReqUpload == nil || ReqDownload == nil || LogChan == nil {
 		t.Fatal("common start did not initialize runtime components")

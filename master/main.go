@@ -3,11 +3,13 @@ package master
 import (
 	"flag"
 	"fmt"
+	"log"
 	"runtime"
 
 	"github.com/fufuok/pkg/utils"
 	"github.com/fufuok/pkg/xdaemon"
 
+	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
 )
 
@@ -41,8 +43,11 @@ func Main() {
 	Run()
 }
 
-// Run 守护进程启动程序
+// Run 在启动 daemon 和业务前固定应用时区, 再运行完整程序生命周期.
 func Run() {
+	if err := common.InitTimeLocation(); err != nil {
+		log.Fatalln("Failed to initialize application time location:", err)
+	}
 	if Daemon && !config.Debug {
 		xdaemon.NewDaemon(config.LogDaemon).Run()
 	}
@@ -56,8 +61,11 @@ func Run() {
 	utils.WaitSignal()
 }
 
-// Start 执行程序初始化
+// Start 在任何 Pipeline 创建后台任务前固定时区, 也支持不经 Main/Run 的直接启动.
 func Start() {
+	if err := common.InitTimeLocation(); err != nil {
+		log.Fatalln("Failed to initialize application time location:", err)
+	}
 	registerCommonFuncs()
 	registerPipeline()
 	startConfigPipeline()

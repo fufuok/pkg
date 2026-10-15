@@ -14,13 +14,16 @@ const (
 
 var ChinaTimeLocation = time.FixedZone(ChinaTimeZone, ChinaTimeOffset)
 
-// InitChinaLocation 设置全局时区为中国东八区(GMT+8)
+// InitChinaLocation 设置进程本地时区为固定 UTC+8, 保留既有 setter 行为.
+// 调用方必须保证没有任何并发时间读取. pkg 应用应在启动期通过
+// config.DefaultTimeLocation 和 common.InitTimeLocation 选择并应用时区.
 func InitChinaLocation() *time.Location {
 	time.Local = ChinaTimeLocation
 	return ChinaTimeLocation
 }
 
 // InitCSTLocation 初始化默认时区为中国东八区(GMT+8)
+// 调用方必须保证没有任何并发时间读取; 此函数不负责暂停后台任务.
 // 返回值:
 // name: "Asia/Shanghai" 或本地时区名称
 // loc: 优先尝试解析中国时区, 失败(Windows)后使用本地时区(time.Local)

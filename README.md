@@ -16,6 +16,12 @@
 
 细节见本地 `docs/features/merge-utils-go126-plan.md`. `docs/` 仅作本地技术留底, 不纳入 pkg 提交.
 
+## 时间与时区
+
+应用在 common/master 受控启动初始化成功后默认固定 UTC+8, 不依赖宿主时区或 `TZ`; 可提前设置 `config.DefaultTimeLocation` 选择其他时区. 仅导入 pkg 不会改写全局时区, 不支持运行期切换.
+
+完整用法、纽约极简示例及启动安全边界见 [时区配置与美国时区示例](examples/timezone/README.md).
+
 ## 部署
 
 ```shell

@@ -232,7 +232,11 @@ func TestRuntimeStatsContracts(t *testing.T) {
 	config.InitTester()
 	t.Cleanup(config.StopTester)
 
+	startBefore := common.StartTime
 	system := SYSStats()
+	if common.StartTime != startBefore {
+		t.Fatal("system stats changed the original startup time")
+	}
 	app := requireMap(t, system, "App")
 	assertMapValues(t, app, map[string]any{
 		"AppName": config.AppName,
@@ -240,6 +244,10 @@ func TestRuntimeStatsContracts(t *testing.T) {
 		"JSON":    json.Name,
 	})
 	timeStats := requireMap(t, system, "Time")
+	start, ok := timeStats["StartTime"].(time.Time)
+	if !ok || !start.Equal(common.StartTime) || start.Location() != config.DefaultTimeLocation {
+		t.Fatalf("system startup time lost its instant or application location: %#v", timeStats["StartTime"])
+	}
 	if _, ok := timeStats["UptimeSecond"].(int); !ok {
 		t.Fatalf("system uptime seconds = %#v", timeStats["UptimeSecond"])
 	}

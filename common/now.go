@@ -9,7 +9,8 @@ import (
 )
 
 var (
-	// StartTime 系统启动时间
+	// StartTime 保留程序启动时的原始采样和单调时钟, 供 time.Since 等耗时计算使用.
+	// 对外展示时转换副本, 不要将 In 的结果写回, 否则会丢失单调时钟.
 	StartTime = time.Now()
 
 	// ClockOffsetLimit 允许的时间偏差, 1 秒内偏差不更新 clockOffset

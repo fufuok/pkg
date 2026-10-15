@@ -101,10 +101,11 @@ func SYSStats() map[string]any {
 		"Time": map[string]any{
 			"Uptime":       uptime.String(),
 			"UptimeSecond": int(uptime.Seconds()),
-			"StartTime":    common.StartTime,
-			"ClockOffset":  common.GetClockOffset().String(),
-			"GlobalTime":   now.Format(time.RFC3339Nano),
-			"LocalTime":    time.Now(),
+			// 仅转换展示副本, 保留 common.StartTime 的单调时钟供耗时计算使用.
+			"StartTime":   common.StartTime.In(config.DefaultTimeLocation),
+			"ClockOffset": common.GetClockOffset().String(),
+			"GlobalTime":  now.Format(time.RFC3339Nano),
+			"LocalTime":   time.Now(),
 		},
 	}
 

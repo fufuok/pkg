@@ -20,8 +20,12 @@ var (
 
 type M struct{}
 
-// Start 程序启动时初始化
+// Start 先应用启动时区, 再初始化日志和后台任务; 手工加载配置的安全前提见 InitTimeLocation.
 func (m *M) Start() error {
+	if err := InitTimeLocation(); err != nil {
+		return fmt.Errorf("unable to initialize application time location: %w", err)
+	}
+
 	// 初始化日志环境
 	initLogger()
 
