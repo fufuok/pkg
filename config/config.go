@@ -91,16 +91,23 @@ type WebConf struct {
 	ServerHttpsAddr string `json:"server_https_addr"`
 	// Groups 是同一进程内多组 Web 服务监听配置. 每组会复用 WebConf 中的通用默认项,
 	// 但可拥有独立 name/server_addr/server_https_addr 和路由注册函数.
-	Groups         map[string]WebConf `json:"groups"`
-	StatsPath      string             `json:"stats_path"`
-	TrustedProxies []string           `json:"trusted_proxies"`
+	Groups    map[string]WebConf `json:"groups"`
+	StatsPath string             `json:"stats_path"`
+	// TrustedProxies 是 Gin/Fiber 共用的可信代理 IP/CIDR 列表, 用于来源信任和代理链解析.
+	TrustedProxies []string `json:"trusted_proxies"`
 
 	// Gin
+	// TrustedPlatform 指定优先读取的客户端 IP 头, 该头应由受控入口保证可靠.
 	TrustedPlatform string `json:"trusted_platform"`
 
 	// Fiber
-	EnableTrustedProxyCheck bool   `json:"enable_trusted_proxy_check"`
-	ProxyHeader             string `json:"proxy_header"`
+	// EnableTrustedProxyCheck 按 TrustedProxies 检查连接来源, 决定是否采用 IP/Host/协议转发头.
+	EnableTrustedProxyCheck bool `json:"enable_trusted_proxy_check"`
+	// ProxyHeader 指定客户端 IP 转发头, 仅在连接来源可信时读取, 如 X-Forwarded-For.
+	ProxyHeader string `json:"proxy_header"`
+	// EnableIPValidation 验证代理 IP 并从可信代理链中选取客户端, 默认关闭以保持兼容.
+	// 使用 X-Forwarded-For 参与单 IP 名单匹配时应开启, 同时配置可信代理检查和地址范围.
+	EnableIPValidation bool `json:"enable_ip_validation"`
 
 	// Fiber 默认不减少内存占用, 这里改为默认减少内存占用(可能增加 CPU 占用)
 	DisableReduceMemoryUsage bool `json:"disable_reduce_memory_usage"`
@@ -108,7 +115,9 @@ type WebConf struct {
 	// Fiber 短连接模式
 	DisableKeepalive bool `json:"disable_keepalive"`
 
-	// Fiber 请求体大小限制, 0 为默认: 8 * 1024 * 1024, -1 表示不限制
+	// Fiber 请求体字节上限, 包含上传和 multipart; 主配置非正数回退 WebBodyLimit(默认 8MiB).
+	// 分组零值继承主配置上限, 负值回退默认; 配置加载或显式归一化后传入引擎.
+	// 不限制下载响应; Gin 封装不使用此项, 不支持 -1 无限约定.
 	BodyLimit int `json:"body_limit"`
 
 	// 黑白名单中间件缓存容量配置, 键生命周期秒数
@@ -170,6 +179,9 @@ func NormalizeWebConf(base, override WebConf) WebConf {
 	if override.ProxyHeader != "" {
 		cfg.ProxyHeader = override.ProxyHeader
 	}
+	if override.EnableIPValidation {
+		cfg.EnableIPValidation = true
+	}
 	if override.DisableReduceMemoryUsage {
 		cfg.DisableReduceMemoryUsage = true
 	}
@@ -211,6 +223,10 @@ func NormalizeWebConf(base, override WebConf) WebConf {
 	}
 	if override.KeyFile != "" {
 		cfg.KeyFile = override.KeyFile
+	}
+	// 统一显式覆盖和分组继承的请求体上限, 避免无效值被 Fiber 回退为不同的 4MiB.
+	if cfg.BodyLimit <= 0 {
+		cfg.BodyLimit = WebBodyLimit
 	}
 	return cfg
 }
@@ -444,8 +460,8 @@ func parseWebConfig(cfg *MainConf) {
 		cfg.WebConf.ServerAddr = WebServerAddr
 	}
 
-	// HTTP 请求体限制, -1 表示无限
-	if cfg.WebConf.BodyLimit == 0 {
+	// Fiber 只接受明确正数上限, 非正数统一回退 pkg 默认值.
+	if cfg.WebConf.BodyLimit <= 0 {
 		cfg.WebConf.BodyLimit = WebBodyLimit
 	}
 

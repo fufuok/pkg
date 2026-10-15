@@ -16,14 +16,15 @@ import (
 type LogCondition func(c fiber.Ctx, elapsed time.Duration) bool
 
 func DefaultLogCondition(c fiber.Ctx, elapsed time.Duration) bool {
-	return elapsed > config.WebLogSlowResponse || c.Response().StatusCode() >= config.WebLogMinStatusCode
+	return elapsed > config.WebLogSlowResponse || c.StatusCode() >= config.WebLogMinStatusCode
 }
 
 func AllLogCondition(fiber.Ctx, time.Duration) bool {
 	return true
 }
 
-// WebLogger Web 日志
+// WebLogger 按中间件入口计时并记录请求日志, 保留原错误供上游处理.
+// 真实超时后业务可能仍使用 Ctx, 此时不记录日志, 不读取请求字段或调用自定义条件.
 func WebLogger(cond LogCondition, withBody ...bool) fiber.Handler {
 	if cond == nil {
 		cond = DefaultLogCondition
@@ -32,9 +33,14 @@ func WebLogger(cond LogCondition, withBody ...bool) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		start := time.Now()
 
-		// Handle request, store err for logging
 		chainErr := c.Next()
 		elapsed := time.Since(start)
+
+		// 上游已捕获独立超时响应, worker 仍可能写 Locals、正文或请求头.
+		// 只向外层中间件返回原错误; Fiber 此时也会跳过应用 ErrorHandler, 日志策略由调用方决定.
+		if c.RequestCtx().LastTimeoutErrorResponse() != nil {
+			return chainErr
+		}
 
 		// 将下游错误交还给 Fiber 的 ErrorHandler, 保留调用方自定义的 404/405/业务错误语义.
 		if chainErr != nil {
@@ -55,7 +61,7 @@ func WebLogger(cond LogCondition, withBody ...bool) fiber.Handler {
 		if cond(c, elapsed) {
 			log := sampler.Warn().
 				Str("client_ip", tproxy.GetClientIP(c)).Str("elapsed", elapsed.String()).
-				Str("method", c.Method()).Int("http_code", c.Response().StatusCode())
+				Str("method", c.Method()).Int("http_code", c.StatusCode())
 			if withbody {
 				log.Bytes("body", c.Body())
 			}

@@ -36,7 +36,7 @@ func Test_TimeoutUseWithCustomError(t *testing.T) {
 	testTimeout := func(traget string) {
 		resp, err := app.Test(httptest.NewRequest("GET", traget, nil))
 		assert.Equal(t, nil, err, "app.Test(req)")
-		assert.Equal(t, fiber.StatusRequestTimeout, resp.StatusCode, "Status code")
+		assert.Equal(t, fiber.StatusServiceUnavailable, resp.StatusCode, "Status code")
 		_ = resp.Body.Close()
 	}
 	testSucces := func(traget string) {
@@ -57,11 +57,28 @@ func Test_TimeoutUseWithCustomError(t *testing.T) {
 // 该测试在 fiber v3 timeout 中间件 + WithTimeout 包装下存在已知 race，
 // 仅在非 race 模式下执行，避免 CI/Windows/WSL2 环境下误报。
 func Test_WithTimeoutSkipTimeoutStatus(t *testing.T) {
+	// 截止后先保持业务在途, 避免返回 nil 与截止信号同时就绪时被上游按成功处理.
+	// 清理统一放行并等待业务退出, 断言失败也不会留下阻塞的 Handler.
+	release := make(chan struct{})
+	done := make(chan struct{}, 3)
+	timeoutRequests := 0
+	t.Cleanup(func() {
+		close(release)
+		for range timeoutRequests {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("timed-out handler did not exit")
+			}
+		}
+	})
 	app := fiber.New()
 	app.Use(WithTimeout(200*time.Millisecond, ErrFooTimeOut))
 	h := func(c fiber.Ctx) error {
 		sleepTime, _ := time.ParseDuration(c.Params("sleepTime") + "ms")
 		if err := sleepWithContext(c.Context(), sleepTime, context.DeadlineExceeded); err != nil {
+			<-release
+			defer func() { done <- struct{}{} }()
 			return nil
 		}
 		return c.SendString("OK")
@@ -73,12 +90,13 @@ func Test_WithTimeoutSkipTimeoutStatus(t *testing.T) {
 	app.Get("/test/:sleepTime", WithTimeout(100*time.Millisecond, ErrFooTimeOut), h)
 	app.Get("/:sleepTime", h)
 	testTimeout := func(traget string) {
+		timeoutRequests++
 		resp, err := app.Test(httptest.NewRequest("GET", traget, nil))
 		assert.Equal(t, nil, err, "app.Test(req)")
-		assert.Equal(t, fiber.StatusRequestTimeout, resp.StatusCode, "Status code")
+		assert.Equal(t, fiber.StatusServiceUnavailable, resp.StatusCode, "Status code")
 		body, err := io.ReadAll(resp.Body)
 		assert.Equal(t, nil, err)
-		assert.Equal(t, fiber.ErrRequestTimeout.Message, string(body))
+		assert.Equal(t, fiber.ErrServiceUnavailable.Message, string(body))
 		_ = resp.Body.Close()
 	}
 	testSucces := func(traget string) {

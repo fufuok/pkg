@@ -1,13 +1,62 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/fufuok/pkg/assert"
+	"github.com/fufuok/pkg/json"
 	"github.com/fufuok/pkg/xcrypto"
 )
+
+// TestWebConfIPValidation 验证可选开关的 JSON 入口、显式开启与分组继承语义.
+// 布尔 false 沿用现有零值继承规则, 不用于关闭主配置已经开启的选项.
+func TestWebConfIPValidation(t *testing.T) {
+	var cfg WebConf
+	if err := json.Unmarshal([]byte(`{"enable_ip_validation":true}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !NormalizeWebConf(WebConf{}, cfg).EnableIPValidation {
+		t.Fatal("explicit IP validation was not preserved")
+	}
+	if NormalizeWebConf(WebConf{}, WebConf{}).EnableIPValidation {
+		t.Fatal("IP validation must remain disabled by default")
+	}
+	if !NormalizeWebGroupConf(cfg, "api", WebConf{}).EnableIPValidation {
+		t.Fatal("group must inherit enabled IP validation")
+	}
+}
+
+// TestWebConfBodyLimit 验证加载、覆盖和分组入口统一使用正数或 pkg 默认上限.
+// 负数不再保留不存在的无限语义; 分组零值仍可继承主配置的明确上限.
+func TestWebConfBodyLimit(t *testing.T) {
+	prepareConfigBehaviorTest(t)
+	for _, limit := range []int{-2, -1, 0, 1024} {
+		t.Run(fmt.Sprint(limit), func(t *testing.T) {
+			want := limit
+			if want <= 0 {
+				want = WebBodyLimit
+			}
+			cfg := &MainConf{WebConf: WebConf{BodyLimit: limit}}
+			parseWebConfig(cfg)
+			if cfg.WebConf.BodyLimit != want {
+				t.Fatalf("loaded BodyLimit = %d, want %d", cfg.WebConf.BodyLimit, want)
+			}
+			if got := NormalizeWebConf(WebConf{}, WebConf{BodyLimit: limit}); got.BodyLimit != want {
+				t.Fatalf("normalized BodyLimit = %d, want %d", got.BodyLimit, want)
+			}
+			if got := NormalizeWebGroupConf(WebConf{}, "api", WebConf{BodyLimit: limit}); got.BodyLimit != want {
+				t.Fatalf("group BodyLimit = %d, want %d", got.BodyLimit, want)
+			}
+		})
+	}
+	base := WebConf{BodyLimit: 16 << 20}
+	if got := NormalizeWebGroupConf(base, "api", WebConf{}); got.BodyLimit != base.BodyLimit {
+		t.Fatal("group zero value must inherit the base limit")
+	}
+}
 
 // TestResolveGroupCertFile 覆盖分组独立 TLS 证书解析的三种边界:
 // 未指定证书环境变量(继承主配置), 指定且文件有效(使用独立证书), 指定但文件无效(清空, 不回退主证书).

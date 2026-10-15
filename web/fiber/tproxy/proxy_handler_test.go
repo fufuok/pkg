@@ -340,3 +340,62 @@ func TestProxyHandlerMultipleUpstreams(t *testing.T) {
 		t.Fatalf("upstreams seen = %v, want both configured servers", seen)
 	}
 }
+
+// TestProxyHandlerDefaultPathPolicy 锁定新版默认路径检查, 不恢复旧版的歧义路径放行.
+// 被拒路径不能访问上游; 允许路径使用路由规范化结果, 查询串保留原编码.
+func TestProxyHandlerDefaultPathPolicy(t *testing.T) {
+	received := make(chan string, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- r.RequestURI
+		_, _ = io.WriteString(w, r.RequestURI)
+	}))
+	defer upstream.Close()
+	app := fiber.New()
+	app.Use(ProxyHandler([]string{upstream.URL}, time.Second, ""))
+	for _, tt := range []struct {
+		target string
+		want   string
+	}{
+		{"/plain/path", "/plain/path"},
+		{"/a%20b", "/a%20b"},
+		{"/plain?x=a%2Fb&key=a%3Bb", "/plain?x=a%2Fb&key=a%3Bb"},
+		{"/a/../b", "/b"},
+		{"/a%2Fb", ""},
+		{"/a//b", ""},
+		{"/a%5Cb", ""},
+		{"/a%3Bb", ""},
+		{"/a%40b", ""},
+		{"/a%3Ab", ""},
+	} {
+		t.Run(tt.target, func(t *testing.T) {
+			resp, err := app.Test(httptest.NewRequest(http.MethodGet, tt.target, nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if tt.want == "" {
+				if resp.StatusCode != fiber.StatusBadRequest {
+					t.Fatalf("status = %d, want 400", resp.StatusCode)
+				}
+				select {
+				case uri := <-received:
+					t.Fatalf("rejected path reached upstream: %q", uri)
+				default:
+				}
+				return
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil || string(body) != tt.want || resp.StatusCode != fiber.StatusOK {
+				t.Fatalf("status/body/error = %d/%q/%v, want 200/%q/nil", resp.StatusCode, body, err, tt.want)
+			}
+			select {
+			case uri := <-received:
+				if uri != tt.want {
+					t.Fatalf("upstream URI = %q, want %q", uri, tt.want)
+				}
+			default:
+				t.Fatal("successful proxy request did not reach upstream")
+			}
+		})
+	}
+}

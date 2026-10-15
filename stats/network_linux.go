@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strconv"
@@ -42,9 +43,7 @@ func collectNetworkStats() map[string]any {
 			tcp = make(map[string]int64)
 			values["TCP"] = tcp
 		}
-		for name, count := range ext["TcpExt"] {
-			tcp[name] = count
-		}
+		maps.Copy(tcp, ext["TcpExt"])
 	} else {
 		addStatsError(values, "Errors", "tcp_ext")
 	}

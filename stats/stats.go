@@ -2,6 +2,7 @@ package stats
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"runtime"
 	"runtime/metrics"
@@ -63,9 +64,7 @@ func cloneStatsMap(src map[string]any) map[string]any {
 			dst[key] = cloneStatsMap(v)
 		case map[string]int64:
 			counters := make(map[string]int64, len(v))
-			for name, count := range v {
-				counters[name] = count
-			}
+			maps.Copy(counters, v)
 			dst[key] = counters
 		case []string:
 			dst[key] = append([]string(nil), v...)
@@ -115,9 +114,7 @@ func SYSStats() map[string]any {
 		"NumCpus":      runtime.NumCPU(),
 		"NodeInfo":     config.Config().NodeConf.NodeInfo,
 	}
-	for key, value := range systemCache.read(collectSystemStatsOf, "CollectedAt") {
-		host[key] = value
-	}
+	maps.Copy(host, systemCache.read(collectSystemStatsOf, "CollectedAt"))
 	stats["Host"] = host
 
 	return stats

@@ -27,7 +27,7 @@ func TestNewAppRecoversPanic(t *testing.T) {
 		return app
 	}
 
-	app := newApp(setup, config.WebConf{})
+	app := newApp(setup, config.WebConf{BodyLimit: config.WebBodyLimit})
 
 	// panic 路由应被恢复中间件捕获, 经 ErrorHandler 响应 500
 	resp, err := app.Test(httptest.NewRequest(http.MethodGet, "/panic", nil))

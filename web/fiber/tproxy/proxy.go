@@ -41,7 +41,8 @@ func (client *upstreamClient) DoDeadline(req *fasthttp.Request, resp *fasthttp.R
 //
 // 支持 IPv4/IPv6 和私网上游, 不使用 Fiber 全局目标限制策略; backendServers 不得
 // 来自客户端请求. 裸 host:port 仍按 HTTP 处理, 无显式端口时使用协议默认端口.
-// backendHost 为空时保留原请求 Host, 非空时使用构造期快照; 请求路径和查询串透传.
+// backendHost 为空时保留原请求 Host, 非空时使用构造期快照; 查询串保留原始编码.
+// 路径沿用 Fiber 的路由规范化与默认安全检查, 歧义斜杠及 Fiber 无法确认自定义 client 保留的编码会返回 400.
 // 空列表、无法解析的 URL、非 HTTP(S) 或缺主机在构造时 panic.
 // 拨号和传输错误清空残留响应后返回原错误, 由调用方决定状态码和回包格式.
 // HTTPS 保持证书校验, 不跟随上游重定向.
@@ -83,7 +84,7 @@ func ProxyHandler(backendServers []string, timeout time.Duration, backendHost st
 			scheme: upstream.Scheme,
 		})
 	}
-	// 自管固定目标拨号, 此策略只固定 Balancer 的 HTTP 头清理行为.
+	// 自管固定目标拨号, 沿用 Balancer 的默认路径检查和 HTTP 头清理策略.
 	policy := proxy.DefaultSecurityPolicy()
 	proxyHandler := proxy.Balancer(proxy.Config{
 		Client:         &fasthttp.LBClient{Clients: clients, Timeout: timeout},
@@ -139,7 +140,7 @@ func GetClientIP(c fiber.Ctx) string {
 		xtoken := c.Get(HeaderXProxyToken)
 		xtime := c.Get(HeaderXProxyTime)
 		if validProxyClientIP(xip, xtoken, xtime) {
-			c.Locals(HeaderXProxyClientIP, xip)
+			c.SetLocal(HeaderXProxyClientIP, xip)
 			return xip
 		}
 	}
@@ -148,7 +149,7 @@ func GetClientIP(c fiber.Ctx) string {
 	if clientIP == "" {
 		clientIP = "0.0.0.0"
 	}
-	c.Locals(HeaderXProxyClientIP, clientIP)
+	c.SetLocal(HeaderXProxyClientIP, clientIP)
 	return clientIP
 }
 

@@ -255,15 +255,20 @@ func TestStartRemotePipelinesRunsApplicationStages(t *testing.T) {
 	assert.Equal(t, []string{"first", "second"}, events)
 }
 
-// TestGetRemoteConfStopsAfterCancellation 验证远端循环最终观察 context 取消并停止调用.
+// TestGetRemoteConfStopsAfterCancellation 验证首个回调在途取消后, 远端循环退出且不再调用.
+// 回调等待取消信号再返回, 避免测试调度超过轮询间隔时将取消前的回调误判为取消后执行.
 func TestGetRemoteConfStopsAfterCancellation(t *testing.T) {
 	prepareMasterConfig(t)
-	called := make(chan struct{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	called := make(chan struct{})
+	var calls atomic.Int32
 	common.Funcs.Store("test-remote", func(any) error {
-		called <- struct{}{}
+		if calls.Add(1) == 1 {
+			close(called)
+		}
+		<-ctx.Done()
 		return nil
 	})
-	ctx, cancel := context.WithCancel(context.Background())
 	done := startRemoteConf(ctx, config.FilesConf{Method: "test-remote", Path: "local", RandomWait: 1, GetConfDuration: 2 * time.Millisecond})
 	t.Cleanup(func() { cancel(); <-done })
 
@@ -274,9 +279,12 @@ func TestGetRemoteConfStopsAfterCancellation(t *testing.T) {
 	}
 	cancel()
 	select {
-	case <-called:
-		t.Fatal("remote config callback continued after cancellation window")
-	case <-time.After(20 * time.Millisecond):
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("remote config fetcher did not stop after cancellation")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("remote config callback count = %d, want 1 after cancellation", got)
 	}
 }
 
