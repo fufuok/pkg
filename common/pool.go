@@ -2,6 +2,7 @@ package common
 
 import (
 	"context"
+	"runtime"
 
 	"github.com/fufuok/ants"
 	"github.com/fufuok/chanx"
@@ -15,7 +16,7 @@ var MaxGoPool = 200_000
 // newDefaultPool 构造生产和测试共用的默认协程池实现.
 // 调用方负责决定安装方式和资源所有权, 本函数不修改 ants 全局默认池.
 func newDefaultPool() (ants.Pooler, error) {
-	size := config.DefaultGOMAXPROCS
+	size := poolShards(config.DefaultGOMAXPROCS)
 	return ants.NewMultiPool(
 		size,
 		MaxGoPool/size,
@@ -26,6 +27,16 @@ func newDefaultPool() (ants.Pooler, error) {
 			LogSampled().Error().Msgf("Recovery worker: %s", r)
 		}),
 	)
+}
+
+// poolShards 返回默认协程池的分片数.
+// n 为应用配置的 DefaultGOMAXPROCS, 大于 0 时直接使用; 小于等于 0 表示不覆盖,
+// 回退到当前运行时 GOMAXPROCS (至少为 1), 保证 MaxGoPool/size 不会除零.
+func poolShards(n int) int {
+	if n > 0 {
+		return n
+	}
+	return runtime.GOMAXPROCS(0)
 }
 
 // initPool 使用生产语义安装默认池, ants 会释放被替换的旧池.

@@ -52,13 +52,26 @@ func Run() {
 		xdaemon.NewDaemon(config.LogDaemon).Run()
 	}
 
-	// 手动设置 > 1, 避免 CPU 隔离时协程池调度可能的阻塞
-	runtime.GOMAXPROCS(config.DefaultGOMAXPROCS)
+	// 只在应用显式设置了不同的值时才覆盖运行时, 默认保留随 cgroup 限额的自动更新
+	applyGOMAXPROCS(config.DefaultGOMAXPROCS)
 
 	Start()
 	defer Stop()
 
 	utils.WaitSignal()
+}
+
+// applyGOMAXPROCS 在 n 大于 0 且不同于当前值时设置运行时 GOMAXPROCS, 返回是否执行了设置.
+//
+// Go 1.25 起任何 runtime.GOMAXPROCS(n>0) 调用, 即使值不变, 都会关闭运行时随 cgroup CPU 限额
+// 变化的自动更新, 因此与当前值相同时必须跳过. n 小于等于 0 表示不覆盖. 一旦执行了设置,
+// 本进程不再随限额变化自动调整, 这是应用显式指定 DefaultGOMAXPROCS 的代价.
+func applyGOMAXPROCS(n int) bool {
+	if n <= 0 || n == runtime.GOMAXPROCS(0) {
+		return false
+	}
+	runtime.GOMAXPROCS(n)
+	return true
 }
 
 // Start 在任何 Pipeline 创建后台任务前固定时区, 也支持不经 Main/Run 的直接启动.
