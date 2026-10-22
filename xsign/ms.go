@@ -2,6 +2,9 @@ package xsign
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"sort"
@@ -67,6 +70,39 @@ func MSVerifySign(params any, token string) (raw string, match bool) {
 		return
 	}
 	match = strings.EqualFold(signValue, xhash.MD5Hex(raw+token))
+	return
+}
+
+// MSGenHMACSign 算法: 参数拼串规则同 MSGenSign, 摘要改为 HMAC-SHA256.
+// hex(HMAC-SHA256(secret, k1=v1&k2=v2&)), 返回 64 位小写十六进制.
+// 与 MSGenSign 的 md5(raw+token) 是两种签名, 输出不同, 不能互相校验.
+// params 的取值, 排序, 空值跳过和 sign 字段抽出规则见 MSGetSignRaw.
+func MSGenHMACSign(params any, secret string) (raw, sign string) {
+	raw, _ = MSGetSignRaw(params)
+	sign = MSGenHMACSignWithRaw(raw, secret)
+	return
+}
+
+// MSGenHMACSignWithRaw 对已拼接的 raw 计算 HMAC-SHA256, 密钥为 secret.
+// 返回 64 位小写十六进制; raw 原样参与计算, 调用方自行保证拼接规则与对端一致.
+func MSGenHMACSignWithRaw(raw, secret string) string {
+	return xhash.HmacSHA256Hex(raw, secret)
+}
+
+// MSVerifyHMACSign 用参数中的 `sign` 字段校验由此参数生成的 HMAC-SHA256 签名.
+// sign 按十六进制解码后用 hmac.Equal 常量时间比较, 因此大小写不敏感, 与 MSVerifySign 一致.
+// 缺少 sign, 十六进制解码失败或解码后不是 32 字节时返回不匹配, 不会 panic.
+// 返回的 raw 是参与计算的拼串, 便于调用方排查, 不应写入日志之外的对外响应.
+func MSVerifyHMACSign(params any, secret string) (raw string, match bool) {
+	raw, signValue := MSGetSignRaw(params)
+	if signValue == "" {
+		return
+	}
+	got, err := hex.DecodeString(signValue)
+	if err != nil || len(got) != sha256.Size {
+		return
+	}
+	match = hmac.Equal(got, xhash.HmacSHA256(utils.S2B(raw), utils.S2B(secret)))
 	return
 }
 

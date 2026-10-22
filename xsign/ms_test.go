@@ -1,6 +1,9 @@
 package xsign
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/url"
 	"strings"
 	"testing"
@@ -117,5 +120,94 @@ func TestMSGetSignRawStructUsesJSONNumber(t *testing.T) {
 	}
 	if sign != "ignore" {
 		t.Fatalf("sign = %q", sign)
+	}
+}
+
+// TestMSGenHMACSignVectors 用固定向量验证 HMAC-SHA256 签名, 拼串规则与 MSGenSign 相同.
+//
+// 向量与 crypto/hmac 和 Python hmac 独立计算结果一致; RFC 4231 用例 2 确认密钥与消息未颠倒.
+func TestMSGenHMACSignVectors(t *testing.T) {
+	if got := MSGenHMACSignWithRaw("what do ya want for nothing?", "Jefe"); got !=
+		"5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843" {
+		t.Fatalf("RFC 4231 case 2 = %s", got)
+	}
+	raw, sign := MSGenHMACSign(map[string]any{
+		"t": 1661834285, "a": "test", "z": true, "f": 3.14, "s": "", "nil": nil,
+	}, "test.KEY-777")
+	if raw != "a=test&f=3.14&t=1661834285&z=true&" {
+		t.Fatalf("raw = %q", raw)
+	}
+	if sign != "a812e80f5b6666da29fdc83f04df3415081a78218d7758ddc65ca19c86b77e2c" {
+		t.Fatalf("sign = %s", sign)
+	}
+	mac := hmac.New(sha256.New, []byte("test.KEY-777"))
+	mac.Write([]byte(raw))
+	if want := hex.EncodeToString(mac.Sum(nil)); sign != want {
+		t.Fatalf("sign = %s, crypto/hmac = %s", sign, want)
+	}
+	// 请求签名场景: 方法, Key, 正文摘要与时间戳.
+	_, sign = MSGenHMACSign(map[string]string{
+		"body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		"key":         "game/cfg/main",
+		"method":      "PUT",
+		"ts":          "1792571400",
+	}, "0123456789abcdef")
+	if sign != "9a659762139c0924427cab51baebfc7b43498f5ce825023b759362407673a707" {
+		t.Fatalf("request sign = %s", sign)
+	}
+	// 同一参数的 MD5 签名不受影响, 两种签名不能互换.
+	if _, md5Sign := MSGenSign(map[string]string{"a": "1"}, "k"); len(md5Sign) != 32 {
+		t.Fatalf("MD5 sign = %s", md5Sign)
+	}
+}
+
+// TestMSVerifyHMACSign 覆盖往返校验, 大小写, 篡改以及各类非法 sign.
+func TestMSVerifyHMACSign(t *testing.T) {
+	const secret = "0123456789abcdef"
+	params := map[string]string{"key": "game/cfg/main", "method": "PUT", "ts": "1792571400"}
+	wantRaw, sign := MSGenHMACSign(params, secret)
+
+	withSign := func(m map[string]string, s string) map[string]string {
+		out := make(map[string]string, len(m)+1)
+		for k, v := range m {
+			out[k] = v
+		}
+		out[SignFieldName] = s
+		return out
+	}
+
+	raw, match := MSVerifyHMACSign(withSign(params, sign), secret)
+	if !match || raw != wantRaw {
+		t.Fatalf("round trip: raw %q match %v", raw, match)
+	}
+	if _, match := MSVerifyHMACSign(withSign(params, strings.ToUpper(sign)), secret); !match {
+		t.Fatal("uppercase sign rejected")
+	}
+	if _, match := MSVerifyHMACSign(withSign(params, sign), secret+"x"); match {
+		t.Fatal("wrong secret accepted")
+	}
+	tampered := withSign(params, sign)
+	tampered["method"] = "DELETE"
+	if _, match := MSVerifyHMACSign(tampered, secret); match {
+		t.Fatal("tampered params accepted")
+	}
+	for name, bad := range map[string]string{
+		"non hex":      strings.Repeat("z", 64),
+		"odd length":   sign[:63],
+		"short":        sign[:32],
+		"long":         sign + "00",
+		"md5 sign":     MSGenSignWithRaw(wantRaw, secret),
+		"with spaces":  " " + sign,
+		"not the sign": strings.Repeat("0", 64),
+	} {
+		if _, match := MSVerifyHMACSign(withSign(params, bad), secret); match {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+	if raw, match := MSVerifyHMACSign(params, secret); match || raw != wantRaw {
+		t.Fatalf("missing sign: raw %q match %v", raw, match)
+	}
+	if _, match := MSVerifyHMACSign(nil, secret); match {
+		t.Fatal("nil params accepted")
 	}
 }
