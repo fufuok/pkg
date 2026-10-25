@@ -2,6 +2,8 @@
 
 当前适配 Fiber v3.6.1. `engine.Run` 和 `RunGroups` 先装配恢复/压缩中间件, 再执行应用 setup; `SetupExceptionRouter` 应最后注册.
 
+公开 GET 与只读 POST 的响应缓存见 [HTTP 缓存说明](../README.md). 缓存为路由显式注册, 不由 engine 全局启用.
+
 ## 启动信息与临时消息
 
 HTTP/HTTPS 监听均设置 `DisableStartupMessage: true`, 不显示 Fiber 启动欢迎信息. pkg 的服务启动日志仍按日志配置输出.

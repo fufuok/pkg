@@ -43,6 +43,8 @@
 
 Fiber 的请求体上限、代理 IP 验证、超时日志及 HTTPS 行为见 [Fiber 封装说明](web/fiber/README.md).
 
+Gin/Fiber 的 GET 与只读 POST 响应缓存、选型依据和迁移方式见 [HTTP 缓存说明](web/README.md).
+
 原生 SQL 按需使用 [sqldb 事务与结果集助手](sqldb/README.md), 可运行 [SQLite 内存数据库示例](examples/sqldb/README.md).
 
 ## 敏感信息加密
