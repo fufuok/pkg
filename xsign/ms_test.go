@@ -1,6 +1,9 @@
 package xsign
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/url"
 	"strings"
 	"testing"
@@ -117,5 +120,112 @@ func TestMSGetSignRawStructUsesJSONNumber(t *testing.T) {
 	}
 	if sign != "ignore" {
 		t.Fatalf("sign = %q", sign)
+	}
+}
+
+// TestMSGenHMACSignVectors 用固定向量验证 HMAC-SHA256 和规范表单编码.
+//
+// 向量与 crypto/hmac 独立计算结果一致; RFC 4231 用例 2 确认密钥与消息未颠倒.
+func TestMSGenHMACSignVectors(t *testing.T) {
+	if got := MSGenHMACSignWithRaw("what do ya want for nothing?", "Jefe"); got !=
+		"5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843" {
+		t.Fatalf("RFC 4231 case 2 = %s", got)
+	}
+	raw, sign := MSGenHMACSign(url.Values{
+		"t": {"1661834285"}, "a": {"test"}, "z": {"true"}, "f": {"3.14"}, "s": {""},
+	}, "test.KEY-777")
+	if raw != "a=test&f=3.14&s=&t=1661834285&z=true" {
+		t.Fatalf("raw = %q", raw)
+	}
+	mac := hmac.New(sha256.New, []byte("test.KEY-777"))
+	mac.Write([]byte(raw))
+	if want := hex.EncodeToString(mac.Sum(nil)); sign != want {
+		t.Fatalf("sign = %s, crypto/hmac = %s", sign, want)
+	}
+	// 请求签名场景: 方法, Key, 正文摘要与时间戳.
+	raw, sign = MSGenHMACSign(url.Values{
+		"body_sha256": {"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+		"key":         {"game/cfg/main"},
+		"method":      {"PUT"},
+		"ts":          {"1792571400"},
+	}, "0123456789abcdef")
+	if raw != "body_sha256=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855&key=game%2Fcfg%2Fmain&method=PUT&ts=1792571400" {
+		t.Fatalf("request raw = %q", raw)
+	}
+	if sign != MSGenHMACSignWithRaw(raw, "0123456789abcdef") {
+		t.Fatalf("request sign = %s did not match raw signature", sign)
+	}
+	// 同一参数的 MD5 签名不受影响, 两种签名不能互换.
+	if _, md5Sign := MSGenSign(map[string]string{"a": "1"}, "k"); len(md5Sign) != 32 {
+		t.Fatalf("MD5 sign = %s", md5Sign)
+	}
+}
+
+// TestMSVerifyHMACSign 覆盖规范编码往返校验, 大小写, 篡改及非法 sign.
+func TestMSVerifyHMACSign(t *testing.T) {
+	const secret = "0123456789abcdef"
+	params := url.Values{"key": {"game/cfg/main"}, "method": {"PUT"}, "ts": {"1792571400"}}
+	wantRaw, sign := MSGenHMACSign(params, secret)
+
+	raw, match := MSVerifyHMACSign(params, sign, secret)
+	if !match || raw != wantRaw {
+		t.Fatalf("round trip: raw %q match %v", raw, match)
+	}
+	if _, match := MSVerifyHMACSign(params, strings.ToUpper(sign), secret); !match {
+		t.Fatal("uppercase sign rejected")
+	}
+	if _, match := MSVerifyHMACSign(params, sign, secret+"x"); match {
+		t.Fatal("wrong secret accepted")
+	}
+	tampered := url.Values{"key": {"game/cfg/main"}, "method": {"PUT"}, "ts": {"1792571400"}}
+	tampered.Set("method", "DELETE")
+	if _, match := MSVerifyHMACSign(tampered, sign, secret); match {
+		t.Fatal("tampered params accepted")
+	}
+	for name, bad := range map[string]string{
+		"missing":     "",
+		"non hex":     strings.Repeat("z", 64),
+		"odd length":  sign[:63],
+		"short":       sign[:32],
+		"long":        sign + "00",
+		"md5 sign":    MSGenSignWithRaw(wantRaw, secret),
+		"with spaces": " " + sign,
+		"wrong sign":  strings.Repeat("0", 64),
+	} {
+		if _, match := MSVerifyHMACSign(params, bad, secret); match {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+	if raw, _ := MSVerifyHMACSign(params, "invalid", secret); raw != "" {
+		t.Fatalf("invalid format returned raw %q, want empty", raw)
+	}
+}
+
+// TestMSHMACSignSeparatesFormValues 验证新 HMAC 规范化保留字段边界, 空值和多值,
+// 并禁止把一组参数的有效签名复用在结构不同的另一组参数上.
+func TestMSHMACSignSeparatesFormValues(t *testing.T) {
+	const secret = "review-only-secret"
+	cases := []struct {
+		name string
+		a, b url.Values
+	}{
+		{"value delimiter", url.Values{"a": {"x&b=y"}}, url.Values{"a": {"x"}, "b": {"y"}}},
+		{"key delimiter", url.Values{"a=b": {"c"}}, url.Values{"a": {"b=c"}}},
+		{"multiple values", url.Values{"a": {"x,y"}}, url.Values{"a": {"x", "y"}}},
+		{"missing versus empty", url.Values{}, url.Values{"a": {""}}},
+		{"literal percent", url.Values{"a": {"x&b=y"}}, url.Values{"a": {"x%26b%3Dy"}}},
+		{"sign is ordinary data", url.Values{"sign": {"one"}}, url.Values{"sign": {"two"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rawA, signA := MSGenHMACSign(tc.a, secret)
+			rawB, signB := MSGenHMACSign(tc.b, secret)
+			if rawA == rawB || signA == signB {
+				t.Fatalf("different parameters collided: %q and %q", rawA, rawB)
+			}
+			if _, match := MSVerifyHMACSign(tc.b, signA, secret); match {
+				t.Fatal("signature was accepted for different parameters")
+			}
+		})
 	}
 }

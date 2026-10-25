@@ -2,6 +2,9 @@ package xsign
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/url"
 	"sort"
@@ -68,6 +71,39 @@ func MSVerifySign(params any, token string) (raw string, match bool) {
 	}
 	match = strings.EqualFold(signValue, xhash.MD5Hex(raw+token))
 	return
+}
+
+// MSGenHMACSign 对字符串字段用 url.Values.Encode 生成无歧义待签消息并计算 HMAC-SHA256.
+// 字段名排序, 同名值保持原顺序, 空字符串参与签名; 无值切片遵从 Encode 语义被忽略.
+// params 的所有字段均参与编码, 签名须在字段集合之外传输; 密钥非空和业务字段约束由调用方保证.
+// 此编码与旧 MSGenSign 拼串协议不同, 两端必须共同采用新规则, 调用期间不得并发修改 params.
+func MSGenHMACSign(params url.Values, secret string) (raw, sign string) {
+	raw = params.Encode()
+	return raw, MSGenHMACSignWithRaw(raw, secret)
+}
+
+// MSGenHMACSignWithRaw 对调用方给出的原始消息计算 HMAC-SHA256, 密钥为 secret.
+// 返回 64 位小写十六进制; 此函数不规范化字段, 调用方必须保证消息与业务输入一一对应.
+// 调用方还须校验密钥非空; 旧 MSGetSignRaw 仅适用于已约束字段, 不应直接用于任意请求参数或复杂对象.
+func MSGenHMACSignWithRaw(raw, secret string) string {
+	return xhash.HmacSHA256Hex(raw, secret)
+}
+
+// MSVerifyHMACSign 校验同一 url.Values.Encode 规则的签名, 不接受旧 MS 拼串签名.
+// sign 独立传入, 不从 params 抽取或删除字段; 非法十六进制或不匹配都返回 false.
+// 格式非法时 raw 为空; 其他情况返回参与校验的编码, 不应直接回显到外部响应.
+// 字段及密钥约束与 MSGenHMACSign 相同, 比较使用 hmac.Equal.
+func MSVerifyHMACSign(params url.Values, sign, secret string) (raw string, match bool) {
+	if len(sign) != sha256.Size*2 {
+		return "", false
+	}
+	// 摘要长度固定, 在栈上解码以避免验签热路径为十六进制结果分配切片.
+	var got [sha256.Size]byte
+	if _, err := hex.Decode(got[:], utils.S2B(sign)); err != nil {
+		return "", false
+	}
+	raw = params.Encode()
+	return raw, hmac.Equal(got[:], xhash.HmacSHA256(utils.S2B(raw), utils.S2B(secret)))
 }
 
 func buildMapString(m map[string]string) (raw, sign string) {
