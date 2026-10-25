@@ -7,6 +7,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,7 +22,8 @@ type CacheConfig = httpcache.Config
 
 // CacheByRequestURI 缓存无请求体的公开 GET, 完整保留查询参数的原始顺序和编码.
 // TTL 非正数使用 10 分钟. 认证, 授权和每请求头中间件必须位于缓存之前;
-// gzip 等改写 ResponseWriter 的中间件应位于缓存之后, 使缓存记录实际发送的字节.
+// gzip 等改写 ResponseWriter 的中间件应位于缓存之后, 使缓存记录实际发送的字节;
+// 若注册在缓存外层, 已设置 Content-Encoding 的请求会全部绕过缓存.
 // 命中会终止下游链; HEAD, 私有请求, 流式响应和非 200 响应直接透传.
 func CacheByRequestURI(ttl time.Duration, configs ...CacheConfig) gin.HandlerFunc {
 	return newResponseCache(ttl, false, configs...)
@@ -35,6 +37,7 @@ func CacheByRawData(ttl time.Duration, configs ...CacheConfig) gin.HandlerFunc {
 }
 
 // newResponseCache 为每次构造创建独立有界缓存, 合并同键回源并只共享准入成功的响应.
+// 领头响应未准入时进入短暂的 hit-for-pass 窗口, 同键请求不再排队而是并发执行业务.
 func newResponseCache(ttl time.Duration, withBody bool, configs ...CacheConfig) gin.HandlerFunc {
 	if len(configs) > 1 {
 		panic("http cache accepts at most one config")
@@ -54,7 +57,9 @@ func newResponseCache(ttl time.Duration, withBody bool, configs ...CacheConfig) 
 		if withBody {
 			var ok bool
 			body, ok = readCacheRequestBody(c.Request, store.Config.MaxRequestBodyBytes)
-			if !ok {
+			// 未声明的请求 trailer 只在正文读到 EOF 时才由 net/http 合并进 Request.Trailer,
+			// 准入阶段看不到, 预读完成后必须复查; 带 trailer 的请求既不命中也不写入缓存.
+			if !ok || len(c.Request.Trailer) > 0 {
 				c.Next()
 				return
 			}
@@ -66,9 +71,10 @@ func newResponseCache(ttl time.Duration, withBody bool, configs ...CacheConfig) 
 		}
 		release := store.Acquire(key)
 		defer release()
-		// 等待期间可能已完成回源, 取消的请求不参与写入或回放.
+		// 等待期间可能已完成回源, 取消的请求不参与写入或回放. 明确返回 503 而不是仅 Abort,
+		// 否则 Gin 会在处理链结束时补写空 200, 让外层日志和统计误判为成功.
 		if c.Request.Context().Err() != nil {
-			c.Abort()
+			c.AbortWithStatus(http.StatusServiceUnavailable)
 			return
 		}
 		if entry, ok := store.Get(key); ok {
@@ -123,8 +129,9 @@ func ginCacheEligible(c *gin.Context, req httpcache.Request, withBody bool, stor
 		c.Request.Context().Err() != nil || c.Writer.Header().Get("Content-Encoding") != "" {
 		return false
 	}
-	if !withBody && (c.Request.ContentLength != 0 || len(c.Request.TransferEncoding) != 0 ||
-		(c.Request.Body != nil && c.Request.Body != http.NoBody)) {
+	// 服务端请求的 Body 始终非 nil: HTTP/2 无正文 GET 也是非 NoBody 的流对象, 不能据此判断有无正文.
+	// 长度为 0 且没有传输编码才是确定的空正文; 声明长度 (>0) 或未知长度 (-1) 以及 chunked 均透传.
+	if !withBody && (c.Request.ContentLength != 0 || len(c.Request.TransferEncoding) != 0) {
 		return false
 	}
 	return store.CanServe(c.Writer.Header(), c.Writer.Status())
@@ -138,6 +145,20 @@ func replayGinCache(c *gin.Context, entry *httpcache.Entry) {
 			continue
 		}
 		c.Writer.Header()[name] = values
+	}
+	// 长度头只描述本次回放的正文: 外层可能预设了默认长度, 冷 miss 时由业务修正, 命中跳过业务后会残留.
+	// 删除非规范大小写的同名键并按缓存正文重写, 否则短长度截断正文, 长长度令客户端读到 EOF, 重复键被客户端拒绝.
+	// 外层未设置长度时 (常见情况) 不写入, 由 net/http 按原有方式计算, 命中路径不增加分配.
+	header := c.Writer.Header()
+	stale := false
+	for name := range header {
+		if len(name) == len("Content-Length") && strings.EqualFold(name, "Content-Length") {
+			delete(header, name)
+			stale = true
+		}
+	}
+	if stale {
+		header["Content-Length"] = []string{strconv.Itoa(len(entry.Body))}
 	}
 	c.Status(http.StatusOK)
 	if _, err := c.Writer.Write(entry.Body); err != nil {
@@ -224,11 +245,12 @@ type cacheResponseWriter struct {
 	disabled   bool
 }
 
-// storeResponse 只在下游完整成功返回后存储响应, 不把错误、取消或延后声明的 trailer 当完整结果.
+// storeResponse 只在下游完整成功返回后存储响应, 不把错误, 取消或延后声明的 trailer 当完整结果.
+// 业务读完正文后才合并出的请求 trailer 可能影响结果, 同样不保存.
 // 普通头采用首次提交快照, 避免业务提交后修改的无效头影响真实响应语义.
 func (w *cacheResponseWriter) storeResponse(c *gin.Context, key [32]byte) {
 	if w.disabled || len(c.Errors) > 0 || c.IsAborted() || c.Request.Context().Err() != nil ||
-		ginCacheHasTrailers(w.Header()) {
+		len(c.Request.Trailer) > 0 || ginCacheHasTrailers(w.Header()) {
 		return
 	}
 	header := w.header

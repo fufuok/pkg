@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// TestPrepareRejectsUnsafeResponses 验证公开缓存不会传播会话、认证、连接级或旧新鲜度状态.
+// TestPrepareRejectsUnsafeResponses 验证公开缓存不会传播会话, 认证, 连接级或旧新鲜度状态.
 func TestPrepareRejectsUnsafeResponses(t *testing.T) {
 	c := New(time.Minute, Config{})
 	for _, name := range []string{

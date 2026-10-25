@@ -8,7 +8,7 @@ import (
 )
 
 // SkipRequest 只允许可共享的普通完整响应参与缓存. 方法和正文上限由适配器检查,
-// 认证、会话、重新验证、范围、流式及显式缓存控制请求始终回源.
+// 认证, 会话, 重新验证, 范围, 流式及显式缓存控制请求始终回源.
 func SkipRequest(req Request) bool {
 	for _, name := range []string{
 		"Authorization", "Proxy-Authorization", "Cookie", "Upgrade", "Range",
@@ -75,7 +75,7 @@ func (c *Cache) responsePolicy(header http.Header, status int) (http.Header, tim
 }
 
 // dynamicResponseHeader 排除已知逐请求字段及框架根据实际正文生成的长度.
-// 其他端到端字段完整保留, 避免静默丢失安全策略、分页和应用自定义元数据.
+// 其他端到端字段完整保留, 避免静默丢失安全策略, 分页和应用自定义元数据.
 func dynamicResponseHeader(name string) bool {
 	if strings.HasPrefix(name, "Access-Control-") || name == "Ratelimit" ||
 		strings.HasPrefix(name, "Ratelimit-") || strings.HasPrefix(name, "X-Ratelimit-") ||
@@ -101,7 +101,7 @@ func IsRepresentationHeader(name string) bool {
 	return false
 }
 
-// unsafeResponse 拒绝会话、认证、局部正文和连接级状态, 不重放每次请求生成的头.
+// unsafeResponse 拒绝会话, 认证, 局部正文和连接级状态, 不重放每次请求生成的头.
 // 即使危险字段值为空也跳过, 保留处理器明确设置该字段的意图.
 func unsafeResponse(header http.Header) bool {
 	for name := range header {
@@ -150,7 +150,7 @@ func (c *Cache) supportsVary(value string) bool {
 }
 
 // responseTTL 仅接受有限的正 max-age/s-maxage, 两者同时存在时取更短值.
-// 私有、禁用缓存、重复或无效的新鲜度声明均拒绝, 不把零 TTL 传给永久存储语义.
+// 私有, 禁用缓存, 重复或无效的新鲜度声明均拒绝, 不把零 TTL 传给永久存储语义.
 // ReplayHeader 在命中时补充 Age, 避免原 Cache-Control 让下游缓存重新计时.
 func responseTTL(value string, ttl time.Duration) (time.Duration, bool) {
 	if value == "" {
@@ -178,7 +178,7 @@ func responseTTL(value string, ttl time.Duration) (time.Duration, bool) {
 	return ttl, true
 }
 
-// deltaSeconds 只接受完整的非零十进制秒数和成对引号, 不容忍负值、符号、缺失
+// deltaSeconds 只接受完整的非零十进制秒数和成对引号, 不容忍负值, 符号, 缺失
 // 引号或溢出. 32 位上限足以覆盖实用 TTL, 同时避免转为 Duration 后乘法溢出.
 func deltaSeconds(value string) (uint64, bool) {
 	value = strings.TrimSpace(value)

@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// TestConfigDefaultsAndIsolation 验证安全默认值、配置去重和构造后的切片隔离.
+// TestConfigDefaultsAndIsolation 验证安全默认值, 配置去重和构造后的切片隔离.
 func TestConfigDefaultsAndIsolation(t *testing.T) {
 	vary := []string{"x-tenant", " ACCEPT ", "content-type", "Content-Encoding"}
 	c := New(0, Config{Vary: vary})
@@ -163,7 +163,7 @@ func TestLRUAndFixedTTL(t *testing.T) {
 	})
 }
 
-// TestReplayHeaderAge 验证命中保留缓存指令、保守计算 Age, 且回放头与缓存互不别名.
+// TestReplayHeaderAge 验证命中保留缓存指令, 保守计算 Age, 且回放头与缓存互不别名.
 func TestReplayHeaderAge(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		c := New(time.Minute, Config{})
@@ -245,5 +245,143 @@ func TestAcquireDifferentKeys(t *testing.T) {
 	case <-finished:
 	case <-time.After(5 * time.Second):
 		t.Fatal("unrelated key was blocked")
+	}
+}
+
+// lockRefs 读取键锁登记的持有者和等待者总数, 用于确认等待者已经在键锁上排队.
+func lockRefs(c *Cache, key [32]byte) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if lock := c.locks[key]; lock != nil {
+		return lock.refs
+	}
+	return 0
+}
+
+// awaitCondition 轮询等待条件成立, 超时返回 false 由调用方报告.
+func awaitCondition(cond func() bool, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for !cond() {
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return true
+}
+
+// TestAcquireHitForPass 验证领头请求未准入时, 已排队的等待者全部并发放行, 直通窗口内的新请求
+// 不再登记键锁, 直通请求写入可准入响应后窗口结束; 领头请求已准入时等待者仍在锁后命中.
+func TestAcquireHitForPass(t *testing.T) {
+	for _, admitted := range []bool{true, false} {
+		t.Run(map[bool]string{true: "admitted", false: "rejected"}[admitted], func(t *testing.T) {
+			const waiters = 8
+			c := New(time.Minute, Config{})
+			key := [32]byte{1}
+			release := c.Acquire(key)
+			var active, peak, calls atomic.Int32
+			var workers sync.WaitGroup
+			for range waiters {
+				workers.Go(func() {
+					done := c.Acquire(key)
+					defer done()
+					if _, ok := c.Get(key); ok {
+						return
+					}
+					calls.Add(1)
+					n := active.Add(1)
+					defer active.Add(-1)
+					for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
+					}
+					// 以峰值作屏障: 先结束者会降低 active. 串行实现会在此超时, 并发放行时全部等待者同时到达.
+					awaitCondition(func() bool { return peak.Load() >= waiters }, time.Second)
+				})
+			}
+			if !awaitCondition(func() bool { return lockRefs(c, key) == waiters+1 }, 5*time.Second) {
+				t.Fatalf("waiters did not queue: refs = %d", lockRefs(c, key))
+			}
+			if admitted {
+				c.Set(key, &Entry{Body: []byte("ok"), TTL: time.Minute})
+			}
+			release()
+			workers.Wait()
+			if admitted {
+				if calls.Load() != 0 || c.passing(key) || len(c.locks) != 0 {
+					t.Fatalf("admitted leader: calls = %d, passing = %v, locks = %d", calls.Load(), c.passing(key), len(c.locks))
+				}
+				return
+			}
+			if calls.Load() != waiters || peak.Load() != waiters || !c.passing(key) || len(c.locks) != 0 {
+				t.Fatalf("rejected leader: calls = %d, peak = %d, passing = %v, locks = %d",
+					calls.Load(), peak.Load(), c.passing(key), len(c.locks))
+			}
+			// 窗口内的新请求不持锁也不登记, 同键并发获得资格互不阻塞.
+			first, second := c.Acquire(key), c.Acquire(key)
+			if len(c.locks) != 0 {
+				t.Fatalf("pass request registered key lock: %d", len(c.locks))
+			}
+			c.Set(key, &Entry{Body: []byte("ok"), TTL: time.Minute})
+			first()
+			second()
+			if c.passing(key) {
+				t.Fatal("admitted pass response did not end the pass window")
+			}
+		})
+	}
+}
+
+// TestPassWindowBounded 在虚拟时间验证直通窗口取 min(ttl, passWindow), 到期后恢复单个领头请求回源,
+// 之后准入的响应正常写入且不再触发直通.
+func TestPassWindowBounded(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		for _, tc := range []struct{ ttl, window time.Duration }{
+			{time.Minute, passWindow},
+			{time.Second, time.Second},
+		} {
+			c := New(tc.ttl, Config{})
+			key := [32]byte{1}
+			c.Acquire(key)()
+			if !c.passing(key) {
+				t.Fatal("rejected leader did not mark pass")
+			}
+			time.Sleep(tc.window - time.Millisecond)
+			if !c.passing(key) {
+				t.Fatalf("pass window for ttl %v ended early", tc.ttl)
+			}
+			time.Sleep(time.Millisecond)
+			if c.passing(key) {
+				t.Fatalf("pass window for ttl %v exceeded %v", tc.ttl, tc.window)
+			}
+			release := c.Acquire(key)
+			if len(c.locks) != 1 {
+				t.Fatal("expired pass window did not restore single-flight")
+			}
+			c.Set(key, &Entry{Body: []byte("ok"), TTL: time.Minute})
+			release()
+			if _, ok := c.Get(key); !ok || c.passing(key) {
+				t.Fatal("admitted response after pass window was not cached")
+			}
+		}
+	})
+}
+
+// TestPassMarkersBounded 验证直通标记表容量固定为 min(Capacity, maxPassKeys), 不随请求键增长.
+func TestPassMarkersBounded(t *testing.T) {
+	for _, tc := range []struct {
+		capacity uint32
+		want     int
+	}{
+		{2, 2},
+		{maxPassKeys * 4, maxPassKeys},
+	} {
+		c := New(time.Minute, Config{Capacity: tc.capacity})
+		for i := range maxPassKeys + 16 {
+			var key [32]byte
+			key[0], key[1] = byte(i), byte(i>>8)
+			c.Acquire(key)()
+		}
+		if got := c.passes.Len(); got != tc.want || len(c.locks) != 0 {
+			t.Fatalf("capacity %d: pass markers = %d, want %d, locks = %d", tc.capacity, got, tc.want, len(c.locks))
+		}
 	}
 }

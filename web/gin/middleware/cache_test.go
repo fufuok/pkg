@@ -1,12 +1,15 @@
 package middleware
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -576,5 +579,299 @@ func TestGinCacheRequestTrailers(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("trailer request cached: handler calls = %d", calls.Load())
+	}
+}
+
+// TestGinCacheReplayContentLength 覆盖外层预设长度头: 冷 miss 由业务修正长度, 热 hit 跳过业务,
+// 回放必须按缓存正文重写长度并删除非规范大小写的同名键. 否则短长度令服务端截断并报 ErrContentLength,
+// 长长度令客户端读到 unexpected EOF, 非规范键还会产生重复长度头.
+func TestGinCacheReplayContentLength(t *testing.T) {
+	const payload = "cached response payload"
+	for _, tc := range []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "short", key: "Content-Length", value: "1"},
+		{name: "long", key: "Content-Length", value: "999"},
+		{name: "noncanonical", key: "content-length", value: "1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := gin.New()
+			var calls atomic.Int32
+			engine.Use(func(c *gin.Context) {
+				c.Writer.Header()[tc.key] = []string{tc.value}
+				c.Next()
+			})
+			engine.Use(CacheByRequestURI(time.Minute))
+			engine.GET("/", func(c *gin.Context) {
+				calls.Add(1)
+				for name := range c.Writer.Header() {
+					if strings.EqualFold(name, "Content-Length") {
+						delete(c.Writer.Header(), name)
+					}
+				}
+				c.Header("Content-Length", strconv.Itoa(len(payload)))
+				c.String(200, payload)
+			})
+			server := httptest.NewServer(engine)
+			defer server.Close()
+			for i := range 2 {
+				resp, err := http.Get(server.URL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, readErr := io.ReadAll(resp.Body)
+				closeErr := resp.Body.Close()
+				if readErr != nil || closeErr != nil || string(body) != payload || len(resp.Header.Values("Content-Length")) != 1 {
+					t.Fatalf("request %d: body = %q, read = %v, close = %v, lengths = %q",
+						i, body, readErr, closeErr, resp.Header.Values("Content-Length"))
+				}
+			}
+			if calls.Load() != 1 {
+				t.Fatalf("handler calls = %d, want 1", calls.Load())
+			}
+		})
+	}
+}
+
+// TestGinCacheHTTP2Get 使用真实 TLS+HTTP/2 连接验证无正文 GET 可以命中.
+// HTTP/2 服务端即使没有正文也提供非 nil 的 Body, 准入只能依据长度和传输编码判断;
+// 声明长度或未知长度的 GET 正文仍须透传.
+func TestGinCacheHTTP2Get(t *testing.T) {
+	engine := gin.New()
+	var calls atomic.Int32
+	engine.Use(CacheByRequestURI(time.Minute))
+	engine.GET("/a", func(c *gin.Context) {
+		data, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			_ = c.Error(err)
+			c.Status(400)
+			return
+		}
+		c.String(200, "%d:%s", calls.Add(1), data)
+	})
+	server := httptest.NewUnstartedServer(engine)
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer server.Close()
+	client := server.Client()
+	send := func(body io.Reader) string {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, server.URL+"/a", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, readErr := io.ReadAll(resp.Body)
+		closeErr := resp.Body.Close()
+		if readErr != nil || closeErr != nil || resp.StatusCode != 200 || resp.ProtoMajor != 2 {
+			t.Fatalf("proto = %s, status = %d, read = %v, close = %v", resp.Proto, resp.StatusCode, readErr, closeErr)
+		}
+		return string(data)
+	}
+	for range 2 {
+		if body := send(nil); body != "1:" {
+			t.Fatalf("bodiless HTTP/2 GET body = %q, want cached 1:", body)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("bodiless HTTP/2 GET handler calls = %d, want 1", calls.Load())
+	}
+	// 已知长度和未知长度 (不发送 content-length, 流保持打开) 的 GET 正文都不能进入缓存.
+	if body := send(strings.NewReader("x")); body != "2:x" {
+		t.Fatalf("GET with body = %q, want 2:x", body)
+	}
+	if body := send(io.MultiReader(strings.NewReader("y"))); body != "3:y" {
+		t.Fatalf("GET with unknown-length body = %q, want 3:y", body)
+	}
+}
+
+// ginCacheConcurrency 统计业务处理的同时执行数, 用于区分串行回源和并发回源.
+type ginCacheConcurrency struct {
+	active, peak atomic.Int32
+}
+
+// enter 记录一次业务开始并更新峰值, 调用方负责在结束时递减 active.
+func (p *ginCacheConcurrency) enter() {
+	n := p.active.Add(1)
+	for old := p.peak.Load(); n > old && !p.peak.CompareAndSwap(old, n); old = p.peak.Load() {
+	}
+}
+
+// ginCacheAwait 等待条件成立或超时. 超时不报错, 让串行化的实现也能结束并由峰值断言报告失败.
+func ginCacheAwait(cond func() bool, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for !cond() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestGinCacheUncacheableConcurrency 验证 hit-for-pass: 领头请求的响应未准入时, 已排队的同键请求立即并发回源,
+// 直通窗口内新到达的请求也不再排队; 可缓存响应仍只回源一次.
+func TestGinCacheUncacheableConcurrency(t *testing.T) {
+	const requests = 5
+	for _, tc := range []struct {
+		name    string
+		respond func(c *gin.Context)
+	}{
+		{"cacheable", func(c *gin.Context) { c.String(200, "data") }},
+		{"no-store", func(c *gin.Context) { c.Header("Cache-Control", "no-store"); c.String(200, "data") }},
+		{"oversize", func(c *gin.Context) { c.String(200, "123456789") }},
+		{"error", func(c *gin.Context) { c.String(500, "data") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := gin.New()
+			var arrived, calls atomic.Int32
+			probe := &ginCacheConcurrency{}
+			// leader 和 want 只在两轮请求之间由测试协程修改, WaitGroup 保证可见性.
+			leader, want := true, int32(requests-1)
+			engine.Use(func(c *gin.Context) {
+				arrived.Add(1)
+				c.Next()
+			}, CacheByRequestURI(time.Minute, CacheConfig{MaxBodyBytes: 8}))
+			engine.GET("/a", func(c *gin.Context) {
+				probe.enter()
+				defer probe.active.Add(-1)
+				if calls.Add(1) == 1 && leader {
+					// 领头请求等全部请求进入缓存层后再返回, 确保其余请求确实在键锁上排队.
+					ginCacheAwait(func() bool { return arrived.Load() == requests }, 5*time.Second)
+					time.Sleep(20 * time.Millisecond)
+				} else {
+					ginCacheAwait(func() bool { return probe.peak.Load() >= want }, 500*time.Millisecond)
+				}
+				tc.respond(c)
+			})
+			burst := func() {
+				var group sync.WaitGroup
+				for range requests {
+					group.Go(func() { cacheGinRequest(engine, "GET", "/a", "", nil) })
+				}
+				group.Wait()
+			}
+			burst()
+			if tc.name == "cacheable" {
+				if calls.Load() != 1 {
+					t.Fatalf("cacheable concurrent miss executed %d times", calls.Load())
+				}
+				return
+			}
+			if calls.Load() != requests || probe.peak.Load() < 2 {
+				t.Fatalf("queued waiters: calls = %d, peak concurrency = %d, want %d calls and peak > 1",
+					calls.Load(), probe.peak.Load(), requests)
+			}
+			// 直通窗口内的新请求全部跳过键锁, 能够同时进入业务.
+			leader, want = false, requests
+			probe.peak.Store(0)
+			burst()
+			if calls.Load() != 2*requests || probe.peak.Load() != requests {
+				t.Fatalf("pass window: calls = %d, peak concurrency = %d, want %d and %d",
+					calls.Load(), probe.peak.Load(), 2*requests, requests)
+			}
+		})
+	}
+}
+
+// TestGinCacheUndeclaredRequestTrailers 用原始 chunked 请求发送未声明的 trailer.
+// net/http 只在正文 EOF 时才把这类 trailer 合并进 Request.Trailer, 预读之后必须再次检查.
+func TestGinCacheUndeclaredRequestTrailers(t *testing.T) {
+	engine := gin.New()
+	var calls atomic.Int32
+	engine.Use(CacheByRawData(time.Minute))
+	engine.POST("/", func(c *gin.Context) {
+		calls.Add(1)
+		if _, err := io.ReadAll(c.Request.Body); err != nil {
+			_ = c.Error(err)
+			c.Status(400)
+			return
+		}
+		c.String(200, "%s", c.Request.Trailer.Get("X-Tenant"))
+	})
+	server := httptest.NewServer(engine)
+	defer server.Close()
+	for _, tenant := range []string{"alice", "bob"} {
+		conn, err := net.Dial("tcp", server.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = fmt.Fprintf(conn, "POST / HTTP/1.1\r\nHost: example.test\r\nTransfer-Encoding: chunked\r\n"+
+			"Connection: close\r\n\r\n5\r\nquery\r\n0\r\nX-Tenant: %s\r\n\r\n", tenant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		_ = conn.Close()
+		if readErr != nil || resp.StatusCode != 200 || string(body) != tenant {
+			t.Fatalf("tenant = %s, status = %d, body = %q, read = %v", tenant, resp.StatusCode, body, readErr)
+		}
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("undeclared trailer request cached: handler calls = %d", calls.Load())
+	}
+}
+
+// ginCacheCancelContext 在首次 Err 检查时通知测试, 用于在准入之后和键锁等待期间确定性地取消请求.
+type ginCacheCancelContext struct {
+	context.Context
+	checked chan struct{}
+	once    sync.Once
+}
+
+// Err 透传底层取消状态, 首次调用只额外发出一次通知. 先读取状态再通知,
+// 避免测试协程在本次检查返回前取消, 使准入检查本身观察到取消.
+func (c *ginCacheCancelContext) Err() error {
+	err := c.Context.Err()
+	c.once.Do(func() { close(c.checked) })
+	return err
+}
+
+// TestGinCacheCanceledWaiter 验证等待键锁期间被取消的请求返回明确的 503, 不写出误导性的空 200.
+// 领头响应使用 no-store, 等待者不可能在取锁前命中缓存; 领头请求在取消之后才放行,
+// 因此无论等待者是在锁上等待还是随后进入直通窗口, 锁后检查都必然看到取消.
+func TestGinCacheCanceledWaiter(t *testing.T) {
+	engine := gin.New()
+	var calls atomic.Int32
+	entered, release := make(chan struct{}), make(chan struct{})
+	engine.Use(CacheByRequestURI(time.Minute))
+	engine.GET("/a", func(c *gin.Context) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+		c.Header("Cache-Control", "no-store")
+		c.String(200, "data")
+	})
+	leaderDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() { leaderDone <- cacheGinRequest(engine, "GET", "/a", "", nil) }()
+	<-entered
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &ginCacheCancelContext{Context: base, checked: make(chan struct{})}
+	req := httptest.NewRequest(http.MethodGet, "/a", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	waiterDone := make(chan struct{})
+	go func() {
+		defer close(waiterDone)
+		engine.ServeHTTP(rec, req)
+	}()
+	// 准入检查已经以未取消状态通过, 此后直到 Acquire 返回都没有其他取消检查.
+	<-ctx.checked
+	cancel()
+	close(release)
+	<-waiterDone
+	leader := <-leaderDone
+	if leader.Code != 200 || leader.Body.String() != "data" {
+		t.Fatalf("leader status = %d, body = %q", leader.Code, leader.Body.String())
+	}
+	if rec.Code != http.StatusServiceUnavailable || rec.Body.Len() != 0 || calls.Load() != 1 {
+		t.Fatalf("canceled waiter status = %d, body = %q, handler calls = %d", rec.Code, rec.Body.String(), calls.Load())
 	}
 }

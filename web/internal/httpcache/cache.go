@@ -18,15 +18,30 @@ const (
 	defaultMaxRequestBodyBytes = 64 << 10
 	defaultTTL                 = 10 * time.Minute
 	maxHeaderBytes             = 64 << 10
+	// passWindow 是未准入响应之后同键请求跳过回源合并 (hit-for-pass) 的最长时间, 实际取 min(ttl, passWindow).
+	// 与 nginx proxy_cache_lock_timeout 默认值同量级: 足以覆盖常见业务耗时, 避免慢的不可缓存接口
+	// 频繁回到串行排队; 又足够短, 业务恢复可缓存后最多数秒即重新合并并发回源.
+	passWindow = 5 * time.Second
+	// maxPassKeys 限制直通标记表的固定容量. 标记只对数秒内有并发的键有意义, 超出后按 LRU 淘汰,
+	// 被淘汰的键仅退化为等待领头请求结束后再并发回源, 不随 Capacity 放大预分配内存.
+	maxPassKeys = 1024
 )
 
 // Config 限制单个中间件实例的内存占用和可区分的请求表示.
 // 零值使用默认值, Vary 在默认四个请求头之后追加, 不覆盖安全默认维度.
+// 构造后不应修改配置或其中的 Vary 切片, 缓存内部使用的是规范化后的独立副本.
 type Config struct {
-	Capacity            uint32
-	MaxBodyBytes        int
+	// Capacity 是本实例最多保存的响应条目数, 满后按 LRU 淘汰; 零值使用 256.
+	Capacity uint32
+	// MaxBodyBytes 是单个响应正文可缓存的最大字节数, 超限响应照常发送但不缓存;
+	// 零值使用 256KiB, 负数在构造时 panic.
+	MaxBodyBytes int
+	// MaxRequestBodyBytes 是 CacheByRawData 参与请求键的原始正文上限, 超限请求透传给业务且不缓存;
+	// 零值使用 64KiB, 负数在构造时 panic. CacheByRequestURI 只接受无正文 GET, 不使用该值.
 	MaxRequestBodyBytes int
-	Vary                []string
+	// Vary 是追加进请求键的请求头名称, 在默认的 Accept, Accept-Encoding, Accept-Language, Origin
+	// 之后规范化并去重. 响应声明的 Vary 维度必须全部在此列出才会缓存; 空名, 非法名称或 "*" 在构造时 panic.
+	Vary []string
 }
 
 // Entry 只保存已准入的 200 响应. Header 和 Body 在 Set 后不可修改,
@@ -50,8 +65,11 @@ type Cache struct {
 	cfg   Config
 	ttl   time.Duration
 	store *freelru.SyncedLRU[[32]byte, *Entry]
-	mu    sync.Mutex
-	locks map[[32]byte]*keyLock
+	// pass 是直通窗口长度; passes 保存各键直通截止的单调时钟时刻, 固定容量且惰性过期.
+	pass   time.Duration
+	passes *freelru.SyncedLRU[[32]byte, time.Time]
+	mu     sync.Mutex
+	locks  map[[32]byte]*keyLock
 }
 
 // keyLock 的引用计数覆盖持有者和等待者, 最后一个请求离开时即可删除登记,
@@ -72,6 +90,12 @@ func New(ttl time.Duration, cfg Config) *Cache {
 	if err != nil {
 		panic(fmt.Errorf("httpcache: create response cache: %w", err))
 	}
+	// 直通窗口不超过缓存 TTL, 避免极短 TTL 的路由长时间失去回源合并.
+	pass := min(ttl, passWindow)
+	passes, err := freelru.NewSyncedDefault[[32]byte, time.Time](min(cfg.Capacity, maxPassKeys), pass)
+	if err != nil {
+		panic(fmt.Errorf("httpcache: create pass marker cache: %w", err))
+	}
 	publicCfg := cfg
 	publicCfg.Vary = append([]string(nil), cfg.Vary...)
 	return &Cache{
@@ -79,6 +103,8 @@ func New(ttl time.Duration, cfg Config) *Cache {
 		cfg:    cfg,
 		ttl:    ttl,
 		store:  store,
+		pass:   pass,
+		passes: passes,
 		locks:  make(map[[32]byte]*keyLock),
 	}
 }
@@ -118,6 +144,8 @@ func (c *Cache) Set(key [32]byte, entry *Entry) {
 		StoredAt:  storedAt,
 		expiresAt: now.Add(ttl),
 	}, ttl)
+	// 直通窗口内的并发回源一旦得到可准入响应即结束窗口, 条目到期后的下一轮 miss 恢复合并.
+	c.passes.Remove(key)
 }
 
 // ReplayHeader 返回独立的头副本并补充缓存年龄, 使下游按原 Cache-Control 扣除
@@ -136,10 +164,18 @@ func (e *Entry) ReplayHeader() http.Header {
 	return header
 }
 
-// Acquire 串行化同一请求键的回源. 调用方必须 defer 返回的释放函数, 并在取得
-// 锁后再次 Get. 只有已准入的缓存可供后续请求复用, 不共享失败或私人响应结果.
+// Acquire 合并同一请求键的回源. 调用方必须 defer 返回的释放函数, 并在返回后再次 Get;
+// 只有已准入的缓存可供后续请求复用, 不共享失败或私人响应结果.
+//
+// 持锁者释放时若该键仍无可用条目, 说明本次响应未准入 (禁缓存, 超限, 非 200, 错误或 panic 等),
+// 释放前先登记 min(ttl, passWindow) 的直通窗口 (hit-for-pass): 已排队的等待者取得锁后立即放手
+// 并发回源, 窗口内新到达的请求也不再排队. 直通请求不持有键锁, 其可准入响应照常写入并结束窗口;
+// 窗口到期后恢复单个领头请求回源. 可缓存响应始终保持单次回源.
 // 释放函数只能执行一次; 不提供取消等待, 由各框架按自身上下文管理处理生命周期.
 func (c *Cache) Acquire(key [32]byte) func() {
+	if c.passing(key) {
+		return releasePass
+	}
 	c.mu.Lock()
 	lock := c.locks[key]
 	if lock == nil {
@@ -149,16 +185,45 @@ func (c *Cache) Acquire(key [32]byte) func() {
 	lock.refs++
 	c.mu.Unlock()
 	lock.mu.Lock()
+	// 等待期间上一持锁者可能已登记直通, 立即放锁, 让其余等待者也依次快速放行而不再等待业务.
+	if c.passing(key) {
+		c.unlock(key, lock)
+		return releasePass
+	}
 	return func() {
-		lock.mu.Unlock()
-		c.mu.Lock()
-		lock.refs--
-		if lock.refs == 0 {
-			delete(c.locks, key)
+		// 先登记再放锁, 保证被唤醒的等待者一定能看到直通标记.
+		if !c.fresh(key) {
+			c.passes.AddWithLifetime(key, time.Now().Add(c.pass), c.pass)
 		}
-		c.mu.Unlock()
+		c.unlock(key, lock)
 	}
 }
+
+// unlock 释放键锁并在最后一个持有者或等待者离开时删除登记, 锁表大小只与在途请求键相关.
+func (c *Cache) unlock(key [32]byte, lock *keyLock) {
+	lock.mu.Unlock()
+	c.mu.Lock()
+	lock.refs--
+	if lock.refs == 0 {
+		delete(c.locks, key)
+	}
+	c.mu.Unlock()
+}
+
+// passing 判断键是否处于直通窗口. 以存入的单调时钟截止时刻复核, 墙钟回拨不会延长窗口.
+func (c *Cache) passing(key [32]byte) bool {
+	until, ok := c.passes.Get(key)
+	return ok && time.Now().Before(until)
+}
+
+// fresh 只读检查键是否已有未过期条目, 不更新 LRU 次序, 供持锁者释放时判断响应是否已准入.
+func (c *Cache) fresh(key [32]byte) bool {
+	entry, ok := c.store.Peek(key)
+	return ok && time.Now().Before(entry.expiresAt)
+}
+
+// releasePass 是直通请求的释放函数. 直通请求不持有键锁, 使用具名函数避免每次分配闭包.
+func releasePass() {}
 
 // boundedHeaders 在复制前限制整个原始头集合, 动态头即使不进入缓存也受预算限制.
 // 逐次从剩余额度扣减可避免巨量头字段长度相加溢出.

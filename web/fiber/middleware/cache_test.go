@@ -22,7 +22,7 @@ import (
 	"github.com/gofiber/fiber/v3/middleware/compress"
 )
 
-// TestFiberCacheRequestIdentity 验证请求键保留完整 URI、Host 和表示相关请求头.
+// TestFiberCacheRequestIdentity 验证请求键保留完整 URI, Host 和表示相关请求头.
 func TestFiberCacheRequestIdentity(t *testing.T) {
 	app := fiber.New()
 	app.Use(CacheByRequestURI(time.Minute))
@@ -109,7 +109,7 @@ func TestFiberCacheHeaderCardinality(t *testing.T) {
 	}
 }
 
-// TestFiberCacheUpstreamResponseState 验证已有状态、正文、响应流和 SkipBody 不会被缓存命中覆盖.
+// TestFiberCacheUpstreamResponseState 验证已有状态, 正文, 响应流和 SkipBody 不会被缓存命中覆盖.
 func TestFiberCacheUpstreamResponseState(t *testing.T) {
 	for _, mode := range []string{"status", "body", "stream", "skip_body"} {
 		t.Run(mode, func(t *testing.T) {
@@ -176,7 +176,7 @@ func TestFiberCacheRejectMultipleConfigs(t *testing.T) {
 	CacheByRequestURI(time.Minute, CacheConfig{}, CacheConfig{})
 }
 
-// TestFiberCacheRequestBypass 验证有凭据、条件、禁缓存或不匹配方法的请求不会命中或存入缓存.
+// TestFiberCacheRequestBypass 验证有凭据, 条件, 禁缓存或不匹配方法的请求不会命中或存入缓存.
 func TestFiberCacheRequestBypass(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -216,7 +216,7 @@ func TestFiberCacheRequestBypass(t *testing.T) {
 	}
 }
 
-// TestFiberCacheRawData 验证只读 POST 同时按正文、路径、查询、媒体类型和编码分区, 正文仍供业务读取.
+// TestFiberCacheRawData 验证只读 POST 同时按正文, 路径, 查询, 媒体类型和编码分区, 正文仍供业务读取.
 func TestFiberCacheRawData(t *testing.T) {
 	app := fiber.New()
 	app.Use(CacheByRawData(time.Minute, CacheConfig{MaxRequestBodyBytes: 8}))
@@ -252,7 +252,7 @@ func TestFiberCacheRawData(t *testing.T) {
 	}
 }
 
-// TestFiberCacheResponseBypass 覆盖隐私响应、禁缓存指令、错误、流式媒体和超大正文的准入边界.
+// TestFiberCacheResponseBypass 覆盖隐私响应, 禁缓存指令, 错误, 流式媒体和超大正文的准入边界.
 func TestFiberCacheResponseBypass(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -752,5 +752,140 @@ func TestFiberCacheRequestTrailers(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("trailer request cached: handler calls = %d", calls.Load())
+	}
+}
+
+// fiberCacheAwait 等待条件成立或超时. 超时不报错, 让串行化的实现也能结束并由峰值断言报告失败.
+func fiberCacheAwait(cond func() bool, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for !cond() && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestFiberCacheUncacheableConcurrency 验证 hit-for-pass: 领头请求的响应未准入时, 已排队的同键请求立即并发回源,
+// 直通窗口内新到达的请求也不再排队; 可缓存响应仍只回源一次.
+func TestFiberCacheUncacheableConcurrency(t *testing.T) {
+	const requests = 5
+	for _, tc := range []struct {
+		name    string
+		respond func(c fiber.Ctx) error
+	}{
+		{"cacheable", func(c fiber.Ctx) error { return c.SendString("data") }},
+		{"no-store", func(c fiber.Ctx) error { c.Set("Cache-Control", "no-store"); return c.SendString("data") }},
+		{"oversize", func(c fiber.Ctx) error { return c.SendString("123456789") }},
+		{"error", func(c fiber.Ctx) error { return c.Status(fiber.StatusInternalServerError).SendString("data") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := fiber.New()
+			var arrived, calls, active, peak atomic.Int32
+			// leader 和 want 只在两轮请求之间由测试协程修改, WaitGroup 保证可见性.
+			leader, want := true, int32(requests-1)
+			app.Use(func(c fiber.Ctx) error {
+				arrived.Add(1)
+				return c.Next()
+			}, CacheByRequestURI(time.Minute, CacheConfig{MaxBodyBytes: 8}))
+			app.Get("/", func(c fiber.Ctx) error {
+				n := active.Add(1)
+				defer active.Add(-1)
+				for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
+				}
+				if calls.Add(1) == 1 && leader {
+					// 领头请求等全部请求进入缓存层后再返回, 确保其余请求确实在键锁上排队.
+					fiberCacheAwait(func() bool { return arrived.Load() == requests }, 5*time.Second)
+					time.Sleep(20 * time.Millisecond)
+				} else {
+					fiberCacheAwait(func() bool { return peak.Load() >= want }, 500*time.Millisecond)
+				}
+				return tc.respond(c)
+			})
+			burst := func() {
+				var group sync.WaitGroup
+				for range requests {
+					group.Go(func() {
+						req := httptest.NewRequest(fiber.MethodGet, "http://example.test/", nil)
+						resp, err := app.Test(req, fiber.TestConfig{Timeout: 10 * time.Second})
+						if err != nil {
+							t.Error(err)
+							return
+						}
+						_, _ = io.Copy(io.Discard, resp.Body)
+						_ = resp.Body.Close()
+					})
+				}
+				group.Wait()
+			}
+			burst()
+			if tc.name == "cacheable" {
+				if calls.Load() != 1 {
+					t.Fatalf("cacheable concurrent miss executed %d times", calls.Load())
+				}
+				return
+			}
+			if calls.Load() != requests || peak.Load() < 2 {
+				t.Fatalf("queued waiters: calls = %d, peak concurrency = %d, want %d calls and peak > 1",
+					calls.Load(), peak.Load(), requests)
+			}
+			// 直通窗口内的新请求全部跳过键锁, 能够同时进入业务.
+			leader, want = false, requests
+			peak.Store(0)
+			burst()
+			if calls.Load() != 2*requests || peak.Load() != requests {
+				t.Fatalf("pass window: calls = %d, peak concurrency = %d, want %d and %d",
+					calls.Load(), peak.Load(), 2*requests, requests)
+			}
+		})
+	}
+}
+
+// TestFiberCacheHijackedResponse 验证接管连接的请求不入缓存. HijackSetNoResponse 时 Fiber 响应对象从未发出,
+// 若被缓存, 后续请求会得到源站实际没有发送的内容, 并且跳过接管连接后的真实输出.
+func TestFiberCacheHijackedResponse(t *testing.T) {
+	app := fiber.New()
+	app.Use(CacheByRequestURI(time.Minute))
+	var calls atomic.Int32
+	app.Get("/", func(c fiber.Ctx) error {
+		body := fmt.Sprintf("hijacked:%d", calls.Add(1))
+		c.RequestCtx().HijackSetNoResponse(true)
+		c.RequestCtx().Hijack(func(conn net.Conn) {
+			_, _ = fmt.Fprintf(conn, "HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(body), body)
+		})
+		return c.SendString("placeholder")
+	})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverErr := make(chan error, 1)
+	go func() {
+		serverErr <- app.Listener(listener, fiber.ListenConfig{DisableStartupMessage: true})
+	}()
+	t.Cleanup(func() {
+		if err := app.ShutdownWithTimeout(time.Second); err != nil {
+			t.Errorf("shutdown hijack server: %v", err)
+		}
+		select {
+		case err := <-serverErr:
+			if err != nil {
+				t.Errorf("serve hijack request: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("hijack server did not stop")
+		}
+	})
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	for i := 1; i <= 2; i++ {
+		resp, err := client.Get("http://" + listener.Addr().String() + "/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		closeErr := resp.Body.Close()
+		if want := fmt.Sprintf("hijacked:%d", i); readErr != nil || closeErr != nil || string(body) != want {
+			t.Fatalf("body = %q, want %q, read = %v, close = %v", body, want, readErr, closeErr)
+		}
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("hijacked response cached: handler calls = %d", calls.Load())
 	}
 }

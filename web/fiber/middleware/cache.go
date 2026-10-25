@@ -10,12 +10,12 @@ import (
 	"github.com/fufuok/pkg/web/internal/httpcache"
 )
 
-// CacheConfig 限制单个中间件实例的容量、正文大小和允许变化的请求头.
+// CacheConfig 限制单个中间件实例的容量, 正文大小和允许变化的请求头.
 // 零值采用安全默认值, 构造后不应修改配置或其中的 Vary 切片.
 type CacheConfig = httpcache.Config
 
-// CacheByRequestURI 缓存无正文的 GET 响应, 键包含方法、协议、Host、完整 URI 和表示相关请求头.
-// 鉴权应先于本中间件运行; 凭据请求、条件请求、流式响应和不允许共享的响应自动直通.
+// CacheByRequestURI 缓存无正文的 GET 响应, 键包含方法, 协议, Host, 完整 URI 和表示相关请求头.
+// 鉴权应先于本中间件运行; 凭据请求, 条件请求, 流式响应和不允许共享的响应自动直通.
 // ttl 非正值使用默认有效期, 可选配置最多一项. 缓存仅属于当前实例和当前进程.
 func CacheByRequestURI(ttl time.Duration, configs ...CacheConfig) fiber.Handler {
 	return newResponseCache(ttl, false, configs...)
@@ -29,7 +29,8 @@ func CacheByRawData(ttl time.Duration, configs ...CacheConfig) fiber.Handler {
 }
 
 // newResponseCache 将 Fiber 的请求和响应映射至共用策略, 对不可缓存的结果不分享业务执行.
-// 同键等待者在获得锁后重新查询, 仅已通过响应检查并成功存入的结果能够被复用.
+// 同键等待者在获得锁后重新查询, 仅已通过响应检查并成功存入的结果能够被复用;
+// 领头响应未准入时进入短暂的 hit-for-pass 窗口, 同键请求不再排队而是并发执行业务.
 func newResponseCache(ttl time.Duration, withBody bool, configs ...CacheConfig) fiber.Handler {
 	if len(configs) > 1 {
 		panic("httpcache: at most one cache configuration is allowed")
@@ -58,8 +59,10 @@ func newResponseCache(ttl time.Duration, withBody bool, configs ...CacheConfig) 
 		if c.RequestCtx().LastTimeoutErrorResponse() != nil || err != nil {
 			return err
 		}
-		// Body() 会消费 fasthttp 的响应流; SendStream、SSE 和 SendFile 必须先在此退出.
-		if c.Response().IsBodyStream() || c.Response().SkipBody {
+		// Body() 会消费 fasthttp 的响应流; SendStream, SSE 和 SendFile 必须先在此退出.
+		// 接管连接后真实输出由 hijack 处理器负责, 响应对象可能根本不发送 (HijackSetNoResponse),
+		// 缓存它会向后续请求回放源站没有发出的内容.
+		if c.RequestCtx().Hijacked() || c.Response().IsBodyStream() || c.Response().SkipBody {
 			return nil
 		}
 		if entry, ok := store.Prepare(fiberCacheResponseHeaders(c), c.Response().Body(), c.StatusCode()); ok {
@@ -69,7 +72,7 @@ func newResponseCache(ttl time.Duration, withBody bool, configs ...CacheConfig) 
 	}
 }
 
-// fiberCacheRequestKey 检查方法、请求体、凭据和上游隐私策略, 只为能够参与缓存的请求生成键.
+// fiberCacheRequestKey 检查方法, 请求体, 凭据和上游隐私策略, 只为能够参与缓存的请求生成键.
 // 请求流直接返回, 原始正文在业务处理前只做有界同步哈希, 不触发 Fiber 的自动解压或消费.
 func fiberCacheRequestKey(c fiber.Ctx, store *httpcache.Cache, withBody bool) ([32]byte, bool) {
 	method := c.Method()
@@ -101,7 +104,7 @@ func fiberCacheRequestKey(c fiber.Ctx, store *httpcache.Cache, withBody bool) ([
 	return store.Key(req, body), true
 }
 
-// fiberCacheInitialResponse 保留上游已经形成的状态、正文和流, 命中不能覆盖当前请求的响应策略.
+// fiberCacheInitialResponse 保留上游已经形成的状态, 正文和流, 命中不能覆盖当前请求的响应策略.
 // 流式检查先于 Body, 隐私和变化头同样受共用准入规则约束.
 func fiberCacheInitialResponse(c fiber.Ctx, store *httpcache.Cache) bool {
 	if c.Response().IsBodyStream() || c.Response().SkipBody || c.StatusCode() != fiber.StatusOK ||
@@ -112,7 +115,7 @@ func fiberCacheInitialResponse(c fiber.Ctx, store *httpcache.Cache) bool {
 }
 
 // fiberCacheRequestHeaders 复制并规范化全部请求头, 保留多行值及大小写不规范的敏感字段.
-// 不能只取首行, 否则空首行可能掩盖后续 Authorization、Cookie 或 Cache-Control.
+// 不能只取首行, 否则空首行可能掩盖后续 Authorization, Cookie 或 Cache-Control.
 func fiberCacheRequestHeaders(c fiber.Ctx) http.Header {
 	headers := make(http.Header)
 	for name, value := range c.Request().Header.All() {
