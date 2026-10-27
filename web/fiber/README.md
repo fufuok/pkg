@@ -4,6 +4,8 @@
 
 公开 GET 与只读 POST 的响应缓存见 [HTTP 缓存说明](../README.md). 缓存为路由显式注册, 不由 engine 全局启用.
 
+响应缓存须注册在 `WithTimeout` 外层, 推荐 `WebLogger -> 缓存 -> 唯一 WithTimeout -> 业务`; 支持单层异步超时, 不支持异步 timeout 嵌套或业务自行启动协程访问 Ctx. `WithTimeout` 在启动工作协程前用私有类型键调用 `SetLocal`, 内层缓存仅在入口识别标记后整段透传, 不命中也不存储. 全局 `WithTimeoutDefault` 位于路由缓存之前时, 路由缓存同样全部透传; 外置的原生或第三方异步 timeout 不设置该标记, 不在保护范围. 详见 [HTTP 缓存说明](../README.md).
+
 ## 启动信息与临时消息
 
 HTTP/HTTPS 监听均设置 `DisableStartupMessage: true`, 不显示 Fiber 启动欢迎信息. pkg 的服务启动日志仍按日志配置输出.
@@ -62,11 +64,11 @@ pkg 原有 Fiber 封装已经支持可信来源检查和列表, 本次补齐 IP 
 
 ## 超时与日志
 
-`WithTimeout` 沿用新版默认503. 真实截止使用独立文本响应 `Service Unavailable`; 业务立即返回 deadline 等超时错误时仍经过应用 ErrorHandler, 可以得到 JSON. 回包不强制结束业务, Handler 应监听 `c.Context().Done()` 合作退出. 收到取消时应返回保存的 `ctx.Err()`, 不要吞掉取消错误后返回 nil; 完成与截止同时就绪时, 上游可能选中完成分支.
+`WithTimeout` 沿用新版默认503. 真实截止使用独立文本响应 `Service Unavailable`; 业务立即返回 deadline 等超时错误时仍经过应用 ErrorHandler, 可以得到 JSON. 回包不强制结束业务, Handler 应监听 `c.Context().Done()` 合作退出并保留取消错误. 非 nil 业务错误原样返回; 返回 nil 但工作协程入口 context 已截止或被上游取消时改为 `fiber.ErrServiceUnavailable`, 默认 ErrorHandler 下完成分支为 503, 不会被当作成功; 自定义 ErrorHandler 仍可改变完成分支的输出, 不保证与真正截止的独立响应相同. 显式返回的 `context.Canceled` 保留原错误, 完成分支默认可能得到 500; 需要映射为超时响应时通过 `timeoutErrors` 注册. 自定义超时错误沿错误链匹配, 构造时以 `slices.Clone` 保存参数切片快照, 随后改写原切片不影响匹配. 时长非正时完全禁用期限, 同步执行, 不设置缓存透传标记, 也不改写返回值.
 
-WebLogger 遇到已捕获的真实超时响应时, 不主动记录日志, 直接返回原错误, 跳过客户端IP、方法、URL、正文及自定义日志条件, 避免与尚未结束的 worker 竞争访问 Ctx. Fiber 此时也会跳过应用 ErrorHandler; 应用如需记录, 应在 timeout 外层通过 `c.Next()` 接收错误, 只使用错误、入口耗时和请求进入时提前复制的快照, 不再读取活动 Ctx. 正常完成路径由 `cond` 决定是否记录; 没有真实截止标记的错误仍沿用原错误日志分支, 不受 `cond` 控制, Gin 的错误日志也独立于其条件函数. `c.Elapsed()` 是从服务器开始处理请求计时, 用途不同.
+WebLogger 位于 timeout 外侧时, 遇到已捕获的真实超时响应不主动记录日志, 直接返回原错误, 跳过客户端IP、方法、URL、正文及自定义日志条件, 避免与尚未结束的 worker 竞争访问 Ctx. Fiber 此时也会跳过应用 ErrorHandler; 应用如需记录, 应在 timeout 外层通过 `c.Next()` 接收错误, 只使用错误、入口耗时和请求进入时提前复制的快照, 不再读取活动 Ctx. 正常完成路径由 `cond` 决定是否记录; 没有真实截止标记的错误仍沿用原错误日志分支, 不受 `cond` 控制, Gin 的错误日志也独立于其条件函数. `c.Elapsed()` 是从服务器开始处理请求计时, 用途不同.
 
-`WithTimeout -> WebLogger ->业务` 顺序会让 WebLogger 在业务退出时返回; 若已捕获真实截止响应, 仍按上述规则不主动记录日志, 且外层 timeout 可能已结束等待, 不保证继续处理这个迟到错误. 此顺序不保证任意自定义中间件或嵌套 timeout 安全. 若并发限制器要限制实际执行中的业务, 也应放在 timeout 内部.
+`WithTimeout -> WebLogger -> 业务` 仍有已复现的数据竞争: 日志器读取 LastTimeoutErrorResponse 时, 外层超时协程可能正在写标记. 这是既有问题, 当前未修复; 修复前使用 `WebLogger -> WithTimeout -> 业务`, 不能仅凭是否有 Deadline 推断协程归属. 若并发限制器要限制实际执行中的业务, 则应放在 timeout 内部.
 
 ## HTTPS 与代理路径
 

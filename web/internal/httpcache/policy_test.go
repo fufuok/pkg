@@ -2,6 +2,7 @@ package httpcache
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,8 +17,9 @@ func TestPrepareRejectsUnsafeResponses(t *testing.T) {
 		"Upgrade", "Date", "Age", "Expires", "Pragma", "Trailer:Digest",
 	} {
 		t.Run(name, func(t *testing.T) {
-			// 故意构造小写且值为空的头, 覆盖 Header.Get 无法判断存在性的边界.
-			header := http.Header{strings.ToLower(name): {""}}
+			// 空值也保留字段存在意图; 头名由框架或应用 Header.Set 规范化.
+			header := make(http.Header)
+			header.Set(name, "")
 			if _, ok := c.Prepare(header, []byte("body"), http.StatusOK); ok {
 				t.Fatal("unsafe response was accepted")
 			}
@@ -30,6 +32,61 @@ func TestPrepareRejectsUnsafeResponses(t *testing.T) {
 	}
 	if _, ok := c.Prepare(http.Header{"Content-Type": {"Text/Event-Stream; charset=utf-8"}}, nil, 200); ok {
 		t.Fatal("event stream accepted")
+	}
+}
+
+// TestPrepareRejectsNoncanonicalHeaders 验证准入对非规范头名失败即拒绝.
+// 隐私与新鲜度检查按规范名查找, 直接写入 Header map 的 "set-cookie" 或 "cache-control: private"
+// 会被客户端照常处理却逃过检查; 内核不归并修复, 只拒绝缓存, 包括看似无害的自定义字段.
+func TestPrepareRejectsNoncanonicalHeaders(t *testing.T) {
+	c := New(time.Minute, Config{})
+	for _, header := range []http.Header{
+		{"set-cookie": {"uid=alice"}},
+		{"cache-control": {"private"}},
+		{"Cache-Control": {"max-age=60"}, "cache-control": {"no-store"}},
+		{"vary": {"X-Unknown"}},
+		{"x-trace": {"1"}},
+	} {
+		if _, ok := c.Prepare(header, []byte("body"), http.StatusOK); ok {
+			t.Fatalf("noncanonical header accepted: %v", header)
+		}
+	}
+	if _, ok := c.Prepare(http.Header{"X-Trace": {"1"}}, []byte("body"), http.StatusOK); !ok {
+		t.Fatal("canonical header rejected")
+	}
+	// 命中前的外层策略检查同样失败即拒绝: 外层小写写入的私有指令必须让本次请求绕过缓存.
+	if c.CanServe(http.Header{"cache-control": {"private"}}, http.StatusOK) {
+		t.Fatal("noncanonical outer policy served from cache")
+	}
+}
+
+// TestEntryOmitInherited 验证外层预设且未被业务改动的非表示头不进入条目, 业务新增或改写的字段保留,
+// 表示头即使来自外层也必须保留以描述正文.
+func TestEntryOmitInherited(t *testing.T) {
+	c := New(time.Minute, Config{})
+	outer := http.Header{
+		"X-Debug-Backend": {"10.0.0.5"}, "X-Frame-Options": {"DENY"}, "Content-Language": {"en"}, "X-Empty": nil,
+	}
+	header := outer.Clone()
+	header.Set("X-Frame-Options", "SAMEORIGIN")
+	header.Set("X-Page", "1")
+	entry, ok := c.Prepare(header, nil, http.StatusOK)
+	if !ok {
+		t.Fatal("response rejected")
+	}
+	entry.OmitInherited(outer)
+	want := http.Header{"X-Frame-Options": {"SAMEORIGIN"}, "Content-Language": {"en"}, "X-Page": {"1"}}
+	if len(entry.Header) != len(want) {
+		t.Fatalf("stored headers = %v, want %v", entry.Header, want)
+	}
+	for name, values := range want {
+		if !slices.Equal(entry.Header[name], values) {
+			t.Fatalf("stored headers = %v, want %v", entry.Header, want)
+		}
+	}
+	entry.OmitInherited(nil)
+	if len(entry.Header) != len(want) {
+		t.Fatal("nil outer header changed the entry")
 	}
 }
 
@@ -89,7 +146,7 @@ func TestPrepareVary(t *testing.T) {
 	for value, want := range map[string]bool{
 		"": true, "Accept": true, "accept-language, Origin, X-Tenant": true,
 		"Content-Type, Content-Encoding": true, "*": false, "X-Unknown": false,
-		"Accept, X-Unknown": false, "Accept,": false,
+		"Accept, X-Unknown": false, "Accept,": false, "  ": true,
 	} {
 		if _, got := c.Prepare(http.Header{"Vary": {value}}, nil, 200); got != want {
 			t.Errorf("Vary %q: got %v, want %v", value, got, want)
@@ -120,7 +177,7 @@ func TestPrepareBoundsAndResponseMetadata(t *testing.T) {
 		"Content-Security-Policy": {"default-src 'self'"}, "X-Content-Type-Options": {"nosniff"},
 		"Content-Location": {"/catalog"}, "Link": {"</next>; rel=next", "</prev>; rel=prev"},
 		"X-Total-Count": {"10"}, "X-Unknown": {"metadata"},
-		"RateLimit": {"limit=100, remaining=99"}, "Server-Timing": {"db;dur=10"},
+		"Ratelimit": {"limit=100, remaining=99"}, "Server-Timing": {"db;dur=10"},
 		"Traceparent": {"request-trace"}, "Tracestate": {"vendor=request"},
 	}
 	entry, ok := c.Prepare(header, []byte("abc"), 200)

@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/compress"
+	"github.com/gofiber/fiber/v3/middleware/timeout"
 )
 
 // TestFiberCacheRequestIdentity 验证请求键保留完整 URI, Host 和表示相关请求头.
@@ -551,9 +553,9 @@ func TestFiberCacheConfigAndExpiry(t *testing.T) {
 	}
 }
 
-// TestFiberCacheLowercaseCredential 验证禁用 Fiber 头名规范化后, 小写凭据仍会阻止缓存.
-func TestFiberCacheLowercaseCredential(t *testing.T) {
-	app := fiber.New(fiber.Config{DisableHeaderNormalizing: true})
+// TestFiberCacheNormalizedCredential 验证网络输入的小写凭据由默认框架规范化后阻止缓存.
+func TestFiberCacheNormalizedCredential(t *testing.T) {
+	app := fiber.New()
 	app.Use(CacheByRequestURI(time.Minute))
 	calls := 0
 	app.Get("/", func(c fiber.Ctx) error {
@@ -565,6 +567,147 @@ func TestFiberCacheLowercaseCredential(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("lowercase credential handler calls = %d, want 2", calls)
+	}
+}
+
+// TestFiberCacheNonNormalizedHeaders 关闭头名规范化后, 小写凭据与小写 Vary 维度仍须识别:
+// 凭据请求不缓存, 不同租户不串用. 适配器只收集相关请求头, 名称匹配必须大小写无关.
+func TestFiberCacheNonNormalizedHeaders(t *testing.T) {
+	app := fiber.New(fiber.Config{DisableHeaderNormalizing: true})
+	app.Use(CacheByRequestURI(time.Minute, CacheConfig{Vary: []string{"X-Tenant"}}))
+	calls := 0
+	app.Get("/", func(c fiber.Ctx) error {
+		calls++
+		return c.SendString(strconv.Itoa(calls))
+	})
+	for range 2 {
+		fiberCacheTestRequest(t, app, fiber.MethodGet, "http://example.test/", "", http.Header{"authorization": {"Bearer token"}})
+	}
+	if calls != 2 {
+		t.Fatalf("lowercase credential handler calls = %d, want 2", calls)
+	}
+	a, _ := fiberCacheTestRequest(t, app, fiber.MethodGet, "http://example.test/", "", http.Header{"x-tenant": {"a"}})
+	b, _ := fiberCacheTestRequest(t, app, fiber.MethodGet, "http://example.test/", "", http.Header{"x-tenant": {"b"}})
+	if string(a) == string(b) {
+		t.Fatalf("lowercase Vary header did not partition: %q", a)
+	}
+}
+
+// TestFiberCacheIgnoresUnkeyedHeaders 验证不参与策略和键的请求头 (如 User-Agent) 不影响命中.
+func TestFiberCacheIgnoresUnkeyedHeaders(t *testing.T) {
+	app := fiber.New()
+	app.Use(CacheByRequestURI(time.Minute))
+	calls := 0
+	app.Get("/", func(c fiber.Ctx) error {
+		calls++
+		return c.SendString(strconv.Itoa(calls))
+	})
+	for _, agent := range []string{"agent-a", "agent-b"} {
+		fiberCacheTestRequest(t, app, fiber.MethodGet, "http://example.test/", "", http.Header{"User-Agent": {agent}})
+	}
+	if calls != 1 {
+		t.Fatalf("unkeyed header partitioned the cache: handler calls = %d", calls)
+	}
+}
+
+// TestFiberCacheReentry 覆盖同一请求再次经过缓存: RestartRouting 会重新执行全局中间件,
+// 同一实例也可能在路由组和路由上重复注册. 内层不得等待外层持有的键锁而自锁 (app.Test 超时即失败),
+// 实际执行的路由仍可正常缓存和回放.
+func TestFiberCacheReentry(t *testing.T) {
+	t.Run("restart_routing", func(t *testing.T) {
+		app := fiber.New()
+		var calls atomic.Int32
+		app.Use(CacheByRequestURI(time.Minute))
+		app.Get("/a", func(c fiber.Ctx) error {
+			c.Path("/b")
+			return c.RestartRouting()
+		})
+		app.Get("/b", func(c fiber.Ctx) error {
+			calls.Add(1)
+			return c.SendString("hello-b")
+		})
+		for i := range 2 {
+			if body, _ := fiberCacheTestRequest(t, app, fiber.MethodGet, "http://example.test/a", "", nil); string(body) != "hello-b" {
+				t.Fatalf("request %d body = %q", i, body)
+			}
+		}
+		if calls.Load() != 1 {
+			t.Fatalf("rerouted response was not cached: handler calls = %d", calls.Load())
+		}
+	})
+	t.Run("double_registration", func(t *testing.T) {
+		app := fiber.New()
+		cache := CacheByRequestURI(time.Minute)
+		var calls atomic.Int32
+		app.Group("/api", cache).Get("/x", cache, func(c fiber.Ctx) error {
+			calls.Add(1)
+			return c.SendString("x")
+		})
+		for i := range 2 {
+			if body, _ := fiberCacheTestRequest(t, app, fiber.MethodGet, "http://example.test/api/x", "", nil); string(body) != "x" {
+				t.Fatalf("request %d body = %q", i, body)
+			}
+		}
+		if calls.Load() != 1 {
+			t.Fatalf("handler calls = %d, want 1", calls.Load())
+		}
+	})
+}
+
+// TestFiberCacheOuterConditionalHeaders 验证外层在缓存之前按未进入键的输入设置的头不进入条目:
+// 命中时外层会为当前请求重新设置, 存入条目只会把某个访客的值回放给其他访客. 业务设置的头照常回放.
+func TestFiberCacheOuterConditionalHeaders(t *testing.T) {
+	app := fiber.New()
+	app.Use(func(c fiber.Ctx) error {
+		if strings.Contains(c.Get("User-Agent"), "internal") {
+			c.Set("X-Debug-Backend", "10.0.0.5")
+		}
+		c.Set("X-Frame-Options", "DENY")
+		return c.Next()
+	}, CacheByRequestURI(time.Minute))
+	app.Get("/p", func(c fiber.Ctx) error {
+		c.Set("X-Page", "1")
+		return c.SendString("page")
+	})
+	_, first := fiberCacheTestRequest(t, app, fiber.MethodGet, "http://example.test/p", "", http.Header{"User-Agent": {"internal-probe"}})
+	if first.Get("X-Debug-Backend") != "10.0.0.5" {
+		t.Fatalf("outer header missing on miss: %v", first)
+	}
+	for _, agent := range []string{"Mozilla/5.0", "internal-probe"} {
+		body, hit := fiberCacheTestRequest(t, app, fiber.MethodGet, "http://example.test/p", "", http.Header{"User-Agent": {agent}})
+		want := map[string]string{"Mozilla/5.0": "", "internal-probe": "10.0.0.5"}[agent]
+		if hit.Get("Age") == "" || string(body) != "page" || hit.Get("X-Debug-Backend") != want ||
+			hit.Get("X-Frame-Options") != "DENY" || hit.Get("X-Page") != "1" {
+			t.Fatalf("agent %s hit headers = %v, body = %q", agent, hit, body)
+		}
+	}
+}
+
+// TestFiberCacheEffectiveRoute 验证外层按未进入键的请求头改写路径或查询时, 不同改写结果分别缓存:
+// 键只含原始请求目标时, 移动端重写一类的中间件会让桌面与移动响应互相覆盖.
+func TestFiberCacheEffectiveRoute(t *testing.T) {
+	app := fiber.New()
+	app.Use(func(c fiber.Ctx) error {
+		switch agent := c.Get("User-Agent"); {
+		case strings.Contains(agent, "Mobile"):
+			c.Path("/m" + c.Path())
+		case strings.Contains(agent, "Lite"):
+			c.Request().URI().SetQueryString("lite=1")
+		}
+		return c.Next()
+	}, CacheByRequestURI(time.Minute))
+	page := func(c fiber.Ctx) error {
+		return c.SendString(c.Path() + "?" + string(c.Request().URI().QueryString()))
+	}
+	app.Get("/home", page)
+	app.Get("/m/home", page)
+	for range 2 {
+		for agent, want := range map[string]string{"Desktop": "/home?", "Mobile": "/m/home?", "Lite": "/home?lite=1"} {
+			body, _ := fiberCacheTestRequest(t, app, fiber.MethodGet, "http://example.test/home", "", http.Header{"User-Agent": {agent}})
+			if string(body) != want {
+				t.Fatalf("agent %s body = %q, want %q", agent, body, want)
+			}
+		}
 	}
 }
 
@@ -623,6 +766,156 @@ func TestFiberCacheTimeoutDoesNotReadActiveResponse(t *testing.T) {
 	}
 	if resp.StatusCode != fiber.StatusServiceUnavailable {
 		t.Fatalf("timeout status = %d, want 503", resp.StatusCode)
+	}
+}
+
+// TestFiberCacheInsideTimeout 覆盖 `WithTimeout -> 缓存 -> 业务`: 缓存运行在超时工作协程, 截止后与请求协程并发访问 Ctx,
+// 只能在入口识别 WithTimeout 标记后整段透传. 期限内完成或截止后返回 (错误与 nil) 都不命中, 不存储,
+// 也不读取超时协程无锁写入的 fasthttp 标记 (-race 下可复现); 工作协程都能退出.
+func TestFiberCacheInsideTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		timeout time.Duration
+		handler func(c fiber.Ctx) error
+	}{
+		{"in_time", time.Minute, func(c fiber.Ctx) error { return c.SendString("ok") }},
+		{"late_error", time.Millisecond, func(c fiber.Ctx) error { <-c.Context().Done(); return c.Context().Err() }},
+		{"late_nil", time.Millisecond, func(c fiber.Ctx) error { <-c.Context().Done(); return nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := fiber.New()
+			cache := CacheByRequestURI(time.Minute)
+			var finished chan struct{}
+			var calls atomic.Int32
+			app.Use(WithTimeout(tc.timeout), func(c fiber.Ctx) error {
+				defer close(finished)
+				return cache(c)
+			})
+			app.Get("/", func(c fiber.Ctx) error {
+				calls.Add(1)
+				return tc.handler(c)
+			})
+			for range 10 {
+				finished = make(chan struct{})
+				resp, err := app.Test(httptest.NewRequest(fiber.MethodGet, "http://example.test/", nil))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := resp.Body.Close(); err != nil {
+					t.Fatal(err)
+				}
+				if resp.Header.Get("Age") != "" {
+					t.Fatal("cache inside WithTimeout served a hit")
+				}
+				select {
+				case <-finished:
+				case <-time.After(5 * time.Second):
+					t.Fatal("timeout worker did not exit")
+				}
+			}
+			if calls.Load() != 10 {
+				t.Fatalf("cache inside WithTimeout stored a response: handler calls = %d", calls.Load())
+			}
+		})
+	}
+}
+
+// TestFiberCacheSyncDeadlineOuter 覆盖外层同步期限中间件 -> 缓存 -> timeout (OnTimeout 写出 200 兜底并返回 nil):
+// 普通 context 期限不代表缓存运行在工作协程, 缓存仍在请求协程以超时标记识别截止, 兜底不缓存;
+// 期限内正常完成的响应照常缓存. 截止后的业务只等待取消而不写响应, 避免与 OnTimeout 并发写同一响应
+// (这是 Fiber timeout 自身的并发约束, 与缓存无关).
+func TestFiberCacheSyncDeadlineOuter(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		late  bool
+		calls int32
+	}{{"timeout_fallback", true, 3}, {"in_time", false, 1}} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := fiber.New()
+			var calls atomic.Int32
+			// 每个工作协程退出时发送一次; 用通道而非 WaitGroup, 工作协程内 Add 与测试协程 Wait 之间没有先后关系.
+			exited := make(chan struct{}, 3)
+			app.Use(func(c fiber.Ctx) error {
+				ctx, cancel := context.WithTimeout(c.Context(), time.Minute)
+				defer cancel()
+				c.SetContext(ctx)
+				return c.Next()
+			}, CacheByRequestURI(time.Minute), timeout.New(func(c fiber.Ctx) error {
+				defer func() { exited <- struct{}{} }()
+				return c.Next()
+			}, timeout.Config{
+				Timeout:   10 * time.Millisecond,
+				OnTimeout: func(c fiber.Ctx) error { return c.SendString("fallback") },
+			}))
+			app.Get("/", func(c fiber.Ctx) error {
+				calls.Add(1)
+				if tc.late {
+					<-c.Context().Done()
+					return nil
+				}
+				return c.SendString("ok")
+			})
+			for range 3 {
+				fiberCacheTestRequest(t, app, fiber.MethodGet, "http://example.test/", "", nil)
+			}
+			// 命中不进入 timeout, 只等待实际启动的工作协程.
+			for range calls.Load() {
+				select {
+				case <-exited:
+				case <-time.After(5 * time.Second):
+					t.Fatal("timeout worker did not exit")
+				}
+			}
+			if calls.Load() != tc.calls {
+				t.Fatalf("handler calls = %d, want %d", calls.Load(), tc.calls)
+			}
+		})
+	}
+}
+
+// TestFiberCacheTimeoutFallbackNotCached 覆盖 `缓存 -> timeout -> 业务` 且 OnTimeout 写出 200 兜底并返回 nil:
+// 错误与入口上下文都看不出截止, 只能由同一请求协程写入的 fasthttp 超时标记识别, 兜底响应不得缓存.
+func TestFiberCacheTimeoutFallbackNotCached(t *testing.T) {
+	app := fiber.New()
+	var calls atomic.Int32
+	app.Use(CacheByRequestURI(time.Minute), timeout.New(func(c fiber.Ctx) error { return c.Next() }, timeout.Config{
+		Timeout:   time.Millisecond,
+		OnTimeout: func(c fiber.Ctx) error { return c.SendString("fallback") },
+	}))
+	app.Get("/", func(c fiber.Ctx) error {
+		calls.Add(1)
+		<-c.Context().Done()
+		return nil
+	})
+	for i := range 2 {
+		if body, _ := fiberCacheTestRequest(t, app, fiber.MethodGet, "http://example.test/", "", nil); string(body) != "fallback" {
+			t.Fatalf("request %d body = %q", i, body)
+		}
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("timeout fallback was cached: handler calls = %d", calls.Load())
+	}
+}
+
+// TestFiberCacheInnerContextCancel 验证内层中间件替换并在返回时 cancel 的派生上下文不被当作截止, 响应照常缓存.
+func TestFiberCacheInnerContextCancel(t *testing.T) {
+	app := fiber.New()
+	var calls atomic.Int32
+	app.Use(CacheByRequestURI(time.Minute), func(c fiber.Ctx) error {
+		ctx, cancel := context.WithCancel(c.Context())
+		defer cancel()
+		c.SetContext(ctx)
+		return c.Next()
+	})
+	app.Get("/", func(c fiber.Ctx) error {
+		calls.Add(1)
+		return c.SendString("ok")
+	})
+	for range 2 {
+		fiberCacheTestRequest(t, app, fiber.MethodGet, "http://example.test/", "", nil)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls.Load())
 	}
 }
 
@@ -699,6 +992,31 @@ func TestFiberCacheEndToEndHeaders(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("handler calls = %d, want 1", calls)
+	}
+}
+
+// TestFiberCacheReplayAbsentRepresentation 验证业务冷请求删除外层语言头后,
+// 缓存回放也保持该头缺失, 不重新暴露外层默认值.
+func TestFiberCacheReplayAbsentRepresentation(t *testing.T) {
+	app := fiber.New()
+	var calls atomic.Int32
+	app.Use(func(c fiber.Ctx) error {
+		c.Set("Content-Language", "en")
+		return c.Next()
+	})
+	app.Get("/", CacheByRequestURI(time.Minute), func(c fiber.Ctx) error {
+		calls.Add(1)
+		c.Response().Header.Del("Content-Language")
+		return c.SendString("ok")
+	})
+	for i := range 2 {
+		body, header := fiberCacheTestRequest(t, app, http.MethodGet, "http://example.test/", "", nil)
+		if string(body) != "ok" || len(header.Values("Content-Language")) != 0 {
+			t.Fatalf("request %d: body = %q, language = %q", i, body, header.Values("Content-Language"))
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls.Load())
 	}
 }
 

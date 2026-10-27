@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/fufuok/pkg/web/internal/httpcache"
 )
 
 // cacheGinRequest 每次创建独立入站请求, 让缓存键测试覆盖真实 Host 和原始 RequestURI.
@@ -269,6 +271,256 @@ func TestGinCacheGenerationAge(t *testing.T) {
 	})
 }
 
+// slowCommitWriter 模拟首次提交本身阻塞的外层 writer (慢连接或阻塞的包装), 提交耗时 2 秒.
+type slowCommitWriter struct {
+	gin.ResponseWriter
+	slept bool
+}
+
+// block 只让首次提交阻塞一次.
+func (w *slowCommitWriter) block() {
+	if !w.slept {
+		w.slept = true
+		time.Sleep(2 * time.Second)
+	}
+}
+
+// WriteHeaderNow 提交后阻塞.
+func (w *slowCommitWriter) WriteHeaderNow() {
+	w.ResponseWriter.WriteHeaderNow()
+	w.block()
+}
+
+// Write 写出后阻塞.
+func (w *slowCommitWriter) Write(data []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(data)
+	w.block()
+	return n, err
+}
+
+// TestGinCacheSlowFirstCommitAge 覆盖首次提交本身阻塞: 年龄从提交开始前计算, 头快照取提交之前.
+// max-age=1 而首次提交耗时 2 秒, 保存时已经过期, 不得缓存.
+func TestGinCacheSlowFirstCommitAge(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(c *gin.Context)
+	}{
+		{name: "write", write: func(c *gin.Context) { c.String(200, "body") }},
+		{name: "header-now", write: func(c *gin.Context) { c.Status(200); c.Writer.WriteHeaderNow() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				engine := gin.New()
+				engine.Use(func(c *gin.Context) {
+					c.Writer = &slowCommitWriter{ResponseWriter: c.Writer}
+					c.Next()
+				}, CacheByRequestURI(time.Minute))
+				calls := 0
+				engine.GET("/", func(c *gin.Context) {
+					calls++
+					c.Header("Cache-Control", "max-age=1")
+					tc.write(c)
+				})
+				for range 2 {
+					cacheGinRequest(engine, http.MethodGet, "/", "", nil)
+				}
+				if calls != 2 {
+					t.Fatalf("response expired during first commit was cached: calls = %d", calls)
+				}
+			})
+		})
+	}
+}
+
+// gzipOuterWriter 模拟 gzhttp 一类的 net/http 外层压缩: 提交时才设置 Content-Encoding 并压缩正文.
+type gzipOuterWriter struct {
+	http.ResponseWriter
+	gz      *gzip.Writer
+	started bool
+}
+
+// start 首次提交时决定是否压缩, 已有编码的响应透传.
+func (w *gzipOuterWriter) start() {
+	if w.started {
+		return
+	}
+	w.started = true
+	if w.Header().Get("Content-Encoding") == "" {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Del("Content-Length")
+		w.gz = gzip.NewWriter(w.ResponseWriter)
+	}
+}
+
+// WriteHeader 提交前决定编码.
+func (w *gzipOuterWriter) WriteHeader(code int) {
+	w.start()
+	w.ResponseWriter.WriteHeader(code)
+}
+
+// Write 按提交时的决定压缩或透传.
+func (w *gzipOuterWriter) Write(data []byte) (int, error) {
+	w.start()
+	if w.gz != nil {
+		return w.gz.Write(data)
+	}
+	return w.ResponseWriter.Write(data)
+}
+
+// TestGinCacheOuterCommitTimeHeaders 覆盖外层 writer 在提交时才加入的字段: 头快照必须取自业务写出之前.
+// net/http 外层压缩在提交时设置 Content-Encoding, 而缓存记录的是压缩前正文, 快照若含该头,
+// 命中会把明文标成 gzip; 外层按访客补写的头同样不得被缓存并串给其他访客.
+func TestGinCacheOuterCommitTimeHeaders(t *testing.T) {
+	t.Run("gzip", func(t *testing.T) {
+		engine := gin.New()
+		var calls atomic.Int32
+		engine.GET("/", CacheByRequestURI(time.Minute), func(c *gin.Context) {
+			calls.Add(1)
+			c.String(200, "plain payload")
+		})
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gw := &gzipOuterWriter{ResponseWriter: w}
+			engine.ServeHTTP(gw, r)
+			if gw.gz != nil {
+				_ = gw.gz.Close()
+			}
+		}))
+		defer server.Close()
+		for i := range 3 {
+			resp, err := server.Client().Get(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if readErr != nil || string(body) != "plain payload" {
+				t.Fatalf("request %d: body = %q, err = %v", i, body, readErr)
+			}
+		}
+		if calls.Load() != 1 {
+			t.Fatalf("handler calls = %d, want 1", calls.Load())
+		}
+	})
+	t.Run("visitor", func(t *testing.T) {
+		engine := gin.New()
+		engine.Use(func(c *gin.Context) {
+			c.Writer = &visitorWriter{ResponseWriter: c.Writer, id: c.GetHeader("X-Test-Visitor")}
+			c.Next()
+		})
+		var calls atomic.Int32
+		engine.GET("/", CacheByRequestURI(time.Minute), func(c *gin.Context) {
+			calls.Add(1)
+			c.String(200, "shared")
+		})
+		for _, id := range []string{"a", "b", "c"} {
+			rec := cacheGinRequest(engine, http.MethodGet, "/", "", http.Header{"X-Test-Visitor": {id}})
+			if got := rec.Header().Get("X-Visitor-Id"); got != id || rec.Body.String() != "shared" {
+				t.Fatalf("visitor %s received id %q body %q", id, got, rec.Body.String())
+			}
+		}
+		if calls.Load() != 1 {
+			t.Fatalf("handler calls = %d, want 1", calls.Load())
+		}
+	})
+}
+
+// visitorWriter 模拟外层 writer 在提交时按访客补写缺失的头.
+type visitorWriter struct {
+	gin.ResponseWriter
+	id     string
+	marked bool
+}
+
+// mark 首次提交时补写访客头, 已存在则保留.
+func (w *visitorWriter) mark() {
+	if !w.marked {
+		w.marked = true
+		if w.Header().Get("X-Visitor-Id") == "" {
+			w.Header().Set("X-Visitor-Id", w.id)
+		}
+	}
+}
+
+// WriteHeaderNow 提交前补写.
+func (w *visitorWriter) WriteHeaderNow() {
+	w.mark()
+	w.ResponseWriter.WriteHeaderNow()
+}
+
+// Write 首次写出前补写.
+func (w *visitorWriter) Write(data []byte) (int, error) {
+	w.mark()
+	return w.ResponseWriter.Write(data)
+}
+
+// WriteString 首次写出前补写.
+func (w *visitorWriter) WriteString(data string) (int, error) {
+	w.mark()
+	return w.ResponseWriter.WriteString(data)
+}
+
+// TestGinCacheEffectiveScheme 覆盖代理头中间件按 X-Forwarded-Scheme 等改写 r.URL.Scheme 的部署:
+// 业务按改写后的协议生成内容时, 键必须随之分区, 否则单个伪造请求即可污染另一协议的共享条目.
+func TestGinCacheEffectiveScheme(t *testing.T) {
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Request.URL.Scheme = c.GetHeader("X-Test-Scheme")
+		c.Next()
+	})
+	var calls atomic.Int32
+	engine.GET("/", CacheByRequestURI(time.Minute), func(c *gin.Context) {
+		calls.Add(1)
+		c.String(200, "%s://example.test/next", c.Request.URL.Scheme)
+	})
+	for _, scheme := range []string{"https", "http"} {
+		rec := cacheGinRequest(engine, http.MethodGet, "/", "", http.Header{"X-Test-Scheme": {scheme}})
+		if want := scheme + "://example.test/next"; rec.Body.String() != want {
+			t.Fatalf("scheme %s received %q", scheme, rec.Body.String())
+		}
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("effective scheme did not partition: handler calls = %d", calls.Load())
+	}
+}
+
+// TestGinCacheRequestDoesNotAllocate 锁定请求快照零分配: 代理改写的 URL.Scheme 作为独立字段进入键,
+// 不在每次命中拼接字符串; 其他字段均借用请求已有的字符串.
+func TestGinCacheRequestDoesNotAllocate(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/a?x=1", nil)
+	req.URL.Scheme = "https"
+	var sink httpcache.Request
+	if allocs := testing.AllocsPerRun(100, func() { sink = ginCacheRequest(req) }); allocs != 0 {
+		t.Fatalf("request snapshot allocates %.0f times per call", allocs)
+	}
+	if sink.EffectiveScheme != "https" {
+		t.Fatalf("effective scheme = %q", sink.EffectiveScheme)
+	}
+}
+
+// TestGinCacheReplayIsolation 验证命中回放的头值归本次响应独占: 外层在命中后原地改写或追加头值,
+// 不得影响缓存条目和后续命中.
+func TestGinCacheReplayIsolation(t *testing.T) {
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Next()
+		if values := c.Writer.Header()["X-Total-Count"]; len(values) > 0 {
+			values[0] = "mutated"
+			c.Writer.Header()["X-Total-Count"] = append(values, "extra")
+		}
+	})
+	engine.GET("/", CacheByRequestURI(time.Minute), func(c *gin.Context) {
+		c.Header("X-Total-Count", "42")
+		c.String(200, "list")
+	})
+	for i := range 4 {
+		// Result 取提交时的头快照, 外层之后的原地改写只作用于本次响应.
+		sent := cacheGinRequest(engine, http.MethodGet, "/", "", nil).Result().Header
+		if got := sent.Values("X-Total-Count"); len(got) != 1 || got[0] != "42" || i > 0 && sent.Get("Age") == "" {
+			t.Fatalf("request %d sent X-Total-Count %q, Age %q", i, got, sent.Get("Age"))
+		}
+	}
+}
+
 // TestGinCacheConcurrentMiss 用通道控制首个回源, 不把 Mutex 争用和虚拟计时混合.
 func TestGinCacheConcurrentMiss(t *testing.T) {
 	engine := gin.New()
@@ -291,6 +543,77 @@ func TestGinCacheConcurrentMiss(t *testing.T) {
 	group.Wait()
 	if calls.Load() != 1 {
 		t.Fatalf("concurrent miss executed %d times", calls.Load())
+	}
+}
+
+// cacheFinalStatusWriter 模拟外层 writer 在实际写出前将状态改为失败.
+type cacheFinalStatusWriter struct{ gin.ResponseWriter }
+
+// Write 让状态变化发生在缓存首次快照之后, 验证最终状态仍决定能否保存.
+func (w *cacheFinalStatusWriter) Write(data []byte) (int, error) {
+	w.ResponseWriter.WriteHeader(http.StatusInternalServerError)
+	return w.ResponseWriter.Write(data)
+}
+
+// WriteString 保证文本写入经过与字节写入一致的状态变换.
+func (w *cacheFinalStatusWriter) WriteString(data string) (int, error) {
+	return w.Write([]byte(data))
+}
+
+// TestGinCacheFinalWriterStatus 验证复用首次头快照不会缓存随后被外层 writer 改成500的响应.
+func TestGinCacheFinalWriterStatus(t *testing.T) {
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Writer = &cacheFinalStatusWriter{ResponseWriter: c.Writer}
+		c.Next()
+	}, CacheByRequestURI(time.Minute))
+	calls := 0
+	engine.GET("/", func(c *gin.Context) {
+		calls++
+		c.String(http.StatusOK, "%d", calls)
+	})
+	for i := range 2 {
+		rec := cacheGinRequest(engine, http.MethodGet, "/", "", nil)
+		if rec.Code != http.StatusInternalServerError || rec.Body.String() != strconv.Itoa(i+1) {
+			t.Fatalf("request %d: status=%d body=%q", i, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestGinCacheHeaderOnly 区分未提交与已提交的空响应, 不用正文长度推断是否可缓存.
+func TestGinCacheHeaderOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		commit func(*gin.Context)
+		calls  int
+	}{
+		{"automatic", func(*gin.Context) {}, 2},
+		{"header-now", func(c *gin.Context) { c.Writer.WriteHeaderNow() }, 1},
+		{"empty-write", func(c *gin.Context) { _, _ = c.Writer.Write(nil) }, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := gin.New()
+			engine.Use(CacheByRequestURI(time.Minute))
+			calls := 0
+			engine.GET("/", func(c *gin.Context) {
+				calls++
+				c.Header("X-Result", "empty")
+				c.Status(http.StatusOK)
+				tc.commit(c)
+			})
+			for i := range 2 {
+				rec := cacheGinRequest(engine, http.MethodGet, "/", "", nil)
+				if rec.Code != http.StatusOK || rec.Body.Len() != 0 || rec.Header().Get("X-Result") != "empty" {
+					t.Fatalf("invalid header-only response: %+v", rec)
+				}
+				if got := rec.Header().Get("Age"); (got != "") != (i == 1 && tc.calls == 1) {
+					t.Fatalf("request %d: unexpected Age %q", i, got)
+				}
+			}
+			if calls != tc.calls {
+				t.Fatalf("handler calls=%d, want %d", calls, tc.calls)
+			}
+		})
 	}
 }
 
@@ -354,7 +677,7 @@ func TestGinCacheExtremeRequestLimit(t *testing.T) {
 	}
 }
 
-// TestGinCacheHeaderValueBoundaries 区分单行逗号值和多个头行, 并防止非规范键名掩盖凭据.
+// TestGinCacheHeaderValueBoundaries 区分单行逗号值和多个头行, 并检查空首行后的凭据.
 func TestGinCacheHeaderValueBoundaries(t *testing.T) {
 	engine := gin.New()
 	calls := 0
@@ -368,9 +691,9 @@ func TestGinCacheHeaderValueBoundaries(t *testing.T) {
 	if first.Body.String() != "1:a,b" || second.Body.String() != "2:a" {
 		t.Fatalf("first=%s second=%s", first.Body.String(), second.Body.String())
 	}
-	cacheGinRequest(engine, "GET", "/a", "", http.Header{"X-Tenant": {"a,b"}, "authorization": {"Bearer test"}})
+	cacheGinRequest(engine, "GET", "/a", "", http.Header{"X-Tenant": {"a,b"}, "Authorization": {"", "Bearer test"}})
 	if calls != 3 {
-		t.Fatal("noncanonical authorization key bypassed privacy check")
+		t.Fatal("second authorization value bypassed privacy check")
 	}
 }
 
@@ -583,8 +906,8 @@ func TestGinCacheRequestTrailers(t *testing.T) {
 }
 
 // TestGinCacheReplayContentLength 覆盖外层预设长度头: 冷 miss 由业务修正长度, 热 hit 跳过业务,
-// 回放必须按缓存正文重写长度并删除非规范大小写的同名键. 否则短长度令服务端截断并报 ErrContentLength,
-// 长长度令客户端读到 unexpected EOF, 非规范键还会产生重复长度头.
+// 回放必须清除旧长度并交最终 writer 定界. 否则短长度令服务端截断并报 ErrContentLength,
+// 长长度令客户端读到 unexpected EOF.
 func TestGinCacheReplayContentLength(t *testing.T) {
 	const payload = "cached response payload"
 	for _, tc := range []struct {
@@ -594,7 +917,6 @@ func TestGinCacheReplayContentLength(t *testing.T) {
 	}{
 		{name: "short", key: "Content-Length", value: "1"},
 		{name: "long", key: "Content-Length", value: "999"},
-		{name: "noncanonical", key: "content-length", value: "1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := gin.New()
@@ -633,6 +955,586 @@ func TestGinCacheReplayContentLength(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGinCacheReplayOuterBodyTransform 验证外层 writer 修改实际字节时, 命中不能
+// 把缓存正文长度当成最终网络长度; 旧长度仍须清除, 让 net/http 计算真实长度.
+func TestGinCacheReplayOuterBodyTransform(t *testing.T) {
+	engine := gin.New()
+	var calls atomic.Int32
+	engine.Use(func(c *gin.Context) {
+		c.Header("Content-Length", "100")
+		original := c.Writer
+		c.Writer = &cacheAppendWriter{ResponseWriter: original}
+		c.Next()
+		c.Writer = original
+	}, CacheByRequestURI(time.Minute))
+	engine.GET("/", func(c *gin.Context) {
+		calls.Add(1)
+		c.Writer.Header().Del("Content-Length")
+		_, _ = c.Writer.WriteString("ok")
+	})
+	server := httptest.NewServer(engine)
+	defer server.Close()
+	for i := range 2 {
+		resp, err := server.Client().Get(server.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil || string(body) != "ok-outer" || resp.ContentLength != int64(len(body)) {
+			t.Fatalf("request %d: body = %q, length = %d, read = %v", i, body, resp.ContentLength, readErr)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls.Load())
+	}
+}
+
+// cacheAppendWriter 模拟外层在写出时增加字节, 与压缩等正文变换具有相同长度边界.
+type cacheAppendWriter struct{ gin.ResponseWriter }
+
+// Write 返回输入长度以符合 writer 契约, 底层实际发送追加后的正文.
+func (w *cacheAppendWriter) Write(body []byte) (int, error) {
+	_, err := w.ResponseWriter.Write(append(bytes.Clone(body), "-outer"...))
+	return len(body), err
+}
+
+// WriteString 与 Write 采用一致变换, 不让 Gin 的字符串写入绕过探针.
+func (w *cacheAppendWriter) WriteString(body string) (int, error) {
+	return w.Write([]byte(body))
+}
+
+// TestGinCacheReplayAbsentRepresentation 验证冷请求删除外层语言头后,
+// 热命中仍须维持头不存在, 而非重新露出外层旧表示信息.
+func TestGinCacheReplayAbsentRepresentation(t *testing.T) {
+	engine := gin.New()
+	var calls atomic.Int32
+	engine.Use(func(c *gin.Context) {
+		c.Header("Content-Language", "en")
+		c.Next()
+	}, CacheByRequestURI(time.Minute))
+	engine.GET("/", func(c *gin.Context) {
+		calls.Add(1)
+		c.Writer.Header().Del("Content-Language")
+		c.String(http.StatusOK, "ok")
+	})
+	server := httptest.NewServer(engine)
+	defer server.Close()
+	for i := range 2 {
+		resp, err := server.Client().Get(server.URL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil || string(body) != "ok" || len(resp.Header.Values("Content-Language")) != 0 {
+			t.Fatalf("request %d: body = %q, language = %q, read = %v", i, body, resp.Header.Values("Content-Language"), readErr)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls.Load())
+	}
+}
+
+// TestGinCacheOuterEncodingFieldsBypass 验证编码头首值为空时仍检查后续字段行.
+func TestGinCacheOuterEncodingFieldsBypass(t *testing.T) {
+	engine := gin.New()
+	var calls atomic.Int32
+	engine.Use(func(c *gin.Context) {
+		c.Writer.Header()["Content-Encoding"] = []string{"", "identity"}
+		c.Next()
+	}, CacheByRequestURI(time.Minute))
+	engine.GET("/", func(c *gin.Context) {
+		calls.Add(1)
+		_, _ = c.Writer.WriteString(strconv.Itoa(int(calls.Load())))
+	})
+	for i := range 2 {
+		rec := cacheGinRequest(engine, http.MethodGet, "/", "", nil)
+		if rec.Body.String() != strconv.Itoa(i+1) {
+			t.Fatalf("request %d: body = %q, want own response", i, rec.Body.String())
+		}
+	}
+}
+
+// TestGinCacheNoncanonicalResponseHeaders 覆盖违反规范头名约定的处理器: 直接写入 Header map 的
+// 小写 set-cookie 或 cache-control 会被 net/http 原样发送并由客户端遵从, 缓存必须拒绝共享该响应,
+// 否则第二个用户会收到第一个用户的私有正文. 规范名的普通字段仍可缓存, 作为对照.
+func TestGinCacheNoncanonicalResponseHeaders(t *testing.T) {
+	for _, tc := range []struct {
+		key, value string
+		calls      int32
+	}{
+		{key: "set-cookie", value: "uid=alice", calls: 2},
+		{key: "cache-control", value: "private", calls: 2},
+		{key: "cache-control", value: "no-store", calls: 2},
+		{key: "x-trace", value: "1", calls: 2},
+		{key: "X-Trace", value: "1", calls: 1},
+	} {
+		t.Run(tc.key+"="+tc.value, func(t *testing.T) {
+			engine := gin.New()
+			var calls atomic.Int32
+			engine.GET("/me", CacheByRequestURI(time.Minute), func(c *gin.Context) {
+				n := calls.Add(1)
+				c.Writer.Header()[tc.key] = []string{tc.value}
+				c.String(200, "user-%d", n)
+			})
+			for range 2 {
+				cacheGinRequest(engine, http.MethodGet, "/me", "", nil)
+			}
+			if got := calls.Load(); got != tc.calls {
+				t.Fatalf("handler calls = %d, want %d", got, tc.calls)
+			}
+		})
+	}
+}
+
+// commitCookieWriter 模拟会话类外层 writer: 不在业务中设置 Cookie, 而在响应提交时才加入 Set-Cookie.
+type commitCookieWriter struct {
+	gin.ResponseWriter
+	added bool
+}
+
+// addCookie 只在首次提交时加入一次会话 Cookie.
+func (w *commitCookieWriter) addCookie() {
+	if !w.added {
+		w.added = true
+		w.Header().Add("Set-Cookie", "sid=per-visitor")
+	}
+}
+
+// WriteHeaderNow 在提交前加入 Cookie.
+func (w *commitCookieWriter) WriteHeaderNow() {
+	w.addCookie()
+	w.ResponseWriter.WriteHeaderNow()
+}
+
+// Write 在首次写出正文前加入 Cookie.
+func (w *commitCookieWriter) Write(data []byte) (int, error) {
+	w.addCookie()
+	return w.ResponseWriter.Write(data)
+}
+
+// WriteString 在首次写出正文前加入 Cookie.
+func (w *commitCookieWriter) WriteString(data string) (int, error) {
+	w.addCookie()
+	return w.ResponseWriter.WriteString(data)
+}
+
+// TestGinCacheCommitTimeSetCookie 覆盖 Write 与显式 WriteHeaderNow 提交时加入的 Set-Cookie, 不覆盖 Gin 收尾自动提交.
+// 快照取自底层提交前的头, 再用提交后的实时头复核, 避免依赖会话的正文被共享给其他新访客.
+func TestGinCacheCommitTimeSetCookie(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(c *gin.Context, n int32)
+	}{
+		{name: "write", write: func(c *gin.Context, n int32) { c.String(200, "csrf-of-user-%d", n) }},
+		{name: "header-now", write: func(c *gin.Context, _ int32) { c.Status(200); c.Writer.WriteHeaderNow() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := gin.New()
+			engine.Use(func(c *gin.Context) {
+				c.Writer = &commitCookieWriter{ResponseWriter: c.Writer}
+				c.Next()
+			})
+			var calls atomic.Int32
+			engine.GET("/form", CacheByRequestURI(time.Minute), func(c *gin.Context) {
+				tc.write(c, calls.Add(1))
+			})
+			for range 2 {
+				if rec := cacheGinRequest(engine, http.MethodGet, "/form", "", nil); rec.Header().Get("Set-Cookie") == "" {
+					t.Fatal("outer writer did not add Set-Cookie")
+				}
+			}
+			if calls.Load() != 2 {
+				t.Fatalf("response with commit-time Set-Cookie was shared: handler calls = %d", calls.Load())
+			}
+		})
+	}
+}
+
+// cacheCommitHeaderWriter 模拟 Gin 之外的 net/http 中间件, 在实际提交时才补充会话或隐私策略.
+// 它包装底层 writer, 因而 Gin 收尾的自动提交也会经过这里.
+type cacheCommitHeaderWriter struct {
+	http.ResponseWriter
+	name, value string
+}
+
+// WriteHeader 在底层提交之前加入本次请求的字段, 不依赖业务是否显式提交头.
+func (w *cacheCommitHeaderWriter) WriteHeader(status int) {
+	w.Header().Set(w.name, w.value)
+	w.ResponseWriter.WriteHeader(status)
+}
+
+// TestGinCacheAutomaticCommitPolicy 通过真实 HTTP 验证自动提交才出现的 Cookie/private/no-store 不会漏过保护.
+// 两次请求均不携带凭据或变化头, 响应 token 按业务执行生成, 避免把缺少 Vary 与提交时序混为一谈.
+func TestGinCacheAutomaticCommitPolicy(t *testing.T) {
+	for _, tc := range []struct{ name, header, value string }{
+		{"cookie", "Set-Cookie", ""},
+		{"private", "Cache-Control", "private"},
+		{"no-store", "Cache-Control", "no-store"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := gin.New()
+			var calls, requests atomic.Int32
+			engine.GET("/", CacheByRequestURI(time.Minute), func(c *gin.Context) {
+				c.Header("X-Csrf-Token", fmt.Sprintf("csrf-%d", calls.Add(1)))
+				c.Status(http.StatusOK)
+			})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				value := tc.value
+				if n := requests.Add(1); tc.header == "Set-Cookie" {
+					value = fmt.Sprintf("sid=visitor-%d", n)
+				}
+				engine.ServeHTTP(&cacheCommitHeaderWriter{ResponseWriter: w, name: tc.header, value: value}, r)
+			}))
+			defer server.Close()
+			for i := 1; i <= 2; i++ {
+				resp, err := server.Client().Get(server.URL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, err := io.ReadAll(resp.Body)
+				_ = resp.Body.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				value := tc.value
+				if tc.header == "Set-Cookie" {
+					value = fmt.Sprintf("sid=visitor-%d", i)
+				}
+				if resp.StatusCode != http.StatusOK || len(body) != 0 || resp.Header.Get(tc.header) != value ||
+					resp.Header.Get("X-Csrf-Token") != fmt.Sprintf("csrf-%d", i) || resp.Header.Get("Age") != "" {
+					t.Fatalf("request %d: status=%d headers=%v body=%q", i, resp.StatusCode, resp.Header, body)
+				}
+			}
+			if calls.Load() != 2 {
+				t.Fatalf("automatic commit response was cached: handler calls=%d", calls.Load())
+			}
+		})
+	}
+}
+
+// TestGinCacheUnwrappedWrites 覆盖业务经 Unwrap 绕过记录写出: 首次经包装写出前底层已提交,
+// 或全程未经包装, 记录的正文都不完整, 不得把空或截断正文保存为 200.
+func TestGinCacheUnwrappedWrites(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		write func(c *gin.Context)
+	}{
+		{name: "bypass", write: func(c *gin.Context) {
+			raw := c.Writer.(interface{ Unwrap() http.ResponseWriter }).Unwrap()
+			_, _ = raw.Write([]byte("full body"))
+		}},
+		{name: "mixed", write: func(c *gin.Context) {
+			raw := c.Writer.(interface{ Unwrap() http.ResponseWriter }).Unwrap()
+			_, _ = raw.Write([]byte("full "))
+			_, _ = c.Writer.WriteString("body")
+		}},
+		{name: "wrapped-first", write: func(c *gin.Context) {
+			_, _ = c.Writer.WriteString("full ")
+			raw := c.Writer.(interface{ Unwrap() http.ResponseWriter }).Unwrap()
+			_, _ = raw.Write([]byte("body"))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := gin.New()
+			var calls atomic.Int32
+			engine.GET("/raw", CacheByRequestURI(time.Minute), func(c *gin.Context) {
+				calls.Add(1)
+				tc.write(c)
+			})
+			for i := range 2 {
+				if rec := cacheGinRequest(engine, http.MethodGet, "/raw", "", nil); rec.Body.String() != "full body" {
+					t.Fatalf("request %d body = %q", i, rec.Body.String())
+				}
+			}
+			if calls.Load() != 2 {
+				t.Fatalf("partially recorded response was cached: handler calls = %d", calls.Load())
+			}
+		})
+	}
+}
+
+// ginCacheServeWithin 在限定时间内完成请求, 超时即判定缓存自锁; 失败后遗留的阻塞协程随测试进程退出.
+func ginCacheServeWithin(t *testing.T, handler http.Handler, target string, header http.Header) *httptest.ResponseRecorder {
+	t.Helper()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- cacheGinRequest(handler, http.MethodGet, target, "", header) }()
+	select {
+	case rec := <-done:
+		return rec
+	case <-time.After(5 * time.Second):
+		t.Fatalf("request %s deadlocked", target)
+		return nil
+	}
+}
+
+// TestGinCacheReentry 覆盖同一请求再次经过缓存: HandleContext 内部重路由会重置 c.Writer 并重新执行全局中间件,
+// 同一实例也可能在路由组和路由上重复注册. 内层不得等待外层持有的键锁而自锁; 绕过记录 writer 写出的正文
+// 不得被当作空响应缓存, 实际执行的路由仍可正常缓存和回放.
+func TestGinCacheReentry(t *testing.T) {
+	t.Run("global_handle_context", func(t *testing.T) {
+		engine := gin.New()
+		var calls atomic.Int32
+		engine.Use(CacheByRequestURI(time.Minute))
+		engine.GET("/a", func(c *gin.Context) {
+			c.Request.URL.Path = "/b"
+			engine.HandleContext(c)
+		})
+		engine.GET("/b", func(c *gin.Context) {
+			calls.Add(1)
+			c.String(200, "hello-b")
+		})
+		for i := range 2 {
+			if rec := ginCacheServeWithin(t, engine, "/a", nil); rec.Code != 200 || rec.Body.String() != "hello-b" {
+				t.Fatalf("request %d: status = %d, body = %q", i, rec.Code, rec.Body.String())
+			}
+		}
+		if calls.Load() != 1 {
+			t.Fatalf("rerouted response was not cached: handler calls = %d", calls.Load())
+		}
+	})
+	t.Run("route_handle_context", func(t *testing.T) {
+		engine := gin.New()
+		var calls atomic.Int32
+		engine.GET("/a", CacheByRequestURI(time.Minute), func(c *gin.Context) {
+			c.Request.URL.Path = "/b"
+			engine.HandleContext(c)
+		})
+		engine.GET("/b", func(c *gin.Context) {
+			calls.Add(1)
+			c.String(200, "hello-b")
+		})
+		for i := range 2 {
+			if rec := ginCacheServeWithin(t, engine, "/a", nil); rec.Code != 200 || rec.Body.String() != "hello-b" {
+				t.Fatalf("request %d: status = %d, body = %q", i, rec.Code, rec.Body.String())
+			}
+		}
+		if calls.Load() != 2 {
+			t.Fatalf("response written around the recorder was cached: handler calls = %d", calls.Load())
+		}
+	})
+	t.Run("double_registration", func(t *testing.T) {
+		engine := gin.New()
+		cache := CacheByRequestURI(time.Minute)
+		var calls atomic.Int32
+		engine.Group("/api", cache).GET("/x", cache, func(c *gin.Context) {
+			calls.Add(1)
+			c.String(200, "x")
+		})
+		for i := range 2 {
+			if rec := ginCacheServeWithin(t, engine, "/api/x", nil); rec.Code != 200 || rec.Body.String() != "x" {
+				t.Fatalf("request %d: status = %d, body = %q", i, rec.Code, rec.Body.String())
+			}
+		}
+		if calls.Load() != 1 {
+			t.Fatalf("handler calls = %d, want 1", calls.Load())
+		}
+	})
+}
+
+// TestGinCacheDeclaredLength 验证声明的 Content-Length 与记录的正文不符时不缓存: 业务写出中途失败并忽略错误时,
+// 客户端收到的是截断响应, 命中由最终 writer 按缓存正文重新定界会把前缀伪装成完整结果. 一致的声明照常缓存.
+func TestGinCacheDeclaredLength(t *testing.T) {
+	engine := gin.New()
+	var calls atomic.Int32
+	engine.GET("/:size", CacheByRequestURI(time.Minute), func(c *gin.Context) {
+		calls.Add(1)
+		c.Header("Content-Length", c.Param("size"))
+		_, _ = c.Writer.WriteString("12345")
+	})
+	for _, tc := range []struct {
+		size  string
+		calls int32
+	}{{"10", 2}, {"5", 1}} {
+		calls.Store(0)
+		for range 2 {
+			cacheGinRequest(engine, http.MethodGet, "/"+tc.size, "", nil)
+		}
+		if calls.Load() != tc.calls {
+			t.Fatalf("Content-Length %s: handler calls = %d, want %d", tc.size, calls.Load(), tc.calls)
+		}
+	}
+}
+
+// TestGinCacheOuterConditionalHeaders 验证外层在缓存之前按未进入键的输入设置的头不进入条目:
+// 命中时外层会为当前请求重新设置, 存入条目只会把某个访客的值回放给其他访客. 业务设置的头照常回放.
+func TestGinCacheOuterConditionalHeaders(t *testing.T) {
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		if strings.Contains(c.Request.UserAgent(), "internal") {
+			c.Header("X-Debug-Backend", "10.0.0.5")
+		}
+		c.Header("X-Frame-Options", "DENY")
+		c.Next()
+	}, CacheByRequestURI(time.Minute))
+	engine.GET("/p", func(c *gin.Context) {
+		c.Header("X-Page", "1")
+		c.String(200, "page")
+	})
+	first := cacheGinRequest(engine, http.MethodGet, "/p", "", http.Header{"User-Agent": {"internal-probe"}})
+	if first.Header().Get("X-Debug-Backend") != "10.0.0.5" {
+		t.Fatalf("outer header missing on miss: %v", first.Header())
+	}
+	for _, agent := range []string{"Mozilla/5.0", "internal-probe"} {
+		hit := cacheGinRequest(engine, http.MethodGet, "/p", "", http.Header{"User-Agent": {agent}})
+		want := map[string]string{"Mozilla/5.0": "", "internal-probe": "10.0.0.5"}[agent]
+		if hit.Header().Get("Age") == "" || hit.Body.String() != "page" || hit.Header().Get("X-Debug-Backend") != want ||
+			hit.Header().Get("X-Frame-Options") != "DENY" || hit.Header().Get("X-Page") != "1" {
+			t.Fatalf("agent %s hit headers = %v, body = %q", agent, hit.Header(), hit.Body.String())
+		}
+	}
+}
+
+// bufferedOuterWriter 模拟处理结束后才提交的外层 net/http writer (如带最小压缩长度的 gzhttp):
+// 业务首次写出后修改的头仍会随最终提交生效.
+type bufferedOuterWriter struct {
+	http.ResponseWriter
+	header http.Header
+	code   int
+	body   bytes.Buffer
+}
+
+// Header 返回缓冲中的头集合, 提交前的修改都会生效.
+func (w *bufferedOuterWriter) Header() http.Header { return w.header }
+
+// WriteHeader 只记录首个状态码, 不立即提交.
+func (w *bufferedOuterWriter) WriteHeader(code int) {
+	if w.code == 0 {
+		w.code = code
+	}
+}
+
+// Write 只写入缓冲.
+func (w *bufferedOuterWriter) Write(data []byte) (int, error) {
+	w.WriteHeader(http.StatusOK)
+	return w.body.Write(data)
+}
+
+// flush 以最终头集合提交缓冲的响应.
+func (w *bufferedOuterWriter) flush() {
+	for name, values := range w.header {
+		w.ResponseWriter.Header()[name] = values
+	}
+	w.WriteHeader(http.StatusOK)
+	w.ResponseWriter.WriteHeader(w.code)
+	_, _ = w.ResponseWriter.Write(w.body.Bytes())
+}
+
+// TestGinCacheBufferedOuterLateHeaders 验证业务首次写出后改写表示头时不缓存: 缓冲型外层 writer 以最终头提交,
+// 冷请求客户端看到的是新值, 首次写出时的快照已不能描述正文; 未改写的响应照常缓存.
+func TestGinCacheBufferedOuterLateHeaders(t *testing.T) {
+	engine := gin.New()
+	var calls atomic.Int32
+	engine.Use(CacheByRequestURI(time.Minute))
+	engine.GET("/:mode", func(c *gin.Context) {
+		calls.Add(1)
+		c.Header("Content-Type", "text/plain")
+		_, _ = c.Writer.WriteString(`{"a":1}`)
+		if c.Param("mode") == "late" {
+			c.Header("Content-Type", "application/json")
+		}
+	})
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		outer := &bufferedOuterWriter{ResponseWriter: w, header: make(http.Header)}
+		engine.ServeHTTP(outer, r)
+		outer.flush()
+	})
+	for _, tc := range []struct {
+		path, contentType string
+		calls             int32
+	}{{"/late", "application/json", 2}, {"/fixed", "text/plain", 1}} {
+		calls.Store(0)
+		for i := range 2 {
+			rec := cacheGinRequest(handler, http.MethodGet, tc.path, "", nil)
+			if rec.Header().Get("Content-Type") != tc.contentType || rec.Body.String() != `{"a":1}` {
+				t.Fatalf("%s request %d: type = %q, body = %q", tc.path, i, rec.Header().Get("Content-Type"), rec.Body.String())
+			}
+		}
+		if calls.Load() != tc.calls {
+			t.Fatalf("%s: handler calls = %d, want %d", tc.path, calls.Load(), tc.calls)
+		}
+	}
+}
+
+// TestGinCacheEffectiveRoute 验证外层按未进入键的请求头改写路径或查询时, 不同改写结果分别缓存:
+// 键只含原始请求目标时, 移动端重写一类的入口会让桌面与移动响应互相覆盖.
+func TestGinCacheEffectiveRoute(t *testing.T) {
+	engine := gin.New()
+	engine.Use(CacheByRequestURI(time.Minute))
+	page := func(c *gin.Context) { c.String(200, c.Request.URL.Path+"?"+c.Request.URL.RawQuery) }
+	engine.GET("/home", page)
+	engine.GET("/m/home", page)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch agent := r.UserAgent(); {
+		case strings.Contains(agent, "Mobile"):
+			r.URL.Path = "/m" + r.URL.Path
+		case strings.Contains(agent, "Lite"):
+			r.URL.RawQuery = "lite=1"
+		}
+		engine.ServeHTTP(w, r)
+	})
+	for range 2 {
+		for agent, want := range map[string]string{"Desktop": "/home?", "Mobile": "/m/home?", "Lite": "/home?lite=1"} {
+			if rec := cacheGinRequest(handler, http.MethodGet, "/home", "", http.Header{"User-Agent": {agent}}); rec.Body.String() != want {
+				t.Fatalf("agent %s body = %q, want %q", agent, rec.Body.String(), want)
+			}
+		}
+	}
+}
+
+// TestGinCacheInnerDerivedContext 验证取消状态以进入缓存时的请求上下文为准: 内层超时中间件替换的派生上下文
+// 在其返回时被 cancel, 不代表客户端断开. 正常完成的响应照常缓存; 不可缓存的领头响应仍登记直通窗口,
+// 后续请求并发执行, 而不是被误判为放弃领头后逐个串行.
+func TestGinCacheInnerDerivedContext(t *testing.T) {
+	derived := func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), time.Minute)
+		defer cancel()
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+	t.Run("cacheable", func(t *testing.T) {
+		engine := gin.New()
+		var calls atomic.Int32
+		engine.GET("/", CacheByRequestURI(time.Minute), derived, func(c *gin.Context) {
+			calls.Add(1)
+			c.String(200, "ok")
+		})
+		for range 2 {
+			cacheGinRequest(engine, http.MethodGet, "/", "", nil)
+		}
+		if calls.Load() != 1 {
+			t.Fatalf("handler calls = %d, want 1", calls.Load())
+		}
+	})
+	t.Run("uncacheable", func(t *testing.T) {
+		const workers = 4
+		engine := gin.New()
+		var calls, active, peak atomic.Int32
+		engine.GET("/", CacheByRequestURI(time.Minute), derived, func(c *gin.Context) {
+			// 首个领头立即返回不可缓存响应; 其后的请求以峰值作屏障, 并发放行时同时到达, 串行时逐个等到超时.
+			if calls.Add(1) > 1 {
+				n := active.Add(1)
+				defer active.Add(-1)
+				for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
+				}
+				ginCacheAwait(func() bool { return peak.Load() >= workers-1 }, time.Second)
+			}
+			c.Header("Cache-Control", "no-store")
+			c.String(200, "private")
+		})
+		cacheGinRequest(engine, http.MethodGet, "/", "", nil)
+		var wg sync.WaitGroup
+		for range workers - 1 {
+			wg.Go(func() { cacheGinRequest(engine, http.MethodGet, "/", "", nil) })
+		}
+		wg.Wait()
+		if peak.Load() != workers-1 {
+			t.Fatalf("uncacheable requests were serialized: peak = %d", peak.Load())
+		}
+	})
 }
 
 // TestGinCacheHTTP2Get 使用真实 TLS+HTTP/2 连接验证无正文 GET 可以命中.
@@ -722,6 +1624,7 @@ func TestGinCacheUncacheableConcurrency(t *testing.T) {
 		{"no-store", func(c *gin.Context) { c.Header("Cache-Control", "no-store"); c.String(200, "data") }},
 		{"oversize", func(c *gin.Context) { c.String(200, "123456789") }},
 		{"error", func(c *gin.Context) { c.String(500, "data") }},
+		{"unsubmitted", func(c *gin.Context) { c.Header("X-Result", "empty"); c.Status(200) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := gin.New()

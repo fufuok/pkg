@@ -1,6 +1,7 @@
 package httpcache
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -18,10 +19,10 @@ func TestConfigDefaultsAndIsolation(t *testing.T) {
 		c.Config.MaxRequestBodyBytes != 64<<10 || c.ttl != 10*time.Minute {
 		t.Fatalf("unexpected defaults: %+v, ttl %v", c.Config, c.ttl)
 	}
-	if got := strings.Join(c.Config.Vary, ","); got != "Accept,Accept-Encoding,Accept-Language,Origin,X-Tenant" {
+	if got := strings.Join(c.Config.Vary, ","); got != "Accept,Accept-Encoding,Accept-Language,Origin,Forwarded,X-Forwarded-Host,X-Forwarded-Proto,X-Tenant" {
 		t.Fatalf("unexpected Vary: %s", got)
 	}
-	req := Request{Header: func(name string) string { return name }}
+	req := Request{Header: http.Header{"X-Tenant": {"tenant"}}}
 	key := c.Key(req, nil)
 	vary[0] = "X-Other"
 	c.Config.Vary[0] = "X-Changed"
@@ -52,24 +53,59 @@ func TestInvalidConfig(t *testing.T) {
 	}
 }
 
-// TestStoreCopiesAndBounds 验证 Set 隔离来源缓冲区, 同时拒绝过大条目和无效 TTL.
-func TestStoreCopiesAndBounds(t *testing.T) {
+// TestCapacityPreallocationBound 验证容量预算在 freelru 分配数组前执行, 且上限值仍可用.
+// 极大容量只检查明确的配置失败, 不让测试尝试分配巨量内存.
+func TestCapacityPreallocationBound(t *testing.T) {
+	cache := New(time.Second, Config{Capacity: maxCapacity})
+	if cache.Config.Capacity != maxCapacity {
+		t.Fatalf("capacity = %d, want %d", cache.Config.Capacity, maxCapacity)
+	}
+	for _, capacity := range []uint32{maxCapacity + 1, 1 << 30} {
+		t.Run(fmt.Sprint(capacity), func(t *testing.T) {
+			defer func() {
+				if got := recover(); got != "httpcache: capacity exceeds 65536 entries" {
+					t.Fatalf("panic = %v, want capacity limit error", got)
+				}
+			}()
+			New(time.Second, Config{Capacity: capacity})
+		})
+	}
+}
+
+// TestStoreCopiesAndTTL 验证发布的所有权约定: Prepare 隔离原始响应头的 map 与值切片, Set 紧凑复制正文,
+// 同一冻结 Header 可发布到多个键且共享而不复制; TTL 受实例上限约束, 非正 TTL 不存储.
+func TestStoreCopiesAndTTL(t *testing.T) {
 	c := New(time.Minute, Config{MaxBodyBytes: 3})
-	key := [32]byte{1}
-	source := &Entry{Header: http.Header{"Content-Type": {"text/plain"}}, Body: []byte("abc"), TTL: time.Hour}
-	c.Set(key, source)
-	source.Body[0] = 'z'
-	source.Header.Set("Content-Type", "changed")
-	got, ok := c.Get(key)
-	if !ok || string(got.Body) != "abc" || got.Header.Get("Content-Type") != "text/plain" || got.TTL != time.Minute {
-		t.Fatalf("cache should hold an isolated capped entry: %+v, %v", got, ok)
+	live := http.Header{"Content-Type": {"text/plain"}}
+	body := []byte("abc")
+	entry, ok := c.Prepare(live, body, http.StatusOK)
+	if !ok {
+		t.Fatal("response rejected")
+	}
+	entry.TTL = time.Hour
+	keys := [][32]byte{{1}, {3}}
+	for _, key := range keys {
+		c.Set(key, entry)
+	}
+	live["Content-Type"][0] = "changed"
+	live.Set("X-Late", "1")
+	body[0] = 'z'
+	for _, key := range keys {
+		got, ok := c.Get(key)
+		if !ok || string(got.Body) != "abc" || got.Header.Get("Content-Type") != "text/plain" ||
+			got.Header.Get("X-Late") != "" || got.TTL != time.Minute {
+			t.Fatalf("cache should hold an isolated capped entry: %+v, %v", got, ok)
+		}
+	}
+	first, _ := c.Get(keys[0])
+	second, _ := c.Get(keys[1])
+	if first == second || &first.Header["Content-Type"][0] != &second.Header["Content-Type"][0] ||
+		&first.Body[0] == &second.Body[0] {
+		t.Fatal("published entries should be distinct, share the frozen header and own their bodies")
 	}
 	for _, entry := range []*Entry{
-		nil,
-		{Body: []byte("abcd"), TTL: time.Second},
 		{TTL: 0},
 		{TTL: -time.Second},
-		{Header: http.Header{"X-Large": {strings.Repeat("x", maxHeaderBytes)}}, TTL: time.Second},
 	} {
 		c.Set([32]byte{2}, entry)
 		if _, exists := c.Get([32]byte{2}); exists {
@@ -87,7 +123,7 @@ func TestStoreDeductsGenerationAge(t *testing.T) {
 		key := [32]byte{1}
 		c.Set(key, &Entry{TTL: 5 * time.Second, StoredAt: start})
 		entry, ok := c.Get(key)
-		if !ok || entry.TTL != 3*time.Second || entry.ReplayHeader().Get("Age") != "2" {
+		if !ok || entry.TTL != 3*time.Second || entry.Age() != "2" {
 			t.Fatalf("generation age not retained: entry=%+v ok=%v", entry, ok)
 		}
 		time.Sleep(4 * time.Second)
@@ -163,32 +199,30 @@ func TestLRUAndFixedTTL(t *testing.T) {
 	})
 }
 
-// TestReplayHeaderAge 验证命中保留缓存指令, 保守计算 Age, 且回放头与缓存互不别名.
-func TestReplayHeaderAge(t *testing.T) {
+// TestEntryAge 验证 Age 从存储起点向上取整计算, 不写入缓存条目; 回放头的隔离由各适配器测试覆盖.
+func TestEntryAge(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		c := New(time.Minute, Config{})
 		key := [32]byte{1}
 		c.Set(key, &Entry{Header: http.Header{"Cache-Control": {"public, max-age=60"}}, TTL: time.Minute})
 		entry, _ := c.Get(key)
-		if age := entry.ReplayHeader().Get("Age"); age != "0" {
+		if age := entry.Age(); age != "0" {
 			t.Fatalf("initial age %s", age)
 		}
 		time.Sleep(200 * time.Millisecond)
-		header := entry.ReplayHeader()
-		if header.Get("Age") != "1" || header.Get("Cache-Control") != "public, max-age=60" {
-			t.Fatalf("unexpected replay headers: %v", header)
+		if age := entry.Age(); age != "1" {
+			t.Fatalf("sub-second age %s", age)
 		}
-		header.Set("Cache-Control", "private")
 		time.Sleep(800 * time.Millisecond)
-		if age := entry.ReplayHeader().Get("Age"); age != "1" {
+		if age := entry.Age(); age != "1" {
 			t.Fatalf("whole second age %s", age)
 		}
 		time.Sleep(time.Nanosecond)
-		if age := entry.ReplayHeader().Get("Age"); age != "2" {
+		if age := entry.Age(); age != "2" {
 			t.Fatalf("fractional second age %s", age)
 		}
 		if entry.Header.Get("Age") != "" || entry.Header.Get("Cache-Control") != "public, max-age=60" {
-			t.Fatal("replay mutated stored headers")
+			t.Fatal("age leaked into stored headers")
 		}
 	})
 }
@@ -206,8 +240,8 @@ func TestAcquireCoalescesAdmittedOnly(t *testing.T) {
 			for range 64 {
 				workers.Go(func() {
 					<-start
-					release := c.Acquire(key)
-					defer release()
+					release := c.Acquire(key, nil)
+					defer release(false)
 					if _, exists := c.Get(key); exists {
 						return
 					}
@@ -233,18 +267,96 @@ func TestAcquireCoalescesAdmittedOnly(t *testing.T) {
 // TestAcquireDifferentKeys 验证回源期间其他请求键仍可独立获得执行资格.
 func TestAcquireDifferentKeys(t *testing.T) {
 	c := New(time.Minute, Config{})
-	releaseFirst := c.Acquire([32]byte{1})
-	defer releaseFirst()
+	releaseFirst := c.Acquire([32]byte{1}, nil)
+	defer releaseFirst(false)
 	finished := make(chan struct{})
 	go func() {
-		release := c.Acquire([32]byte{2})
-		release()
+		release := c.Acquire([32]byte{2}, nil)
+		release(false)
 		close(finished)
 	}()
 	select {
 	case <-finished:
 	case <-time.After(5 * time.Second):
 		t.Fatal("unrelated key was blocked")
+	}
+}
+
+// TestAcquireReentrantOwner 验证同一 owner 再次获取自己持有的键锁时直接直通而不自锁,
+// 其他 owner 与 nil 仍按单飞等待; 持有者释放后身份清除, 复用同一上下文的后续请求正常获取.
+func TestAcquireReentrantOwner(t *testing.T) {
+	c := New(time.Minute, Config{})
+	key := [32]byte{1}
+	owner, other := new(int), new(int)
+	release := c.Acquire(key, owner)
+	inner := make(chan struct{})
+	go func() {
+		c.Acquire(key, owner)(false)
+		close(inner)
+	}()
+	select {
+	case <-inner:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reentrant owner deadlocked on its own key lock")
+	}
+	if lockRefs(c, key) != 1 {
+		t.Fatalf("reentrant request registered on key lock: refs = %d", lockRefs(c, key))
+	}
+	waiters := make(chan struct{}, 2)
+	for _, o := range []any{other, nil} {
+		go func() {
+			c.Acquire(key, o)(true)
+			waiters <- struct{}{}
+		}()
+	}
+	if !awaitCondition(func() bool { return lockRefs(c, key) == 3 }, 5*time.Second) {
+		t.Fatalf("other owners did not wait: refs = %d", lockRefs(c, key))
+	}
+	c.Set(key, &Entry{Body: []byte("ok"), TTL: time.Minute})
+	release(false)
+	<-waiters
+	<-waiters
+	c.store.Remove(key)
+	again := c.Acquire(key, owner)
+	if lockRefs(c, key) != 1 {
+		t.Fatal("released owner identity was retained")
+	}
+	again(true)
+	if len(c.locks) != 0 {
+		t.Fatalf("remaining locks %d", len(c.locks))
+	}
+}
+
+// TestAcquireAbandoned 验证因取消而放弃的领头请求不登记直通, 已排队的等待者依次接任而不是同时回源;
+// 未放弃的未准入释放仍登记直通.
+func TestAcquireAbandoned(t *testing.T) {
+	c := New(time.Minute, Config{})
+	key := [32]byte{1}
+	release := c.Acquire(key, nil)
+	var active, peak atomic.Int32
+	var workers sync.WaitGroup
+	for range 4 {
+		workers.Go(func() {
+			done := c.Acquire(key, nil)
+			defer done(true)
+			n := active.Add(1)
+			defer active.Add(-1)
+			for old := peak.Load(); n > old && !peak.CompareAndSwap(old, n); old = peak.Load() {
+			}
+			time.Sleep(time.Millisecond)
+		})
+	}
+	if !awaitCondition(func() bool { return lockRefs(c, key) == 5 }, 5*time.Second) {
+		t.Fatalf("waiters did not queue: refs = %d", lockRefs(c, key))
+	}
+	release(true)
+	workers.Wait()
+	if peak.Load() != 1 || c.passing(key) || len(c.locks) != 0 {
+		t.Fatalf("abandoned leader: peak = %d, passing = %v, locks = %d", peak.Load(), c.passing(key), len(c.locks))
+	}
+	c.Acquire(key, nil)(false)
+	if !c.passing(key) {
+		t.Fatal("rejected leader did not mark pass")
 	}
 }
 
@@ -278,13 +390,13 @@ func TestAcquireHitForPass(t *testing.T) {
 			const waiters = 8
 			c := New(time.Minute, Config{})
 			key := [32]byte{1}
-			release := c.Acquire(key)
+			release := c.Acquire(key, nil)
 			var active, peak, calls atomic.Int32
 			var workers sync.WaitGroup
 			for range waiters {
 				workers.Go(func() {
-					done := c.Acquire(key)
-					defer done()
+					done := c.Acquire(key, nil)
+					defer done(false)
 					if _, ok := c.Get(key); ok {
 						return
 					}
@@ -303,7 +415,7 @@ func TestAcquireHitForPass(t *testing.T) {
 			if admitted {
 				c.Set(key, &Entry{Body: []byte("ok"), TTL: time.Minute})
 			}
-			release()
+			release(false)
 			workers.Wait()
 			if admitted {
 				if calls.Load() != 0 || c.passing(key) || len(c.locks) != 0 {
@@ -316,13 +428,13 @@ func TestAcquireHitForPass(t *testing.T) {
 					calls.Load(), peak.Load(), c.passing(key), len(c.locks))
 			}
 			// 窗口内的新请求不持锁也不登记, 同键并发获得资格互不阻塞.
-			first, second := c.Acquire(key), c.Acquire(key)
+			first, second := c.Acquire(key, nil), c.Acquire(key, nil)
 			if len(c.locks) != 0 {
 				t.Fatalf("pass request registered key lock: %d", len(c.locks))
 			}
 			c.Set(key, &Entry{Body: []byte("ok"), TTL: time.Minute})
-			first()
-			second()
+			first(false)
+			second(false)
 			if c.passing(key) {
 				t.Fatal("admitted pass response did not end the pass window")
 			}
@@ -340,7 +452,7 @@ func TestPassWindowBounded(t *testing.T) {
 		} {
 			c := New(tc.ttl, Config{})
 			key := [32]byte{1}
-			c.Acquire(key)()
+			c.Acquire(key, nil)(false)
 			if !c.passing(key) {
 				t.Fatal("rejected leader did not mark pass")
 			}
@@ -352,12 +464,12 @@ func TestPassWindowBounded(t *testing.T) {
 			if c.passing(key) {
 				t.Fatalf("pass window for ttl %v exceeded %v", tc.ttl, tc.window)
 			}
-			release := c.Acquire(key)
+			release := c.Acquire(key, nil)
 			if len(c.locks) != 1 {
 				t.Fatal("expired pass window did not restore single-flight")
 			}
 			c.Set(key, &Entry{Body: []byte("ok"), TTL: time.Minute})
-			release()
+			release(false)
 			if _, ok := c.Get(key); !ok || c.passing(key) {
 				t.Fatal("admitted response after pass window was not cached")
 			}
@@ -378,7 +490,7 @@ func TestPassMarkersBounded(t *testing.T) {
 		for i := range maxPassKeys + 16 {
 			var key [32]byte
 			key[0], key[1] = byte(i), byte(i>>8)
-			c.Acquire(key)()
+			c.Acquire(key, nil)(false)
 		}
 		if got := c.passes.Len(); got != tc.want || len(c.locks) != 0 {
 			t.Fatalf("capacity %d: pass markers = %d, want %d, locks = %d", tc.capacity, got, tc.want, len(c.locks))
