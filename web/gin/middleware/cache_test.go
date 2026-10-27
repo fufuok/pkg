@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -160,9 +161,7 @@ func TestGinCacheBypassResponses(t *testing.T) {
 			engine.Use(CacheByRequestURI(time.Minute))
 			engine.GET("/a", func(c *gin.Context) {
 				calls++
-				for name, values := range tc.header {
-					c.Writer.Header()[name] = values
-				}
+				maps.Copy(c.Writer.Header(), tc.header)
 				if tc.status != 0 {
 					c.Status(tc.status)
 				}
@@ -1415,9 +1414,7 @@ func (w *bufferedOuterWriter) Write(data []byte) (int, error) {
 
 // flush 以最终头集合提交缓冲的响应.
 func (w *bufferedOuterWriter) flush() {
-	for name, values := range w.header {
-		w.ResponseWriter.Header()[name] = values
-	}
+	maps.Copy(w.ResponseWriter.Header(), w.header)
 	w.WriteHeader(http.StatusOK)
 	w.ResponseWriter.WriteHeader(w.code)
 	_, _ = w.ResponseWriter.Write(w.body.Bytes())
