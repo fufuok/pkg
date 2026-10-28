@@ -40,7 +40,8 @@ func TestLoggerFailedReloadRetryHelper(t *testing.T) {
 	if err := os.WriteFile(parent, nil, 0o600); err != nil {
 		t.Fatalf("create blocked log directory: %v", err)
 	}
-	cfg.LogConf.File = filepath.Join(parent, "app.log")
+	// 将日志目录放到阻塞文件下一级, 避免 lumberjack 的异步扫描短暂打开待删除的阻塞文件.
+	cfg.LogConf.File = filepath.Join(parent, "logs", "app.log")
 	cfg.LogConf.NoPretty = true
 	installCommonTestLoggers(io.Discard, zerolog.TraceLevel)
 	oldLogger := Log()
