@@ -1,6 +1,7 @@
 package json
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -67,5 +68,38 @@ func TestValidNestingLimit(t *testing.T) {
 		if got := Valid([]byte(object)); got != tc.want {
 			t.Errorf("object depth %d: Valid = %v, want %v (backend %s)", tc.depth, got, tc.want, Name)
 		}
+	}
+}
+
+// TestValidLargePayloadContract 验证超过 4 MiB 的大正文在默认后端与 std_json 下保持完全一致的校验结果,
+// 且超大合法正文稳态校验不产生整包拷贝分配.
+func TestValidLargePayloadContract(t *testing.T) {
+	item := []byte(`{"id":1,"msg":"` + strings.Repeat("x", 240) + `"},`)
+	count := (4<<20)/len(item) + 64
+	var buf bytes.Buffer
+	buf.Grow(count*len(item) + 16)
+	buf.WriteByte('[')
+	for range count {
+		buf.Write(item)
+	}
+	buf.WriteString(`{"id":2}]`)
+	largeValid := buf.Bytes()
+	if len(largeValid) <= 4<<20 {
+		t.Fatalf("largeValid len = %d, want > 4 MiB", len(largeValid))
+	}
+	if !Valid(largeValid) {
+		t.Fatalf("Valid(largeValid) = false, want true (backend %s)", Name)
+	}
+	if allocs := testing.AllocsPerRun(10, func() {
+		if !Valid(largeValid) {
+			t.Fatal("unexpected invalid result")
+		}
+	}); allocs != 0 {
+		t.Fatalf("Valid(largeValid) allocs = %v, want 0 (backend %s)", allocs, Name)
+	}
+
+	largeInvalid := append(bytes.Clone(largeValid), 'x')
+	if Valid(largeInvalid) {
+		t.Fatalf("Valid(largeInvalid) = true, want false (backend %s)", Name)
 	}
 }
