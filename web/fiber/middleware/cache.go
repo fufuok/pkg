@@ -176,7 +176,9 @@ func addFiberCacheHeader(headers http.Header, backing *[]string, name, value str
 	headers[name] = (*backing)[n-1 : n : n]
 }
 
-// replyWithFiberCache 回放正文及端到端元数据, 保留外层本次请求已经明确设置的非表示策略.
+// replyWithFiberCache 回放正文及端到端元数据, 命中响应与同条件冷请求一致.
+// 条目只含业务设置或改写过的头 (与外层相同的值已由 OmitInherited 剔除), 冷请求中业务后执行会覆盖外层同名头,
+// 因此回放时条目头优先; 业务未触及的外层头不在条目中, 命中时保留外层本次请求设置的值.
 // SetBody 会复制缓存正文, 避免后续压缩或业务中间件修改 Fiber 缓冲区时污染共享条目.
 func replyWithFiberCache(c fiber.Ctx, entry *httpcache.Entry) error {
 	// fasthttp 的 All 迭代中不能修改头集合, 先复制实际名称再清除旧表示元数据.
@@ -193,10 +195,7 @@ func replyWithFiberCache(c fiber.Ctx, entry *httpcache.Entry) error {
 	}
 	// Add 自行复制字段字节, 直接只读遍历共享头, 省去中间 map 和值切片克隆.
 	for name, values := range entry.Header {
-		// 默认 Content-Type 等表示头不能覆盖缓存正文的元数据; 其他头保留外层显式值.
-		if !httpcache.IsRepresentationHeader(name) && len(c.Response().Header.PeekAll(name)) > 0 {
-			continue
-		}
+		// 表示头必须与缓存正文一致; 其他条目头是业务显式结果, 同样覆盖外层同名值, 避免命中时放宽业务收紧的策略.
 		c.Response().Header.Del(name)
 		for _, value := range values {
 			c.Response().Header.Add(name, value)

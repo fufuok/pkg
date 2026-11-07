@@ -773,7 +773,8 @@ func BenchmarkGinResponseCacheHit(b *testing.B) {
 	}
 }
 
-// TestGinCacheEndToEndHeaders 验证安全策略和业务元数据随正文回放, 外层当前策略包括显式空值优先.
+// TestGinCacheEndToEndHeaders 验证安全策略和业务元数据随正文回放, 命中与同条件冷请求一致:
+// 业务显式设置的策略不被外层较宽或空值覆盖, 业务未触及的外层头按本次请求重新设置.
 func TestGinCacheEndToEndHeaders(t *testing.T) {
 	engine := gin.New()
 	calls := 0
@@ -791,6 +792,9 @@ func TestGinCacheEndToEndHeaders(t *testing.T) {
 		}
 		if c.GetHeader("X-Outer-Empty") != "" {
 			c.Writer.Header()["Content-Security-Policy"] = nil
+		}
+		if trace := c.GetHeader("X-Trace"); trace != "" {
+			c.Header("X-Outer-Trace", trace)
 		}
 		c.Next()
 	}, CacheByRequestURI(time.Minute))
@@ -812,17 +816,30 @@ func TestGinCacheEndToEndHeaders(t *testing.T) {
 			t.Fatalf("content type = %q", rec.Header().Get("Content-Type"))
 		}
 	}
-	const override = "default-src 'self'"
-	rec := cacheGinRequest(engine, "GET", "/items", "", http.Header{"X-Outer-Policy": {override}})
-	if rec.Header().Get("Content-Security-Policy") != override {
-		t.Fatal("cached security policy overwrote current outer policy")
+	outerCases := []http.Header{
+		{"X-Outer-Policy": {"default-src 'self'"}},
+		{"X-Outer-Empty": {"yes"}},
 	}
-	rec = cacheGinRequest(engine, "GET", "/items", "", http.Header{"X-Outer-Empty": {"yes"}})
-	if value, exists := rec.Header()["Content-Security-Policy"]; !exists || len(value) != 0 {
-		t.Fatalf("explicit empty outer policy lost: %v", rec.Header())
+	for i, outer := range outerCases {
+		// 每组外层条件使用独立键, 先冷后热; 两次的访客追踪值不同, 验证外层按访客设置的值不被回放.
+		path := "/items?variant=" + strconv.Itoa(i)
+		coldHeader := outer.Clone()
+		coldHeader.Set("X-Trace", "cold-trace")
+		hotHeader := outer.Clone()
+		hotHeader.Set("X-Trace", "hot-trace")
+		cold := cacheGinRequest(engine, "GET", path, "", coldHeader)
+		hot := cacheGinRequest(engine, "GET", path, "", hotHeader)
+		coldPolicy := cold.Header().Values("Content-Security-Policy")
+		hotPolicy := hot.Header().Values("Content-Security-Policy")
+		if strings.Join(coldPolicy, "\n") != policy || strings.Join(hotPolicy, "\n") != policy {
+			t.Fatalf("case %d policy cold=%v hot=%v, want business policy %q", i, coldPolicy, hotPolicy, policy)
+		}
+		if got := hot.Header().Get("X-Outer-Trace"); got != "hot-trace" {
+			t.Fatalf("case %d outer trace on hit = %q, want current request value", i, got)
+		}
 	}
-	if calls != 1 {
-		t.Fatalf("handler calls = %d, want 1", calls)
+	if calls != 1+len(outerCases) {
+		t.Fatalf("handler calls = %d, want %d", calls, 1+len(outerCases))
 	}
 }
 
@@ -1731,6 +1748,103 @@ func (c *ginCacheCancelContext) Err() error {
 	err := c.Context.Err()
 	c.once.Do(func() { close(c.checked) })
 	return err
+}
+
+// ginCacheDeadlineContext 在测试调用 expire 前报告未取消, 之后报告 DeadlineExceeded,
+// 用于确定性地模拟等待键锁期间到期的请求; 首次 Err 调用 (准入检查) 发出一次通知.
+type ginCacheDeadlineContext struct {
+	context.Context
+	cancel  context.CancelFunc
+	expired atomic.Bool
+	checked chan struct{}
+	once    sync.Once
+}
+
+// Err 在到期后返回 DeadlineExceeded, 之前透传底层状态并只通知一次准入检查已完成.
+func (c *ginCacheDeadlineContext) Err() error {
+	if c.expired.Load() {
+		return context.DeadlineExceeded
+	}
+	err := c.Context.Err()
+	c.once.Do(func() { close(c.checked) })
+	return err
+}
+
+// expire 标记到期并关闭 Done, 与真实期限到达后的可观察状态一致.
+func (c *ginCacheDeadlineContext) expire() {
+	c.expired.Store(true)
+	c.cancel()
+}
+
+// TestGinCacheExpiredWaiterDoesNotOpenPass 验证等待者在执行业务前因期限到达离开时不登记直通窗口.
+// 领头请求被客户端取消 (不存储也不登记直通), 等待者取锁时已到期并返回 503; 随后两个并发请求应合并回源:
+// 若错误登记了直通, 第二个请求会绕过键锁再次执行业务.
+func TestGinCacheExpiredWaiterDoesNotOpenPass(t *testing.T) {
+	engine := gin.New()
+	var calls atomic.Int32
+	leaderEntered, leaderRelease := make(chan struct{}), make(chan struct{})
+	nextEntered, nextRelease := make(chan struct{}), make(chan struct{})
+	engine.Use(CacheByRequestURI(time.Minute))
+	engine.GET("/a", func(c *gin.Context) {
+		switch calls.Add(1) {
+		case 1:
+			close(leaderEntered)
+			<-leaderRelease
+		case 2:
+			close(nextEntered)
+			<-nextRelease
+		}
+		c.String(200, "data")
+	})
+
+	// 领头请求持有键锁并阻塞在业务中.
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	defer cancelLeader()
+	leaderDone := make(chan struct{})
+	go func() {
+		defer close(leaderDone)
+		engine.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/a", nil).WithContext(leaderCtx))
+	}()
+	<-leaderEntered
+
+	// 等待者通过准入后阻塞在键锁上, 期间期限到达.
+	base, cancelBase := context.WithCancel(context.Background())
+	defer cancelBase()
+	waiterCtx := &ginCacheDeadlineContext{Context: base, cancel: cancelBase, checked: make(chan struct{})}
+	waiterRec := httptest.NewRecorder()
+	waiterDone := make(chan struct{})
+	go func() {
+		defer close(waiterDone)
+		engine.ServeHTTP(waiterRec, httptest.NewRequest(http.MethodGet, "/a", nil).WithContext(waiterCtx))
+	}()
+	<-waiterCtx.checked
+	// 给等待者时间进入键锁; 若尚未进入, 它会在 Acquire 后看到到期, 结论相同.
+	time.Sleep(20 * time.Millisecond)
+	waiterCtx.expire()
+	cancelLeader()
+	close(leaderRelease)
+	<-leaderDone
+	<-waiterDone
+	if waiterRec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expired waiter status = %d, want 503", waiterRec.Code)
+	}
+
+	// 新领头阻塞在业务中, 第二个请求应排队等待并在领头存储后命中, 业务总次数为 2.
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() { firstDone <- cacheGinRequest(engine, "GET", "/a", "", nil) }()
+	<-nextEntered
+	secondDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() { secondDone <- cacheGinRequest(engine, "GET", "/a", "", nil) }()
+	// 若直通窗口被误登记, 第二个请求会立即执行业务使 calls 变为 3.
+	time.Sleep(50 * time.Millisecond)
+	close(nextRelease)
+	first, second := <-firstDone, <-secondDone
+	if first.Code != 200 || second.Code != 200 || second.Body.String() != "data" {
+		t.Fatalf("first=%d second=%d body=%q", first.Code, second.Code, second.Body.String())
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("handler calls = %d, want 2: expired waiter opened a pass window", got)
+	}
 }
 
 // TestGinCacheCanceledWaiter 验证等待键锁期间被取消的请求返回明确的 503, 不写出误导性的空 200.

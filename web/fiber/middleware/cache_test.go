@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -941,7 +942,7 @@ func fiberCacheTestRequest(t *testing.T, app *fiber.App, method, target, body st
 }
 
 // TestFiberCacheEndToEndHeaders 保留安全策略和业务元数据, 同时验证默认文本类型不会覆盖缓存 JSON.
-// 外层本次请求的非表示头包括空值优先, 缓存正文对应的表示头仍必须由条目恢复.
+// 命中与同条件冷请求一致: 业务显式设置的策略不被外层值覆盖, 业务未触及的外层头按本次请求重新设置.
 func TestFiberCacheEndToEndHeaders(t *testing.T) {
 	app := fiber.New()
 	calls := 0
@@ -958,6 +959,9 @@ func TestFiberCacheEndToEndHeaders(t *testing.T) {
 		}
 		if c.Get("X-Outer-Empty") != "" {
 			c.Set("Content-Security-Policy", "")
+		}
+		if trace := c.Get("X-Trace"); trace != "" {
+			c.Set("X-Outer-Trace", trace)
 		}
 		return c.Next()
 	}, CacheByRequestURI(time.Minute))
@@ -981,17 +985,32 @@ func TestFiberCacheEndToEndHeaders(t *testing.T) {
 			t.Fatalf("content type = %q", header.Get("Content-Type"))
 		}
 	}
-	const override = "default-src 'self'"
-	_, header := fiberCacheTestRequest(t, app, "GET", "http://example.test/items", "", http.Header{"X-Outer-Policy": {override}})
-	if header.Get("Content-Security-Policy") != override {
-		t.Fatal("cached security policy overwrote current outer policy")
+	policy := expected.Get("Content-Security-Policy")
+	outerCases := []http.Header{
+		{"X-Outer-Policy": {"default-src 'self'"}},
+		{"X-Outer-Empty": {"yes"}},
 	}
-	_, header = fiberCacheTestRequest(t, app, "GET", "http://example.test/items", "", http.Header{"X-Outer-Empty": {"yes"}})
-	if value, exists := header["Content-Security-Policy"]; !exists || len(value) != 1 || value[0] != "" {
-		t.Fatalf("explicit empty outer policy lost: %v", header)
+	for i, outer := range outerCases {
+		// 每组外层条件使用独立键, 先冷后热; 两次的访客追踪值不同, 验证外层按访客设置的值不被回放.
+		target := "http://example.test/items?variant=" + strconv.Itoa(i)
+		coldHeader := outer.Clone()
+		coldHeader.Set("X-Trace", "cold-trace")
+		hotHeader := outer.Clone()
+		hotHeader.Set("X-Trace", "hot-trace")
+		_, cold := fiberCacheTestRequest(t, app, "GET", target, "", coldHeader)
+		_, hot := fiberCacheTestRequest(t, app, "GET", target, "", hotHeader)
+		coldPolicy := cold.Values("Content-Security-Policy")
+		hotPolicy := hot.Values("Content-Security-Policy")
+		// Fiber 业务用 Add 追加, 冷请求可能同时带外层与业务值; 命中必须逐值复现冷请求, 且包含业务策略.
+		if strings.Join(coldPolicy, "\n") != strings.Join(hotPolicy, "\n") || !slices.Contains(hotPolicy, policy) {
+			t.Fatalf("case %d policy cold=%v hot=%v, want identical and containing %q", i, coldPolicy, hotPolicy, policy)
+		}
+		if got := hot.Get("X-Outer-Trace"); got != "hot-trace" {
+			t.Fatalf("case %d outer trace on hit = %q, want current request value", i, got)
+		}
 	}
-	if calls != 1 {
-		t.Fatalf("handler calls = %d, want 1", calls)
+	if calls != 1+len(outerCases) {
+		t.Fatalf("handler calls = %d, want %d", calls, 1+len(outerCases))
 	}
 }
 

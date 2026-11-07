@@ -75,10 +75,11 @@ func newResponseCache(ttl time.Duration, withBody bool, configs ...CacheConfig) 
 		// 以当前上下文标识持锁者: HandleContext 或重复注册使同一请求再次进入时直通, 不在自己持有的锁上等待.
 		release := store.Acquire(key, c)
 		// 取消状态以进入缓存时的请求上下文为准: 内层中间件替换的派生上下文会在其返回时被 cancel, 不代表客户端断开.
-		// 客户端断开 (context.Canceled) 不说明响应不可缓存, 放弃领头且不登记直通, 由下一位等待者接任;
-		// 超时等其他结果照常按未准入处理.
+		// 未执行业务就离开 (等待后已取消/超时或直接命中) 不能说明响应不可缓存, 一律按放弃处理, 不登记直通;
+		// 业务执行后客户端断开 (context.Canceled) 同样放弃领头, 由下一位等待者接任; 超时等其他结果照常按未准入处理.
 		ctx := c.Request.Context()
-		defer func() { release(errors.Is(ctx.Err(), context.Canceled)) }()
+		executed := false
+		defer func() { release(!executed || errors.Is(ctx.Err(), context.Canceled)) }()
 		// 等待期间可能已完成回源, 取消的请求不参与写入或回放. 明确返回 503 而不是仅 Abort,
 		// 否则 Gin 会在处理链结束时补写空 200, 让外层日志和统计误判为成功.
 		if ctx.Err() != nil {
@@ -96,6 +97,7 @@ func newResponseCache(ttl time.Duration, withBody bool, configs ...CacheConfig) 
 		}
 		c.Writer = writer
 		defer func() { c.Writer = writer.ResponseWriter }()
+		executed = true
 		c.Next()
 		writer.storeResponse(c, ctx, key)
 	}
@@ -144,7 +146,9 @@ func ginCacheEligible(c *gin.Context, req httpcache.Request, withBody bool, stor
 	return store.CanServe(c.Writer.Header(), c.Writer.Status())
 }
 
-// replayGinCache 回放正文及端到端元数据, 保留外层本次请求已经明确设置的非表示策略.
+// replayGinCache 回放正文及端到端元数据, 命中响应与同条件冷请求一致.
+// 条目只含业务设置或改写过的头 (与外层相同的值已由 OmitInherited 剔除), 冷请求中业务后执行会覆盖外层同名头,
+// 因此回放时条目头优先; 业务未触及的外层头不在条目中, 命中时保留外层本次请求设置的值.
 func replayGinCache(c *gin.Context, entry *httpcache.Entry) {
 	header := c.Writer.Header()
 	// 热命中跳过业务, 必须清除冷请求本会删除的默认表示头.
@@ -162,12 +166,7 @@ func replayGinCache(c *gin.Context, entry *httpcache.Entry) {
 	}
 	backing := make([]string, n)
 	for name, values := range entry.Header {
-		// 表示头必须与缓存正文一致; 其他端到端头由外层当前请求已设置的值优先.
-		if !httpcache.IsRepresentationHeader(name) {
-			if _, exists := header[name]; exists {
-				continue
-			}
-		}
+		// 表示头必须与缓存正文一致; 其他条目头是业务显式结果, 同样覆盖外层同名值, 避免命中时放宽业务收紧的策略.
 		k := copy(backing, values)
 		header[name] = backing[:k:k]
 		backing = backing[k:]

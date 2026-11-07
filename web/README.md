@@ -174,7 +174,7 @@ cache.CacheByRequestURI(30*time.Second, cache.CacheConfig{
 
 只保存完整 200 响应. 响应含 Set-Cookie、认证挑战、Content-Range、连接级头、Trailer、SSE、`Vary: *` 或未配置的 Vary 维度时不保存. Cache-Control 的 private/no-store/no-cache、无效或非正 max-age/s-maxage 同样不保存; 正 max-age/s-maxage 只会缩短配置 TTL. 显式 Date、Age、Expires 或 Pragma 采用保守跳过策略.
 
-保留一般端到端响应头, 包括 CSP、nosniff、Content-Location、分页 Link 和自定义业务元数据, 并补充向上取整的 Age, 避免下游将完整 max-age 重新计时. 命中时先清除外层预设的表示头, 再回放缓存中的 Content-Type、Content-Encoding、缓存控制和摘要等字段; 缓存中没有的表示头也保持缺失. 其他头在外层当前请求已设置同名字段时保留当前值, 包括显式空值. 外层在缓存之前已设置且业务未改动的非表示头不进入条目, 命中时由外层为当前请求重新设置, 不会把按访客条件设置的值 (如仅对内部 UA 添加的调试头) 回放给其他访客. Gin 命中时清除预设 Content-Length, 不按缓存正文强写长度, 由最终 writer 根据实际写出的正文定界.
+保留一般端到端响应头, 包括 CSP、nosniff、Content-Location、分页 Link 和自定义业务元数据, 并补充向上取整的 Age, 避免下游将完整 max-age 重新计时. 命中时先清除外层预设的表示头, 再回放缓存中的 Content-Type、Content-Encoding、缓存控制和摘要等字段; 缓存中没有的表示头也保持缺失. 条目中的其他头都是业务设置或改写过的结果, 命中时覆盖外层同名字段, 与冷请求中业务后执行覆盖外层的结果一致, 不会把业务收紧的 CSP 等策略放宽为外层值. 外层在缓存之前已设置且业务未改动的非表示头不进入条目, 命中时由外层为当前请求重新设置, 不会把按访客条件设置的值 (如仅对内部 UA 添加的调试头) 回放给其他访客. Gin 命中时清除预设 Content-Length, 不按缓存正文强写长度, 由最终 writer 根据实际写出的正文定界.
 
 不回放 CORS、请求 ID、追踪字段、Server-Timing、限流额度等已知逐请求动态头, 这些应在缓存之前生成. 其他自定义逐请求头也应放外层, 命中跳过的业务不能负责生成它们. 带动态 nonce 的 CSP 与页面正文需要成对生成, 应由应用选用适合共享的响应或跳过该路由缓存. Gin 从首次提交响应头计入年龄, 完整正文生成期间已耗尽 TTL 时不再保存; 首次提交头之后生成的 Trailer 同样不保存. 未主动增加 `public`、`max-age` 或 `X-Cache`.
 
