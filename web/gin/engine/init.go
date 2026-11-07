@@ -199,7 +199,7 @@ func SetTrustedProxies() error {
 		if err := item.app.SetTrustedProxies(cfg.TrustedProxies); err != nil {
 			return err
 		}
-		item.trustedProxies = cfg.TrustedProxies
+		item.trustedProxies = slices.Clone(cfg.TrustedProxies)
 		item.trustedPlatform = cfg.TrustedPlatform
 	}
 	return nil
@@ -211,7 +211,7 @@ func registerApp(app *gin.Engine, groupName string, trustedProxies []string, tru
 	apps = append(apps, registeredApp{
 		app:             app,
 		groupName:       groupName,
-		trustedProxies:  trustedProxies,
+		trustedProxies:  slices.Clone(trustedProxies),
 		trustedPlatform: trustedPlatform,
 	})
 }

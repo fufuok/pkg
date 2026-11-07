@@ -3,6 +3,7 @@ package stats
 import (
 	"fmt"
 	"maps"
+	"math"
 	"os"
 	"runtime"
 	"runtime/metrics"
@@ -184,9 +185,22 @@ func getGCStats(ms *runtime.MemStats) map[string]any {
 		gcPauseAvg = float64(ms.PauseTotalNs) / float64(ms.NumGC) / 1000000
 	}
 
-	// GC pressure: (NextGC-HeapAlloc)/NextGC (GC压力，越接近0表示即将触发GC)
-	// GC 压力指标: 距离下次 GC 的剩余空间比例
-	gcPressure := float64(ms.NextGC-ms.HeapAlloc) / float64(ms.NextGC)
+	// GC pressure: (NextGC-HeapAlloc)/NextGC (GC压力，越接近0表示即将触发GC, 负值表示当前已超阈值)
+	// 使用有符号差值与零除保护, 避免 HeapAlloc > NextGC 时 uint64 下溢或 NextGC == 0 产生 NaN 导致 JSON 编码失败.
+	gcPressure := 0.0
+	if ms.NextGC > 0 {
+		if ms.NextGC >= ms.HeapAlloc {
+			gcPressure = float64(ms.NextGC-ms.HeapAlloc) / float64(ms.NextGC)
+		} else {
+			gcPressure = -float64(ms.HeapAlloc-ms.NextGC) / float64(ms.NextGC)
+		}
+	}
+
+	elapsedSec := time.Since(common.StartTime).Seconds()
+	gcPerSec := 0.0
+	if elapsedSec > 0 {
+		gcPerSec = utils.Round(float64(ms.NumGC)/elapsedSec, 4)
+	}
 
 	// Max GC pause duration in ms (最近5次GC的最大暂停时间，单位ms)
 	maxPause := float64(0)
@@ -229,7 +243,7 @@ func getGCStats(ms *runtime.MemStats) map[string]any {
 		"PressureRatio": utils.Round(gcPressure, 4),
 		// GCPerSecond: GC每秒触发次数, 反映 GC 频率
 		// GC frequency (GC每秒触发次数, 反映 GC 频率)
-		"GCPerSecond": utils.Round(float64(ms.NumGC)/time.Since(common.StartTime).Seconds(), 4),
+		"GCPerSecond": gcPerSec,
 		// PauseRecent: 最近5次GC的暂停时间列表，用于分析GC性能波动，单次>100ms需警惕STW过长
 		// Pause durations (ms) for the last 5 GCs (最近5次GC的暂停时间，单位ms，单次>100ms需警惕STW过长)
 		"PauseRecent": lastPauses,
@@ -242,54 +256,53 @@ func getGCStats(ms *runtime.MemStats) map[string]any {
 	}
 }
 
-// processFloat64Histogram 处理 float64 直方图类型的指标
+// processFloat64Histogram 处理 float64 直方图类型的指标.
+// runtime/metrics 定义 Counts[i] 对应区间 [Buckets[i], Buckets[i+1]), 实际桶数为 len(Counts).
+// 估算优先采用有限桶上界, 末尾 +Inf 溢出桶回退采用非负有限下界, 避免产生 Inf/NaN.
 func processFloat64Histogram(hist *metrics.Float64Histogram, key string, schedMetrics map[string]any) {
 	if hist == nil {
 		return
 	}
 
+	bucketCount := len(hist.Counts)
 	totalCount := uint64(0)
 	for _, count := range hist.Counts {
 		totalCount += count
 	}
 
 	if totalCount == 0 {
-		// 无数据时的默认输出
 		if key == "GCPauses" {
-			// 将GCPauses移至GC子map中
 			if gcMap, ok := schedMetrics["GC"].(map[string]any); ok {
 				gcMap["PausesHistogram"] = map[string]any{
 					"TotalCount":  0,
-					"BucketCount": len(hist.Buckets),
+					"BucketCount": bucketCount,
 				}
 			}
 		} else {
 			schedMetrics[key] = map[string]any{
 				"TotalCount":  0,
-				"BucketCount": len(hist.Buckets),
+				"BucketCount": bucketCount,
 			}
 		}
 		return
 	}
 
-	// 计算平均、最大等统计量
 	sum := 0.0
 	maxValue := 0.0
 
 	for i, count := range hist.Counts {
-		if count > 0 && i < len(hist.Buckets) {
-			// 使用桶的上限作为该桶内事件的值
-			bucketValue := hist.Buckets[i]
-			sum += bucketValue * float64(count)
-			if bucketValue > maxValue {
-				maxValue = bucketValue
-			}
+		if count == 0 {
+			continue
+		}
+		bucketValue := histogramBucketEstimate(hist.Buckets, i)
+		sum += bucketValue * float64(count)
+		if bucketValue > maxValue {
+			maxValue = bucketValue
 		}
 	}
 
 	average := sum / float64(totalCount)
 
-	// 根据指标类型提供更有针对性的输出
 	switch key {
 	case "GCPauses":
 		if gcMap, ok := schedMetrics["GC"].(map[string]any); ok {
@@ -297,7 +310,7 @@ func processFloat64Histogram(hist *metrics.Float64Histogram, key string, schedMe
 				"TotalCount":  totalCount,                         // GC 暂停事件总计数
 				"AverageMs":   fmt.Sprintf("%.3f", average*1000),  // 平均暂停时间(毫秒)
 				"MaxMs":       fmt.Sprintf("%.3f", maxValue*1000), // 最大暂停时间(毫秒)
-				"BucketCount": len(hist.Buckets),                  // 直方图的桶数
+				"BucketCount": bucketCount,                        // 直方图的桶数
 			}
 		}
 	case "SchedulingLatencies":
@@ -305,15 +318,29 @@ func processFloat64Histogram(hist *metrics.Float64Histogram, key string, schedMe
 			"TotalCount":  totalCount,                          // 调度事件总计数
 			"AverageMs":   fmt.Sprintf("%.3fms", average*1e3),  // 平均调度延迟(毫秒)
 			"MaxMs":       fmt.Sprintf("%.3fms", maxValue*1e3), // 最大调度延迟(毫秒)
-			"BucketCount": len(hist.Buckets),                   // 直方图的桶数
+			"BucketCount": bucketCount,                         // 直方图的桶数
 		}
 	default:
-		// 通用直方图输出
 		schedMetrics[key] = map[string]any{
-			"TotalCount":  totalCount,        // 事件总计数
-			"BucketCount": len(hist.Buckets), // 直方图的桶数
+			"TotalCount":  totalCount,  // 事件总计数
+			"BucketCount": bucketCount, // 直方图的桶数
 		}
 	}
+}
+
+// histogramBucketEstimate 返回第 i 个桶 [Buckets[i], Buckets[i+1]) 的非负有限代表值.
+func histogramBucketEstimate(buckets []float64, i int) float64 {
+	if i+1 < len(buckets) {
+		if hi := buckets[i+1]; !math.IsInf(hi, 0) && !math.IsNaN(hi) {
+			return max(hi, 0)
+		}
+	}
+	if i < len(buckets) {
+		if lo := buckets[i]; !math.IsInf(lo, 0) && !math.IsNaN(lo) {
+			return max(lo, 0)
+		}
+	}
+	return 0
 }
 
 // getSchedulerStats 获取调度器相关指标

@@ -119,7 +119,7 @@ func New(ttl time.Duration, cfg Config) *Cache {
 		locks:        make(map[[32]byte]*keyLock),
 		requestNames: make(map[string]string),
 	}
-	names := append(append(append(skipRequestHeaders[:], listRequestHeaders[:]...), keyHeaders[:]...), cfg.Vary...)
+	names := slices.Concat(skipRequestHeaders[:], listRequestHeaders[:], keyHeaders[:], cfg.Vary)
 	for _, name := range names {
 		c.requestNames[strings.ToLower(name)] = name
 		c.maxRequestName = max(c.maxRequestName, len(name))

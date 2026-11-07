@@ -4,7 +4,6 @@ import (
 	"math"
 	"runtime"
 	"runtime/metrics"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -184,15 +183,21 @@ func TestGetGCStats(t *testing.T) {
 		t.Fatalf("recent GC pauses = %#v", got["PauseRecent"])
 	}
 
-	zero := getGCStats(&runtime.MemStats{NextGC: 1})
-	if zero["PauseAvgMs"] != float64(0) || zero["PauseMaxMs"] != float64(0) {
-		t.Fatalf("zero GC pauses = avg:%v max:%v", zero["PauseAvgMs"], zero["PauseMaxMs"])
+	zero := getGCStats(&runtime.MemStats{NextGC: 0, HeapAlloc: 0})
+	if zero["PauseAvgMs"] != float64(0) || zero["PauseMaxMs"] != float64(0) || zero["PressureRatio"] != float64(0) {
+		t.Fatalf("zero GC stats = %#v", zero)
+	}
+	if _, err := json.Marshal(zero); err != nil {
+		t.Fatalf("zero NextGC stats must marshal cleanly without NaN: %v", err)
+	}
+
+	over := getGCStats(&runtime.MemStats{NextGC: 100, HeapAlloc: 101})
+	if over["PressureRatio"] != -0.01 {
+		t.Fatalf("over-threshold PressureRatio = %#v, want -0.01", over["PressureRatio"])
 	}
 }
 
-// TestProcessFloat64Histogram 验证 nil、空数据和三类直方图路由.
-// 当前生产实现的桶数及上下界估算与 runtime/metrics 定义存在偏差,
-// 本用例只冻结总计数和单位格式, 不把待修正的具体估算值固化为契约.
+// TestProcessFloat64Histogram 验证 nil、空数据、桶计数与上下界含 ±Inf 时的有限估算值.
 func TestProcessFloat64Histogram(t *testing.T) {
 	gc := map[string]any{}
 	sched := map[string]any{"GC": gc}
@@ -203,28 +208,32 @@ func TestProcessFloat64Histogram(t *testing.T) {
 
 	empty := &metrics.Float64Histogram{Buckets: []float64{0, 1}, Counts: []uint64{0}}
 	processFloat64Histogram(empty, "GCPauses", sched)
-	assertMapValues(t, gc["PausesHistogram"].(map[string]any), map[string]any{"TotalCount": 0})
+	assertMapValues(t, gc["PausesHistogram"].(map[string]any), map[string]any{"TotalCount": 0, "BucketCount": 1})
 	processFloat64Histogram(empty, "Empty", sched)
-	assertMapValues(t, sched["Empty"].(map[string]any), map[string]any{"TotalCount": 0})
+	assertMapValues(t, sched["Empty"].(map[string]any), map[string]any{"TotalCount": 0, "BucketCount": 1})
 
 	hist := &metrics.Float64Histogram{
-		Buckets: []float64{0, 0.001, 0.002, math.Inf(1)},
-		Counts:  []uint64{0, 2, 1},
+		Buckets: []float64{math.Inf(-1), 0.001, 0.002, math.Inf(1)},
+		Counts:  []uint64{1, 2, 1},
 	}
 	processFloat64Histogram(hist, "GCPauses", sched)
 	gcHistogram := gc["PausesHistogram"].(map[string]any)
-	assertMapValues(t, gcHistogram, map[string]any{"TotalCount": uint64(3)})
-	if _, ok := gcHistogram["AverageMs"].(string); !ok {
-		t.Fatalf("GC histogram average = %#v", gcHistogram["AverageMs"])
-	}
+	assertMapValues(t, gcHistogram, map[string]any{
+		"TotalCount":  uint64(4),
+		"BucketCount": 3,
+		"AverageMs":   "1.750",
+		"MaxMs":       "2.000",
+	})
 	processFloat64Histogram(hist, "SchedulingLatencies", sched)
 	scheduling := sched["SchedulingLatencies"].(map[string]any)
-	assertMapValues(t, scheduling, map[string]any{"TotalCount": uint64(3)})
-	if average, ok := scheduling["AverageMs"].(string); !ok || !strings.HasSuffix(average, "ms") {
-		t.Fatalf("scheduling histogram average = %#v", scheduling["AverageMs"])
-	}
+	assertMapValues(t, scheduling, map[string]any{
+		"TotalCount":  uint64(4),
+		"BucketCount": 3,
+		"AverageMs":   "1.750ms",
+		"MaxMs":       "2.000ms",
+	})
 	processFloat64Histogram(hist, "Other", sched)
-	assertMapValues(t, sched["Other"].(map[string]any), map[string]any{"TotalCount": uint64(3)})
+	assertMapValues(t, sched["Other"].(map[string]any), map[string]any{"TotalCount": uint64(4), "BucketCount": 3})
 }
 
 // TestRuntimeStatsContracts 验证系统、进程、调度器和 bytespool 的稳定结构契约.

@@ -2,6 +2,7 @@
 package jsongen
 
 import (
+	"slices"
 	"strconv"
 )
 
@@ -162,8 +163,8 @@ func NewArray() *Array {
 }
 
 func (a *Array) Serialize(buf []byte) []byte {
-	if cap(buf) == 0 {
-		buf = make([]byte, 0, a.Size())
+	if cap(buf)-len(buf) == 0 {
+		buf = slices.Grow(buf, a.Size())
 	}
 
 	buf = append(buf, '[')
@@ -350,8 +351,8 @@ func NewMap() *Map {
 }
 
 func (m *Map) Serialize(buf []byte) []byte {
-	if cap(buf) == 0 {
-		buf = make([]byte, 0, m.Size())
+	if cap(buf)-len(buf) == 0 {
+		buf = slices.Grow(buf, m.Size())
 	}
 
 	buf = append(buf, '{')

@@ -67,4 +67,11 @@ func TestJSONEscapeSpecialAndOverflowEdges(t *testing.T) {
 	if len(out) != big.Size() {
 		t.Fatalf("overflow Map Size = %d, len(Serialize) = %d", big.Size(), len(out))
 	}
+
+	// 验证向已满非空前缀切片追加序列化时一次性扩容且保留原前缀.
+	prefix := []byte("prefix:")
+	prefixed := big.Serialize(prefix[:len(prefix):len(prefix)])
+	if string(prefixed) != "prefix:"+string(out) {
+		t.Fatalf("prefixed Map.Serialize mismatch: got len %d", len(prefixed))
+	}
 }
