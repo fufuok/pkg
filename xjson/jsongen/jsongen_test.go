@@ -342,3 +342,35 @@ func TestNestedMapArray(t *testing.T) {
 		t.Fatal("Invalid JSON")
 	}
 }
+
+// TestSerializeBufferContract 验证 Serialize(nil) 按 Size 一次分配, 已满前缀切片一次扩容并保留前缀,
+// 且局部 Map 不因序列化逃逸到堆 (每次只有一次输出缓冲分配).
+func TestSerializeBufferContract(t *testing.T) {
+	m := NewMap()
+	m.PutString("type", "x")
+	m.PutInt("n", 1)
+	out := m.Serialize(nil)
+	if string(out) != `{"type":"x","n":1}` || cap(out) < m.Size() {
+		t.Fatalf("Serialize = %s cap=%d, want capacity >= %d", out, cap(out), m.Size())
+	}
+	arr := NewArray()
+	arr.AppendInt(1, 2)
+	if got := arr.Serialize(nil); string(got) != "[1,2]" || cap(got) < arr.Size() {
+		t.Fatalf("Array.Serialize = %s cap=%d, want capacity >= %d", got, cap(got), arr.Size())
+	}
+
+	prefix := []byte("p:")
+	if got := string(m.Serialize(prefix[:len(prefix):len(prefix)])); got != `p:{"type":"x","n":1}` {
+		t.Fatalf("prefixed Serialize = %s", got)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		local := NewMap()
+		local.PutString("type", "x")
+		local.PutInt("n", 1)
+		_ = local.Serialize(nil)
+	})
+	if allocs > 1 {
+		t.Fatalf("local Map Serialize allocs = %v, want <= 1 (Map must stay on stack)", allocs)
+	}
+}

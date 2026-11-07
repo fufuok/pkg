@@ -165,7 +165,9 @@ func loadLogger() error {
 }
 
 // newLogger 构建通用和报警记录器, 文件目标和轮转参数未变时复用底层 writer.
-// 构建失败不更新缓存或已发布记录器; 真正更换 writer 不关闭仍可能被旧 logger 引用的实例.
+// 构建失败不更新缓存或已发布记录器; 真正更换 writer 不关闭仍可能被旧 logger 引用的实例:
+// lumberjack v3 的 Roller.Write 在 Close 后不会重新打开文件 (写入 nil 文件返回 invalid argument),
+// 关闭会让仍持有旧 logger 的调用方静默丢日志. 代价是轮转参数热变更时旧实例的句柄与清理协程保留.
 // 1. Debug 调试时, 日志高亮输出到控制台
 // 2. 非调试模式时, 日志输出到文件(可选关闭高亮, 可选 JSON 输出, 保存最近 10 个 30 天内的日志)
 func newLogger(cfg config.LogConf) (err error) {

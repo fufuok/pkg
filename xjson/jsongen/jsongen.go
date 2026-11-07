@@ -6,6 +6,9 @@ import (
 	"strconv"
 )
 
+// inlineMapCap 是 Map 内联键值槽位数. 16 覆盖 Web 日志、告警及 IP 详情等常见对象 (≤16 字段) 而不额外分配;
+// 代价是 Map 本身约 1.2KiB, 逃逸到堆 (嵌套 PutMap、放入数组或被返回保存) 时无论字段多少都按此大小分配.
+// 实测改为 8 可让大量 ≤8 字段子对象的批量场景省约 1/3 内存, 但 9~16 字段对象会多一次分配并变慢, 故保持 16.
 const inlineMapCap = 16
 
 type valueKind uint8
@@ -162,6 +165,11 @@ func NewArray() *Array {
 	return &Array{}
 }
 
+// Serialize 将数组序列化并追加到 buf 后返回. 只在 buf 已满 (含 nil 和非空满前缀) 时按 Size 一次性扩容,
+// 嵌套调用时外层已预留容量, 不重复遍历计算 Size.
+// buf 为 nil 时结果按 Size 由运行时一次分配 (容量按尺寸类取整) 而非取自 bytespool:
+// 现有调用方均不归还结果, 池未命中反而更慢且按 2 的幂次多占内存.
+// 结果不应 bytespool.Release (不来自池); 需要复用缓冲时请传入自有 buf 并自行管理生命周期.
 func (a *Array) Serialize(buf []byte) []byte {
 	if cap(buf)-len(buf) == 0 {
 		buf = slices.Grow(buf, a.Size())
@@ -350,6 +358,7 @@ func NewMap() *Map {
 	return &Map{}
 }
 
+// Serialize 将对象序列化并追加到 buf 后返回, buf 容量与结果归属规则同 Array.Serialize.
 func (m *Map) Serialize(buf []byte) []byte {
 	if cap(buf)-len(buf) == 0 {
 		buf = slices.Grow(buf, m.Size())
