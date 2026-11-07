@@ -2,6 +2,7 @@ package common
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -371,5 +372,41 @@ func attachReqTestServer(t *testing.T, server *httptest.Server, clients ...*req.
 	for _, client := range clients {
 		client.SetProxy(nil).SetDial(transport.DialContext)
 		t.Cleanup(client.Transport.CloseIdleConnections)
+	}
+}
+
+// TestReqContextCancelsRetry 验证启用全局重试时, 请求 Context 取消可立即停止后续重试而不再重复拨号.
+func TestReqContextCancelsRetry(t *testing.T) {
+	cfg := prepareCommonConfig(t)
+	cfg.SYSConf.ReqMaxRetries = 5
+	newReq()
+	loadReq()
+
+	var attempts atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) == 1 {
+			cancel()
+		}
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	t.Cleanup(server.Close)
+	attachReqTestServer(t, server, req.DefaultClient())
+
+	start := time.Now()
+	_, err := req.R().SetContext(ctx).Get(server.URL)
+	if err == nil {
+		t.Fatal("expected cancelled transport error, got nil")
+	}
+	if elapsed := time.Since(start); elapsed > 200*time.Millisecond {
+		t.Fatalf("cancelled request took %s, want immediate stop without retry sleep", elapsed)
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("cancelled request retried %d times, want 1 attempt", got)
 	}
 }

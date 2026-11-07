@@ -1,18 +1,25 @@
 package common
 
 import (
+	"context"
+	"errors"
 	"sync/atomic"
+	"time"
 
 	"github.com/imroc/req/v3"
 	"github.com/rs/zerolog"
 
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/json"
+	"github.com/fufuok/pkg/pools/timerpool"
 )
 
 const (
 	// reqDebugBodyMaxLen ReqDebug 重试日志中请求/响应正文的最大打印字节数.
 	reqDebugBodyMaxLen = 2048
+
+	// defaultRetryInterval 保持与 req/v3 默认重试间隔一致 (100ms).
+	defaultRetryInterval = 100 * time.Millisecond
 )
 
 var (
@@ -40,6 +47,8 @@ func loadReq() {
 	debug := cfg.ReqDebug
 	req.SetTimeout(cfg.ReqTimeoutDuration).
 		SetCommonRetryCount(cfg.ReqMaxRetries).
+		SetCommonRetryCondition(retryRequestCondition).
+		SetCommonRetryInterval(retryRequestInterval).
 		SetCommonRetryHook(retryRequestHook)
 	if reqDebug.Load() == debug {
 		return
@@ -142,4 +151,36 @@ func reqDebugBody(body []byte, debug bool) string {
 		body = body[:reqDebugBodyMaxLen]
 	}
 	return string(body)
+}
+
+// retryRequestCondition 保持与 req 默认条件一致(网络/传输错误时重试), 但遇到调用方 Context 取消或超时时立即停止重试.
+func retryRequestCondition(resp *req.Response, err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if resp != nil && resp.Request != nil && resp.Request.Context().Err() != nil {
+		return false
+	}
+	return true
+}
+
+// retryRequestInterval 使默认重试退避响应请求 Context 取消, 避免 req 内部的 time.Sleep 阻塞已取消的调用方.
+func retryRequestInterval(resp *req.Response, _ int) time.Duration {
+	if resp == nil || resp.Request == nil {
+		return defaultRetryInterval
+	}
+	ctx := resp.Request.Context()
+	if ctx.Done() == nil {
+		return defaultRetryInterval
+	}
+	if ctx.Err() != nil {
+		return 0
+	}
+	timer := timerpool.New(defaultRetryInterval)
+	defer timerpool.Release(timer)
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+	return 0
 }

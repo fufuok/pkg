@@ -262,18 +262,20 @@ func TestParseIPListFiles(t *testing.T) {
 		BlacklistConf: FilesConf{Path: blacklistFile},
 	}
 
-	assert.Nil(t, parseWhitelistConfig(cfg))
-	assert.Nil(t, parseBlacklistConfig(cfg))
-	assert.Equal(t, whitelistFile, WhitelistConfigFile)
-	assert.Equal(t, blacklistFile, BlacklistConfigFile)
-	assert.Equal(t, int64(1), mustLookupIPNet(t, "127.0.0.1", Whitelist))
-	assert.Equal(t, int64(2), mustLookupIPNet(t, "10.1.2.3", Whitelist))
-	assert.Equal(t, int64(3), mustLookupIPNet(t, "192.168.1.1", Blacklist))
-	assert.Equal(t, int64(4), mustLookupIPNet(t, "::1", Blacklist))
+	whitelist, err := parseWhitelistConfig(cfg)
+	assert.Nil(t, err)
+	blacklist, err := parseBlacklistConfig(cfg)
+	assert.Nil(t, err)
+	assert.Equal(t, whitelistFile, cfg.WhitelistConf.Path)
+	assert.Equal(t, blacklistFile, cfg.BlacklistConf.Path)
+	assert.Equal(t, int64(1), mustLookupIPNet(t, "127.0.0.1", whitelist))
+	assert.Equal(t, int64(2), mustLookupIPNet(t, "10.1.2.3", whitelist))
+	assert.Equal(t, int64(3), mustLookupIPNet(t, "192.168.1.1", blacklist))
+	assert.Equal(t, int64(4), mustLookupIPNet(t, "::1", blacklist))
 
 	cfg.Whitelist = []string{"not-an-ip"}
 	cfg.WhitelistConf.Path = filepath.Join(root, "missing.conf")
-	err := parseWhitelistConfig(cfg)
+	_, err = parseWhitelistConfig(cfg)
 	assert.True(t, err != nil)
 	assert.Contains(t, "not-an-ip", err.Error())
 }

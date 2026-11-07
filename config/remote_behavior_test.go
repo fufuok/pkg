@@ -1,6 +1,8 @@
 package config
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -109,4 +111,50 @@ func TestGetDataSourceBodyTransportError(t *testing.T) {
 	server.Close()
 	_, err := GetDataSourceBody(DataSourceArgs{Time: time.Unix(3, 0), Conf: FilesConf{API: server.URL + "?token="}})
 	assert.True(t, err != nil)
+}
+
+// TestGetDataSourceContextCancelAndAtomicWrite 验证取消中断在途拉取且不覆盖旧文件, 正常更新不留临时文件.
+func TestGetDataSourceContextCancelAndAtomicWrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "whitelist.conf")
+	assert.Nil(t, os.WriteFile(path, []byte("10.0.0.1"), 0o600))
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-release:
+			_, _ = w.Write([]byte(`{"ok":1,"data":[{"ip_info":"10.0.0.2"}]}`))
+		}
+	}))
+	t.Cleanup(func() {
+		close(release)
+		server.Close()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	params := DataSourceArgs{Time: time.Unix(4, 0), Conf: FilesConf{Path: path, API: server.URL + "?token="}}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- GetDataSourceContext(ctx, params)
+	}()
+	<-started
+	cancel()
+	err := <-errCh
+	assert.True(t, errors.Is(err, context.Canceled))
+
+	body, readErr := os.ReadFile(path)
+	assert.Nil(t, readErr)
+	assert.Equal(t, "10.0.0.1", string(body))
+
+	entries, dirErr := os.ReadDir(dir)
+	assert.Nil(t, dirErr)
+	assert.Equal(t, 1, len(entries))
 }

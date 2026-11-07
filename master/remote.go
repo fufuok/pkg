@@ -121,7 +121,7 @@ func startRemoteConf(ctx context.Context, cfg config.FilesConf) <-chan struct{} 
 			}
 			// 是否跳过更新远端配置
 			if !config.IsSkipRemoteConfig() {
-				if err := common.InvokeConfigMethod(cfg); err != nil {
+				if err := common.InvokeConfigMethodContext(ctx, cfg); err != nil {
 					sampler.Error().Err(err).Str("id", id).Str("path", cfg.Path).Str("method", cfg.Method).
 						Msg("Failed to get remote config")
 				} else {

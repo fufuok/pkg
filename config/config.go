@@ -302,13 +302,20 @@ func readConfig() (*MainConf, error) {
 	parseNodeInfoConfig(cfg)
 	parseWebConfig(cfg)
 
-	if err := parseWhitelistConfig(cfg); err != nil {
+	whitelist, err := parseWhitelistConfig(cfg)
+	if err != nil {
 		return nil, err
 	}
 
-	if err := parseBlacklistConfig(cfg); err != nil {
+	blacklist, err := parseBlacklistConfig(cfg)
+	if err != nil {
 		return nil, err
 	}
+
+	WhitelistConfigFile = cfg.WhitelistConf.Path
+	BlacklistConfigFile = cfg.BlacklistConf.Path
+	Whitelist = whitelist
+	Blacklist = blacklist
 
 	if Debug {
 		fmt.Printf("\n\n%s\n\n", json.MustJSONUnEscapeIndentString(cfg))
@@ -358,7 +365,7 @@ func parseSYSConfig(cfg *MainConf) error {
 //
 //nolint:cyclop
 func parseLogConfig(cfg *MainConf) {
-	// 日志级别: -1Trace 0Debug(0 或未指定该配置项) 1Info 2Warn(默认) 3Error 4Fatal 5Panic 6NoLevel 7Off
+	// 日志级别: -1Trace 0Debug 1Info 2Warn 3Error 4Fatal 5Panic 6NoLevel 7Off; 未指定时为 0Debug, 超出范围时回退 LogLevel.
 	if cfg.LogConf.Level > 7 || cfg.LogConf.Level < -1 {
 		cfg.LogConf.Level = LogLevel
 	}
@@ -520,50 +527,38 @@ func resolveGroupCertFile(groupCfg *WebConf, certFileEnv, keyFileEnv string) {
 	groupCfg.KeyFile = ""
 }
 
-func parseWhitelistConfig(cfg *MainConf) error {
+func parseWhitelistConfig(cfg *MainConf) (map[*net.IPNet]int64, error) {
 	if err := ParseRemoteFileConfig(&cfg.WhitelistConf, cfg.SYSConf.BaseSecretValue); err != nil {
-		return err
+		return nil, err
 	}
 	if cfg.WhitelistConf.Path == "" {
 		cfg.WhitelistConf.Path = DefaultWhitelistConfigFile
 	}
-	WhitelistConfigFile = cfg.WhitelistConf.Path
 
 	// 读取白名单 IP 文件, 追加到 IP 列表
-	if ips, e := xfile.ReadLines(WhitelistConfigFile); e == nil && len(ips) > 0 {
+	if ips, e := xfile.ReadLines(cfg.WhitelistConf.Path); e == nil && len(ips) > 0 {
 		cfg.Whitelist = append(cfg.Whitelist, ips...)
 	}
 
 	// 接口 IP 白名单
-	whitelist, err := getIPNetList(cfg.Whitelist)
-	if err != nil {
-		return err
-	}
-	Whitelist = whitelist
-	return nil
+	return getIPNetList(cfg.Whitelist)
 }
 
-func parseBlacklistConfig(cfg *MainConf) error {
+func parseBlacklistConfig(cfg *MainConf) (map[*net.IPNet]int64, error) {
 	if err := ParseRemoteFileConfig(&cfg.BlacklistConf, cfg.SYSConf.BaseSecretValue); err != nil {
-		return err
+		return nil, err
 	}
 	if cfg.BlacklistConf.Path == "" {
 		cfg.BlacklistConf.Path = DefaultBlacklistConfigFile
 	}
-	BlacklistConfigFile = cfg.BlacklistConf.Path
 
 	// 读取黑名单 IP 文件, 追加到 IP 列表
-	if ips, e := xfile.ReadLines(BlacklistConfigFile); e == nil && len(ips) > 0 {
+	if ips, e := xfile.ReadLines(cfg.BlacklistConf.Path); e == nil && len(ips) > 0 {
 		cfg.Blacklist = append(cfg.Blacklist, ips...)
 	}
 
 	// 接口访问 IP 黑名单
-	blacklist, err := getIPNetList(cfg.Blacklist)
-	if err != nil {
-		return err
-	}
-	Blacklist = blacklist
-	return nil
+	return getIPNetList(cfg.Blacklist)
 }
 
 // IP 配置转换
