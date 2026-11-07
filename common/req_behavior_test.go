@@ -375,6 +375,50 @@ func attachReqTestServer(t *testing.T, server *httptest.Server, clients ...*req.
 	}
 }
 
+// TestReqClientTimeoutRetries 验证 http.Client.Timeout 触发的单次超时仍按 ReqMaxRetries 重试,
+// 而调用方 Context 到期时只请求一次. 两类错误都满足 errors.Is(err, context.DeadlineExceeded), 必须按请求 ctx 区分.
+func TestReqClientTimeoutRetries(t *testing.T) {
+	cfg := prepareCommonConfig(t)
+	cfg.SYSConf.ReqTimeoutDuration = 30 * time.Millisecond
+	cfg.SYSConf.ReqMaxRetries = 2
+	newReq()
+	loadReq()
+
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		// 等待超过客户端超时; 客户端断开后立即返回, 避免拖慢测试.
+		select {
+		case <-time.After(time.Second):
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(server.Close)
+	attachReqTestServer(t, server, req.DefaultClient())
+
+	_, err := req.Get(server.URL + "/client-timeout")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("client timeout error = %v, want DeadlineExceeded", err)
+	}
+	if got := attempts.Load(); got != 3 {
+		t.Fatalf("client timeout attempts = %d, want 3 (1 + ReqMaxRetries)", got)
+	}
+
+	// 调用方 ctx 的期限短于客户端超时, 到期后不应继续重试.
+	cfg.SYSConf.ReqTimeoutDuration = time.Second
+	loadReq()
+	attempts.Store(0)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err = req.R().SetContext(ctx).Get(server.URL + "/caller-deadline")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("caller deadline error = %v, want DeadlineExceeded", err)
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("caller deadline attempts = %d, want 1", got)
+	}
+}
+
 // TestReqContextCancelsRetry 验证启用全局重试时, 请求 Context 取消可立即停止后续重试而不再重复拨号.
 func TestReqContextCancelsRetry(t *testing.T) {
 	cfg := prepareCommonConfig(t)

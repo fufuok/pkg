@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -58,6 +59,8 @@ func GetDataSourceWithCheck(params DataSourceArgs, shouldUpdate func([]byte) (bo
 }
 
 // GetDataSourceWithCheckContext 在 ctx 约束下获取数据源, 校验通过后原子替换目标配置文件.
+// ctx 只约束拉取阶段; shouldUpdate 一旦返回 true (回调可能已更新内存状态), 必定继续落盘,
+// 避免取消发生在回调与写文件之间时出现内存已生效而磁盘仍为旧内容的分裂.
 func GetDataSourceWithCheckContext(
 	ctx context.Context,
 	params DataSourceArgs,
@@ -88,9 +91,6 @@ func GetDataSourceWithCheckContext(
 		if !update {
 			return nil
 		}
-	}
-	if err := ctx.Err(); err != nil {
-		return err
 	}
 
 	if err = writeFileAtomic(params.Conf.Path, contentBytes, 0o600); err != nil {
@@ -149,14 +149,29 @@ func GetDataSourceBodyContext(ctx context.Context, params DataSourceArgs) (strin
 }
 
 // writeFileAtomic 先在目标文件同目录写入临时文件再重命名替换, 防止半截写入被文件监控读取.
-// 若目标文件已存在则继承其文件权限位, 避免破坏既有部署的组读权限; 新建文件使用传入的默认 perm.
+// 兼容边界:
+//  1. 目标是符号链接时替换链接指向的真实文件, 不把链接本身换成普通文件; 悬空链接沿用 os.WriteFile 跟随创建.
+//  2. 已存在的目标继承其权限位, 新建文件使用传入的 perm; 替换后的属主为当前进程用户.
+//  3. 目录不可写但目标文件已存在且可写时, 回退为原地覆写 (与改造前 os.WriteFile 一致, 不具备原子性).
 func writeFileAtomic(targetPath string, content []byte, perm os.FileMode) (err error) {
+	if info, lstatErr := os.Lstat(targetPath); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		resolved, evalErr := filepath.EvalSymlinks(targetPath)
+		if evalErr != nil {
+			return os.WriteFile(targetPath, content, perm)
+		}
+		targetPath = resolved
+	}
+	existing := false
 	if info, statErr := os.Stat(targetPath); statErr == nil && !info.IsDir() {
 		perm = info.Mode().Perm()
+		existing = true
 	}
 	dir := filepath.Dir(targetPath)
 	tmpFile, err := os.CreateTemp(dir, ".tmp-conf-*")
 	if err != nil {
+		if existing && errors.Is(err, fs.ErrPermission) {
+			return os.WriteFile(targetPath, content, perm)
+		}
 		return err
 	}
 	tmpName := tmpFile.Name()

@@ -1,8 +1,6 @@
 package common
 
 import (
-	"context"
-	"errors"
 	"sync/atomic"
 	"time"
 
@@ -153,15 +151,15 @@ func reqDebugBody(body []byte, debug bool) string {
 	return string(body)
 }
 
-// retryRequestCondition 保持与 req 默认条件一致(网络/传输错误时重试), 但遇到调用方 Context 取消或超时时立即停止重试.
+// retryRequestCondition 保持与 req 默认条件一致(网络/传输错误时重试), 仅在调用方请求 Context 结束时停止重试.
+// 不能用 errors.Is(err, context.DeadlineExceeded) 判断: http.Client.Timeout 的单次超时错误同样满足该判断,
+// 而它正是需要重试的典型网络毛刺; 调用方 ctx 是否结束只能看 resp.Request.Context(), 单次超时不会使其结束.
+// context.Canceled 已由 req 在调用条件前拦截, 此处无需重复判断.
 func retryRequestCondition(resp *req.Response, err error) bool {
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if err == nil {
 		return false
 	}
-	if resp != nil && resp.Request != nil && resp.Request.Context().Err() != nil {
-		return false
-	}
-	return true
+	return resp == nil || resp.Request == nil || resp.Request.Context().Err() == nil
 }
 
 // retryRequestInterval 使默认重试退避响应请求 Context 取消, 避免 req 内部的 time.Sleep 阻塞已取消的调用方.

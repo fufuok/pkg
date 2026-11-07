@@ -179,3 +179,69 @@ func TestWriteFileAtomicPreservesExistingFilePerm(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, "10.0.0.2\n", string(body))
 }
+
+// TestWriteFileAtomicKeepsSymlink 验证目标为符号链接时更新链接指向的真实文件, 链接本身保持不变.
+func TestWriteFileAtomicKeepsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	realPath := filepath.Join(dir, "real.conf")
+	linkPath := filepath.Join(dir, "link.conf")
+	assert.Nil(t, os.WriteFile(realPath, []byte("old"), 0o600))
+	if err := os.Symlink(realPath, linkPath); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	assert.Nil(t, writeFileAtomic(linkPath, []byte("new"), 0o600))
+
+	info, err := os.Lstat(linkPath)
+	assert.Nil(t, err)
+	assert.True(t, info.Mode()&os.ModeSymlink != 0, "symlink was replaced by a regular file")
+	body, err := os.ReadFile(realPath)
+	assert.Nil(t, err)
+	assert.Equal(t, "new", string(body))
+	entries, err := os.ReadDir(dir)
+	assert.Nil(t, err)
+	assert.Equal(t, 2, len(entries), "temporary file was left behind")
+}
+
+// TestWriteFileAtomicReadOnlyDirFallback 验证目录不可写但文件可写时回退原地覆写, 兼容只授权文件写入的部署.
+func TestWriteFileAtomicReadOnlyDirFallback(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("POSIX directory permission is not enforced on Windows or for root")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "whitelist.conf")
+	assert.Nil(t, os.WriteFile(path, []byte("10.0.0.1\n"), 0o600))
+	assert.Nil(t, os.Chmod(dir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	assert.Nil(t, writeFileAtomic(path, []byte("10.0.0.2\n"), 0o600))
+
+	body, err := os.ReadFile(path)
+	assert.Nil(t, err)
+	assert.Equal(t, "10.0.0.2\n", string(body))
+}
+
+// TestGetDataSourceWithCheckContextWritesAfterAcceptedUpdate 验证 shouldUpdate 返回 true 后即使 ctx 被取消也完成落盘,
+// 防止带副作用的回调已更新内存而磁盘仍为旧内容.
+func TestGetDataSourceWithCheckContextWritesAfterAcceptedUpdate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tasks.conf")
+	assert.Nil(t, os.WriteFile(path, []byte("old"), 0o600))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":1,"data":[{"ip_info":"new"}]}`))
+	}))
+	t.Cleanup(server.Close)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	params := DataSourceArgs{Time: time.Unix(5, 0), Conf: FilesConf{Path: path, API: server.URL + "?token="}}
+	err := GetDataSourceWithCheckContext(ctx, params, func([]byte) (bool, error) {
+		// 模拟回调已应用新配置后, 生命周期恰好取消.
+		cancel()
+		return true, nil
+	})
+	assert.Nil(t, err)
+
+	body, readErr := os.ReadFile(path)
+	assert.Nil(t, readErr)
+	assert.Equal(t, "new", string(body))
+}
