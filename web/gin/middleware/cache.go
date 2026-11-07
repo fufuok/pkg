@@ -72,12 +72,12 @@ func newResponseCache(ttl time.Duration, withBody bool, configs ...CacheConfig) 
 			replayGinCache(c, entry)
 			return
 		}
-		// 以当前上下文标识持锁者: HandleContext 或重复注册使同一请求再次进入时直通, 不在自己持有的锁上等待.
-		release := store.Acquire(key, c)
 		// 取消状态以进入缓存时的请求上下文为准: 内层中间件替换的派生上下文会在其返回时被 cancel, 不代表客户端断开.
 		// 未执行业务就离开 (等待后已取消/超时或直接命中) 不能说明响应不可缓存, 一律按放弃处理, 不登记直通;
 		// 业务执行后客户端断开 (context.Canceled) 同样放弃领头, 由下一位等待者接任; 超时等其他结果照常按未准入处理.
 		ctx := c.Request.Context()
+		// 以当前上下文标识持锁者: HandleContext 或重复注册使同一请求再次进入时直通, 不在自己持有的锁上等待.
+		release := store.AcquireContext(ctx, key, c)
 		executed := false
 		defer func() { release(!executed || errors.Is(ctx.Err(), context.Canceled)) }()
 		// 等待期间可能已完成回源, 取消的请求不参与写入或回放. 明确返回 503 而不是仅 Abort,

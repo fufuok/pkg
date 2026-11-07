@@ -23,6 +23,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/compress"
 	"github.com/gofiber/fiber/v3/middleware/timeout"
+	"github.com/valyala/fasthttp"
 )
 
 // TestFiberCacheRequestIdentity 验证请求键保留完整 URI, Host 和表示相关请求头.
@@ -1224,5 +1225,147 @@ func TestFiberCacheHijackedResponse(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("hijacked response cached: handler calls = %d", calls.Load())
+	}
+}
+
+// TestFiberCacheSlowLeaderCoalescesBeyondTTL 验证短缓存保护慢接口时 (业务耗时 > TTL),
+// 并发排队请求仍合并为 1 次回源共享结果, 且外层同步期限到期的等待者立即退出而不开启直通窗口.
+func TestFiberCacheSlowLeaderCoalescesBeyondTTL(t *testing.T) {
+	app := fiber.New()
+	app.Use(func(c fiber.Ctx) error {
+		if c.Get("X-Short-Deadline") != "" {
+			ctx, cancel := context.WithTimeout(c.Context(), 15*time.Millisecond)
+			defer cancel()
+			c.SetContext(ctx)
+		}
+		return c.Next()
+	}, CacheByRequestURI(40*time.Millisecond))
+
+	var calls atomic.Int32
+	leaderEntered, releaseLeader := make(chan struct{}), make(chan struct{})
+	app.Get("/slow", func(c fiber.Ctx) error {
+		if c.Context().Err() != nil {
+			return fiber.ErrServiceUnavailable
+		}
+		if calls.Add(1) == 1 {
+			close(leaderEntered)
+			<-releaseLeader
+		}
+		return c.SendString("coalesced-ok")
+	})
+
+	const total = 20
+	var wg sync.WaitGroup
+	results := make(chan string, total)
+	for i := range total {
+		wg.Go(func() {
+			if i > 0 {
+				<-leaderEntered
+			}
+			req := httptest.NewRequest(fiber.MethodGet, "http://example.test/slow", nil)
+			resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
+			if err != nil {
+				results <- err.Error()
+				return
+			}
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			results <- string(body)
+		})
+	}
+	<-leaderEntered
+
+	// 另起一个带短同步期限的等待者, 验证其在领头阻塞期间快速脱离且不污染单飞合并.
+	expiredDone := make(chan int, 1)
+	go func() {
+		req := httptest.NewRequest(fiber.MethodGet, "http://example.test/slow", nil)
+		req.Header.Set("X-Short-Deadline", "1")
+		resp, err := app.Test(req, fiber.TestConfig{Timeout: 5 * time.Second})
+		if err != nil {
+			expiredDone <- 0
+			return
+		}
+		_ = resp.Body.Close()
+		expiredDone <- resp.StatusCode
+	}()
+	select {
+	case code := <-expiredDone:
+		if code != fiber.StatusServiceUnavailable {
+			close(releaseLeader)
+			t.Fatalf("expired waiter status = %d, want 503", code)
+		}
+	case <-time.After(time.Second):
+		close(releaseLeader)
+		t.Fatal("expired waiter remained blocked on slow leader")
+	}
+
+	// 慢领头耗时超过 40ms TTL 后再返回, 20 个正常并发请求必须全部合并为 1 次回源.
+	time.Sleep(80 * time.Millisecond)
+	close(releaseLeader)
+	wg.Wait()
+	close(results)
+	for got := range results {
+		if got != "coalesced-ok" {
+			t.Fatalf("response body = %q, want coalesced-ok", got)
+		}
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("slow origin calls = %d, want 1", got)
+	}
+}
+
+func BenchmarkFiberCacheBypassCookie(b *testing.B) {
+	app := fiber.New()
+	app.Use(CacheByRequestURI(time.Minute))
+	app.Get("/a", func(c fiber.Ctx) error { return c.SendString("ok") })
+	var fctx fasthttp.RequestCtx
+	fctx.Request.Header.SetMethod(fiber.MethodGet)
+	fctx.Request.SetRequestURI("/a")
+	fctx.Request.Header.Set("Host", "example.com")
+	fctx.Request.Header.Set("Accept", "application/json")
+	fctx.Request.Header.Set("Cookie", "sid=123456")
+	app.Handler()(&fctx)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		fctx.Response.Reset()
+		app.Handler()(&fctx)
+	}
+}
+
+func BenchmarkFiberCacheBypassNoStore(b *testing.B) {
+	app := fiber.New()
+	app.Use(CacheByRequestURI(time.Minute))
+	app.Get("/a", func(c fiber.Ctx) error {
+		c.Set("Cache-Control", "no-store")
+		return c.SendString("dynamic")
+	})
+	var fctx fasthttp.RequestCtx
+	fctx.Request.Header.SetMethod(fiber.MethodGet)
+	fctx.Request.SetRequestURI("/a")
+	fctx.Request.Header.Set("Host", "example.com")
+	app.Handler()(&fctx)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		fctx.Response.Reset()
+		app.Handler()(&fctx)
+	}
+}
+
+func BenchmarkFiberCacheHit(b *testing.B) {
+	app := fiber.New()
+	app.Use(CacheByRequestURI(time.Minute))
+	app.Get("/a", func(c fiber.Ctx) error { return c.SendString("cached") })
+	var fctx fasthttp.RequestCtx
+	fctx.Request.Header.SetMethod(fiber.MethodGet)
+	fctx.Request.SetRequestURI("/a")
+	fctx.Request.Header.Set("Host", "example.com")
+	app.Handler()(&fctx)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		fctx.Response.Reset()
+		app.Handler()(&fctx)
 	}
 }

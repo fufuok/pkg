@@ -1,6 +1,7 @@
 package httpcache
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -495,5 +496,154 @@ func TestPassMarkersBounded(t *testing.T) {
 		if got := c.passes.Len(); got != tc.want || len(c.locks) != 0 {
 			t.Fatalf("capacity %d: pass markers = %d, want %d, locks = %d", tc.capacity, got, tc.want, len(c.locks))
 		}
+	}
+}
+
+// TestAcquireContextCancelAndSlowCoalesce 验证同键排队等待者响应 Context 取消而不堆积,
+// 且在无取消时即使慢领头耗时超过 TTL 或 passWindow 仍严格保持单飞合并回源, 不发生同步超时惊群.
+func TestAcquireContextCancelAndSlowCoalesce(t *testing.T) {
+	if ruleNone != 0 {
+		t.Fatalf("ruleNone = %d, want zero value 0", ruleNone)
+	}
+	t.Run("cancel_unblocks_and_preserves_handoff", func(t *testing.T) {
+		c := New(time.Minute, Config{})
+		key := [32]byte{7}
+		leaderRelease := c.AcquireContext(context.Background(), key, "leader")
+
+		cancelCtx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		canceledDone := make(chan struct{})
+		go func() {
+			defer close(canceledDone)
+			rel := c.AcquireContext(cancelCtx, key, "w1")
+			rel(true)
+		}()
+
+		nextAcquired := make(chan func(bool), 1)
+		go func() {
+			nextAcquired <- c.AcquireContext(context.Background(), key, "w2")
+		}()
+
+		if !awaitCondition(func() bool { return lockRefs(c, key) == 3 }, 5*time.Second) {
+			t.Fatalf("waiters did not queue: refs = %d", lockRefs(c, key))
+		}
+
+		// 领头仍持有锁时取消 w1, w1 必须立即脱离等待.
+		cancel()
+		select {
+		case <-canceledDone:
+		case <-time.After(time.Second):
+			t.Fatal("canceled waiter remained blocked on slow leader")
+		}
+		if lockRefs(c, key) != 2 {
+			t.Fatalf("refs after cancel = %d, want 2", lockRefs(c, key))
+		}
+
+		// 领头放弃后令牌准确移交给仍在排队的 w2, 释放后锁表清空且未开启直通窗口.
+		leaderRelease(true)
+		var nextRelease func(bool)
+		select {
+		case nextRelease = <-nextAcquired:
+		case <-time.After(time.Second):
+			t.Fatal("remaining waiter did not receive token after leader abandoned")
+		}
+		c.Set(key, &Entry{Body: []byte("ok"), TTL: time.Minute})
+		nextRelease(false)
+		if len(c.locks) != 0 || c.passing(key) {
+			t.Fatalf("locks = %d, passing = %v, want 0 and false", len(c.locks), c.passing(key))
+		}
+	})
+
+	t.Run("slow_leader_exceeding_ttl_and_pass_window_still_coalesces", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			const waiters = 19
+			c := New(300*time.Millisecond, Config{})
+			key := [32]byte{9}
+			leaderRelease := c.AcquireContext(context.Background(), key, "leader")
+
+			var origins atomic.Int32
+			origins.Store(1)
+			var wg sync.WaitGroup
+			for i := range waiters {
+				wg.Go(func() {
+					rel := c.AcquireContext(context.Background(), key, i)
+					defer rel(false)
+					if _, ok := c.Get(key); ok {
+						return
+					}
+					origins.Add(1)
+				})
+			}
+			synctest.Wait()
+			if lockRefs(c, key) != waiters+1 {
+				t.Fatalf("refs = %d, want %d", lockRefs(c, key), waiters+1)
+			}
+
+			// 模拟慢接口耗时 6s (同时超过 300ms TTL 与 5s passWindow), 等待者不得提前超时回源.
+			time.Sleep(6 * time.Second)
+			synctest.Wait()
+			if origins.Load() != 1 || lockRefs(c, key) != waiters+1 {
+				t.Fatalf("waiters broke single-flight during slow origin: origins=%d refs=%d",
+					origins.Load(), lockRefs(c, key))
+			}
+
+			c.Set(key, &Entry{Body: []byte("ok"), TTL: 300 * time.Millisecond})
+			leaderRelease(false)
+			wg.Wait()
+			if origins.Load() != 1 || len(c.locks) != 0 || c.passing(key) {
+				t.Fatalf("origins = %d, locks = %d, passing = %v; want 1, 0, false",
+					origins.Load(), len(c.locks), c.passing(key))
+			}
+		})
+	})
+}
+
+// TestInspectAndScanHeadersZeroAlloc 验证原始请求头与响应头零分配扫描规则与标准策略一致.
+func TestInspectAndScanHeadersZeroAlloc(t *testing.T) {
+	c := New(time.Minute, Config{Vary: []string{"X-Tenant"}})
+	for _, tc := range []struct {
+		name, val string
+		wantCanon string
+		wantKey   bool
+		wantSkip  bool
+	}{
+		{"cookie", "sid=1", "", false, true},
+		{"cookie", "", "Cookie", false, false},
+		{"Authorization", "Bearer x", "", false, true},
+		{"Connection", "keep-alive, Upgrade", "", false, true},
+		{"Connection", "keep-alive", "Connection", false, false},
+		{"accept", "text/html, text/event-stream;q=0.9", "", false, true},
+		{"accept", "application/json", "Accept", true, false},
+		{"x-tenant", "t1", "X-Tenant", true, false},
+		{"User-Agent", "curl/8.0", "", false, false},
+	} {
+		canon, inKey, skip := c.InspectRequestHeader([]byte(tc.name), []byte(tc.val))
+		if canon != tc.wantCanon || inKey != tc.wantKey || skip != tc.wantSkip {
+			t.Fatalf("InspectRequestHeader(%q, %q) = (%q, %v, %v), want (%q, %v, %v)",
+				tc.name, tc.val, canon, inKey, skip, tc.wantCanon, tc.wantKey, tc.wantSkip)
+		}
+	}
+
+	var scan ResponseScan
+	if !c.ScanResponseHeader([]byte("Content-Type"), []byte("application/json"), &scan) ||
+		!c.ScanResponseHeader([]byte("Cache-Control"), []byte("max-age=10"), &scan) {
+		t.Fatal("valid response headers rejected by ScanResponseHeader")
+	}
+	if c.ScanResponseHeader([]byte("Cache-Control"), []byte("max-age=20"), &scan) {
+		t.Fatal("duplicate max-age across lines was not rejected")
+	}
+	if c.ScanResponseHeader([]byte("Set-Cookie"), []byte("a=1"), &ResponseScan{}) {
+		t.Fatal("Set-Cookie was not rejected")
+	}
+
+	nameBytes, valBytes := []byte("cookie"), []byte("sid=1")
+	respName, respVal := []byte("Cache-Control"), []byte("no-store")
+	allocs := testing.AllocsPerRun(100, func() {
+		_, _, _ = c.InspectRequestHeader(nameBytes, valBytes)
+		var s ResponseScan
+		_ = c.ScanResponseHeader(respName, respVal, &s)
+	})
+	if allocs != 0 {
+		t.Fatalf("header inspection allocated %v times, want 0", allocs)
 	}
 }

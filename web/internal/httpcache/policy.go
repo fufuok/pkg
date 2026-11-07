@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/fufuok/pkg/utils"
 )
 
 // connectionHeader 与 acceptHeader 按列表语义检查: 前者的 upgrade 表示协议升级, 后者的事件流表示长连接推送.
@@ -17,16 +19,14 @@ const (
 )
 
 // skipRequestHeaders 是出现非空值即跳过缓存的请求头: 凭据, 会话, 协议升级, 范围, 条件请求与客户端缓存控制.
-// listRequestHeaders 按列表语义检查, keyHeaders 固定进入请求键.
-// 三者加上 Vary 构成内核读取的全部请求头, 也是适配器需要收集的范围 (Cache.RequestHeaderName), 单一来源防止漂移.
+// connectionHeader/acceptHeader 按列表语义检查, keyHeaders 固定进入请求键; 加上 Vary 构成内核读取的全部请求头.
 var (
 	skipRequestHeaders = [...]string{
 		"Authorization", "Proxy-Authorization", "Cookie", "Upgrade", "Range",
 		"If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since", "If-Range",
 		"Cache-Control", "Pragma", "Trailer",
 	}
-	listRequestHeaders = [...]string{connectionHeader, acceptHeader}
-	keyHeaders         = [...]string{"Content-Type", "Content-Encoding"}
+	keyHeaders = [...]string{"Content-Type", "Content-Encoding"}
 )
 
 // SkipRequest 只允许可共享的普通完整响应参与缓存. 方法和正文上限由适配器检查,
@@ -57,7 +57,11 @@ func (c *Cache) Prepare(header http.Header, body []byte, status int) (*Entry, bo
 	stored := make(http.Header, len(header))
 	for name, values := range header {
 		if !dynamicResponseHeader(name) {
-			stored[name] = append([]string(nil), values...)
+			cloned := make([]string, len(values))
+			for i, v := range values {
+				cloned[i] = strings.Clone(v)
+			}
+			stored[strings.Clone(name)] = cloned
 		}
 	}
 	return &Entry{Header: stored, Body: body, TTL: ttl}, true
@@ -67,6 +71,32 @@ func (c *Cache) Prepare(header http.Header, body []byte, status int) (*Entry, bo
 func (c *Cache) CanServe(header http.Header, status int) bool {
 	_, ok := c.responsePolicy(header, status)
 	return ok
+}
+
+// ResponseScan 保存流式扫描原始响应头时的跨行 Cache-Control 新鲜度去重状态 (零值即可使用).
+type ResponseScan struct {
+	maxAge  bool
+	sMaxAge bool
+}
+
+// ScanResponseHeader 零分配校验单个原始响应头字段行是否满足共享缓存策略, 完整覆盖跨行重复的 max-age/s-maxage.
+// 全部字段行扫描通过后等价于 CanServe(..., http.StatusOK) 为 true, 无需构造中间 http.Header.
+func (c *Cache) ScanResponseHeader(name, value []byte, scan *ResponseScan) bool {
+	canonical := http.CanonicalHeaderKey(utils.B2S(name))
+	if unsafeResponseHeaderName(canonical) {
+		return false
+	}
+	sVal := utils.B2S(value)
+	switch canonical {
+	case "Content-Type":
+		return !hasEventStreamValue(sVal)
+	case "Vary":
+		return c.supportsVaryValue(sVal)
+	case "Cache-Control":
+		_, ok := parseResponseTTLValue(sVal, c.ttl, &scan.maxAge, &scan.sMaxAge)
+		return ok
+	}
+	return true
 }
 
 // responsePolicy 按规范名检查头, 含非规范字段名的响应由 unsafeResponse 一律拒绝.
@@ -95,7 +125,7 @@ func dynamicResponseHeader(name string) bool {
 }
 
 // IsRepresentationHeader 接收规范头名, 标记必须与缓存正文一致的字段.
-// 其他端到端字段回放时保留外层当前请求的同名值, 允许安全头中间件持续更新策略.
+// 命中回放时缓存条目缺失的表示头也会从当前响应清除; 其他条目头覆盖外层同名字段, 未进入条目的外层头保留本次请求值.
 func IsRepresentationHeader(name string) bool {
 	switch name {
 	case "Content-Type", "Content-Encoding", "Content-Language", "Content-Disposition", "Content-Length",
@@ -105,21 +135,24 @@ func IsRepresentationHeader(name string) bool {
 	return false
 }
 
+// unsafeResponseHeaderName 判断已规范化的响应头名是否属于会话、认证、连接级或显式时间禁止缓存名单.
+func unsafeResponseHeaderName(canonical string) bool {
+	switch canonical {
+	case "Set-Cookie", "Set-Cookie2", "Www-Authenticate", "Content-Range",
+		"Connection", "Keep-Alive", "Proxy-Connection", "Proxy-Authenticate", "Proxy-Authorization",
+		"Te", "Trailer", "Transfer-Encoding", "Upgrade", "Date", "Age", "Expires", "Pragma":
+		return true
+	}
+	return len(canonical) >= len(http.TrailerPrefix) &&
+		strings.EqualFold(canonical[:len(http.TrailerPrefix)], http.TrailerPrefix)
+}
+
 // unsafeResponse 拒绝会话, 认证, 局部正文和连接级状态, 不重放每次请求生成的头.
 // 即使危险字段值为空也跳过, 保留处理器明确设置该字段的意图. 后续检查按规范名查找, 直接写入 map 的
 // "set-cookie" 或 "cache-control: private" 会被客户端照常处理却逃过检查, 因此含非规范名即失败拒绝.
-// 危险名单, 规范名与 trailer 前缀检查共用一次遍历: switch 按长度和内容二分比较, 不为每个名单项哈希查找;
-// 已规范的名称由 CanonicalHeaderKey 原样返回且不分配.
 func unsafeResponse(header http.Header) bool {
 	for name := range header {
-		switch name {
-		case "Set-Cookie", "Set-Cookie2", "Www-Authenticate", "Content-Range",
-			"Connection", "Keep-Alive", "Proxy-Connection", "Proxy-Authenticate", "Proxy-Authorization",
-			"Te", "Trailer", "Transfer-Encoding", "Upgrade", "Date", "Age", "Expires", "Pragma":
-			return true
-		}
-		if name != http.CanonicalHeaderKey(name) ||
-			len(name) >= len(http.TrailerPrefix) && strings.EqualFold(name[:len(http.TrailerPrefix)], http.TrailerPrefix) {
+		if name != http.CanonicalHeaderKey(name) || unsafeResponseHeaderName(name) {
 			return true
 		}
 	}
@@ -130,17 +163,24 @@ func unsafeResponse(header http.Header) bool {
 // 内容类型和编码是固定维度, 即使没有出现在用户配置中也始终安全. 逐行用 Cut 迭代, 不分配.
 func (c *Cache) supportsVary(values []string) bool {
 	for _, value := range values {
-		// 整行为空或只有空白等同未声明; 非空行内的空项仍按非法名拒绝, 保持保守准入.
-		for rest, more := value, strings.TrimSpace(value) != ""; more; {
-			var part string
-			part, rest, more = strings.Cut(rest, ",")
-			name := http.CanonicalHeaderKey(strings.TrimSpace(part))
-			if name == "Content-Type" || name == "Content-Encoding" {
-				continue
-			}
-			if name == "*" || !validHeaderName(name) || !slices.Contains(c.cfg.Vary, name) {
-				return false
-			}
+		if !c.supportsVaryValue(value) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Cache) supportsVaryValue(value string) bool {
+	// 整行为空或只有空白等同未声明; 非空行内的空项仍按非法名拒绝, 保持保守准入.
+	for rest, more := value, strings.TrimSpace(value) != ""; more; {
+		var part string
+		part, rest, more = strings.Cut(rest, ",")
+		name := http.CanonicalHeaderKey(strings.TrimSpace(part))
+		if name == "Content-Type" || name == "Content-Encoding" {
+			continue
+		}
+		if name == "*" || !validHeaderName(name) || !slices.Contains(c.cfg.Vary, name) {
+			return false
 		}
 	}
 	return true
@@ -152,32 +192,41 @@ func (c *Cache) supportsVary(values []string) bool {
 func responseTTL(values []string, ttl time.Duration) (time.Duration, bool) {
 	var maxAge, sMaxAge bool
 	for _, value := range values {
-		for rest, more := value, true; more; {
-			var part string
-			part, rest, more = strings.Cut(rest, ",")
-			name, argument, hasValue := strings.Cut(strings.TrimSpace(part), "=")
-			// 指令名大小写无关, 用 EqualFold 比较而非转小写, 大写写法也不分配.
-			name = strings.TrimSpace(name)
-			seen := &maxAge
-			switch {
-			case strings.EqualFold(name, "no-store"), strings.EqualFold(name, "no-cache"), strings.EqualFold(name, "private"):
-				return 0, false
-			case strings.EqualFold(name, "s-maxage"):
-				seen = &sMaxAge
-			case strings.EqualFold(name, "max-age"):
-			default:
-				continue
-			}
-			if !hasValue || *seen {
-				return 0, false
-			}
-			*seen = true
-			seconds, ok := deltaSeconds(argument)
-			if !ok {
-				return 0, false
-			}
-			ttl = min(ttl, time.Duration(seconds)*time.Second)
+		var ok bool
+		ttl, ok = parseResponseTTLValue(value, ttl, &maxAge, &sMaxAge)
+		if !ok {
+			return 0, false
 		}
+	}
+	return ttl, true
+}
+
+func parseResponseTTLValue(value string, ttl time.Duration, maxAge, sMaxAge *bool) (time.Duration, bool) {
+	for rest, more := value, true; more; {
+		var part string
+		part, rest, more = strings.Cut(rest, ",")
+		name, argument, hasValue := strings.Cut(strings.TrimSpace(part), "=")
+		// 指令名大小写无关, 用 EqualFold 比较而非转小写, 大写写法也不分配.
+		name = strings.TrimSpace(name)
+		seen := maxAge
+		switch {
+		case strings.EqualFold(name, "no-store"), strings.EqualFold(name, "no-cache"), strings.EqualFold(name, "private"):
+			return 0, false
+		case strings.EqualFold(name, "s-maxage"):
+			seen = sMaxAge
+		case strings.EqualFold(name, "max-age"):
+		default:
+			continue
+		}
+		if !hasValue || *seen {
+			return 0, false
+		}
+		*seen = true
+		seconds, ok := deltaSeconds(argument)
+		if !ok {
+			return 0, false
+		}
+		ttl = min(ttl, time.Duration(seconds)*time.Second)
 	}
 	return ttl, true
 }
@@ -204,12 +253,19 @@ func deltaSeconds(value string) (uint64, bool) {
 // hasToken 按逗号分隔逐行匹配 Connection 等列表值, 不将子串误认成协议控制 token. 用 Cut 迭代, 不分配.
 func hasToken(values []string, token string) bool {
 	for _, value := range values {
-		for rest, more := value, true; more; {
-			var part string
-			part, rest, more = strings.Cut(rest, ",")
-			if strings.EqualFold(strings.TrimSpace(part), token) {
-				return true
-			}
+		if hasTokenValue(value, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTokenValue(value, token string) bool {
+	for rest, more := value, true; more; {
+		var part string
+		part, rest, more = strings.Cut(rest, ",")
+		if strings.EqualFold(strings.TrimSpace(part), token) {
+			return true
 		}
 	}
 	return false
@@ -220,16 +276,23 @@ func hasToken(values []string, token string) bool {
 // 只有可能匹配的字段行才逐项解析, 不转小写也不分配. 单值的 Content-Type 同样适用.
 func hasEventStream(values []string) bool {
 	for _, value := range values {
-		if strings.IndexByte(value, '-') < 0 {
-			continue
+		if hasEventStreamValue(value) {
+			return true
 		}
-		for rest, more := value, true; more; {
-			var part string
-			part, rest, more = strings.Cut(rest, ",")
-			part, _, _ = strings.Cut(part, ";")
-			if strings.EqualFold(strings.TrimSpace(part), eventStream) {
-				return true
-			}
+	}
+	return false
+}
+
+func hasEventStreamValue(value string) bool {
+	if strings.IndexByte(value, '-') < 0 {
+		return false
+	}
+	for rest, more := value, true; more; {
+		var part string
+		part, rest, more = strings.Cut(rest, ",")
+		part, _, _ = strings.Cut(part, ";")
+		if strings.EqualFold(strings.TrimSpace(part), eventStream) {
+			return true
 		}
 	}
 	return false

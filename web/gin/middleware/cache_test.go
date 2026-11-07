@@ -1889,3 +1889,47 @@ func TestGinCacheCanceledWaiter(t *testing.T) {
 		t.Fatalf("canceled waiter status = %d, body = %q, handler calls = %d", rec.Code, rec.Body.String(), calls.Load())
 	}
 }
+
+// TestGinCacheWaiterUnblocksBeforeSlowLeader 验证领头请求长期卡在慢源站时,
+// 等待者在自身请求 Context 到期后立即唤醒返回 503, 不被慢领头阻塞堆积协程.
+func TestGinCacheWaiterUnblocksBeforeSlowLeader(t *testing.T) {
+	engine := gin.New()
+	entered, releaseLeader := make(chan struct{}), make(chan struct{})
+	engine.Use(CacheByRequestURI(time.Minute))
+	engine.GET("/slow", func(c *gin.Context) {
+		close(entered)
+		<-releaseLeader
+		c.String(200, "slow-ok")
+	})
+
+	leaderDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() { leaderDone <- cacheGinRequest(engine, "GET", "/slow", "", nil) }()
+	<-entered
+
+	waiterCtx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	waiterRec := httptest.NewRecorder()
+	waiterDone := make(chan struct{})
+	go func() {
+		defer close(waiterDone)
+		engine.ServeHTTP(waiterRec, httptest.NewRequest(http.MethodGet, "/slow", nil).WithContext(waiterCtx))
+	}()
+
+	// 领头尚未释放, 等待者必须在到期后迅速返回 503.
+	select {
+	case <-waiterDone:
+	case <-time.After(time.Second):
+		close(releaseLeader)
+		t.Fatal("expired waiter remained blocked on slow leader")
+	}
+	if waiterRec.Code != http.StatusServiceUnavailable {
+		close(releaseLeader)
+		t.Fatalf("waiter status = %d, want 503", waiterRec.Code)
+	}
+
+	close(releaseLeader)
+	leader := <-leaderDone
+	if leader.Code != 200 || leader.Body.String() != "slow-ok" {
+		t.Fatalf("leader status = %d, body = %q", leader.Code, leader.Body.String())
+	}
+}

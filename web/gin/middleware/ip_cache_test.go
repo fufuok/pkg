@@ -16,15 +16,12 @@ import (
 
 func resetGinIPTestState(t *testing.T) {
 	t.Helper()
-	oldWL, oldBL := config.Whitelist, config.Blacklist
+	config.InitTester()
 	t.Cleanup(func() {
-		config.Whitelist = oldWL
-		config.Blacklist = oldBL
 		_ = UseWhitelistCache(0, 0)
 		_ = UseBlacklistCache(0, 0)
+		config.StopTester()
 	})
-	config.Whitelist = nil
-	config.Blacklist = nil
 	_ = UseWhitelistCache(0, 0)
 	_ = UseBlacklistCache(0, 0)
 }
@@ -105,7 +102,12 @@ func TestGinEmptyIPListZeroAllocFastPath(t *testing.T) {
 // TestGinConcurrentLoadConfigAndIPChecker 验证生产模式 LoadConfig 热重载与并发黑白名单请求之间零数据竞争.
 func TestGinConcurrentLoadConfigAndIPChecker(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	resetGinIPTestState(t)
+	_ = UseWhitelistCache(0, 0)
+	_ = UseBlacklistCache(0, 0)
+	t.Cleanup(func() {
+		_ = UseWhitelistCache(0, 0)
+		_ = UseBlacklistCache(0, 0)
+	})
 
 	config.InitTester()
 	tempRoot := filepath.Dir(config.RootPath)

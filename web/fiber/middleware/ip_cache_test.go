@@ -13,15 +13,12 @@ import (
 
 func resetFiberIPTestState(t *testing.T) {
 	t.Helper()
-	oldWL, oldBL := config.Whitelist, config.Blacklist
+	config.InitTester()
 	t.Cleanup(func() {
-		config.Whitelist = oldWL
-		config.Blacklist = oldBL
 		_ = UseWhitelistCache(0, 0)
 		_ = UseBlacklistCache(0, 0)
+		config.StopTester()
 	})
-	config.Whitelist = nil
-	config.Blacklist = nil
 	_ = UseWhitelistCache(0, 0)
 	_ = UseBlacklistCache(0, 0)
 }

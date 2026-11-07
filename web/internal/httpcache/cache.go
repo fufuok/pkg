@@ -3,6 +3,7 @@ package httpcache
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fufuok/freelru"
+	"github.com/fufuok/pkg/utils"
 )
 
 const (
@@ -29,6 +31,21 @@ const (
 	// 被淘汰的键仅退化为等待领头请求结束后再并发回源, 不随 Capacity 放大预分配内存.
 	maxPassKeys = 1024
 )
+
+const (
+	ruleNone requestHeaderRule = iota
+	ruleSkipNonEmpty
+	ruleConnection
+	ruleAccept
+)
+
+type requestHeaderRule uint8
+
+type requestHeaderInfo struct {
+	canonical string
+	rule      requestHeaderRule
+	inKey     bool
+}
 
 // Config 限制单个中间件实例的内存占用和可区分的请求表示.
 // 零值使用默认值, Vary 在默认请求头之后追加, 不覆盖安全默认维度.
@@ -76,15 +93,15 @@ type Cache struct {
 	passes *freelru.SyncedLRU[[32]byte, time.Time]
 	mu     sync.Mutex
 	locks  map[[32]byte]*keyLock
-	// requestNames 以小写名映射到规范名, 覆盖跳过检查与请求键需要的全部请求头; maxRequestName 是其中最长的名称.
-	requestNames   map[string]string
+	// requestHeaders 以小写名映射到规范名、跳过规则及是否进入请求键; maxRequestName 是其中最长的名称.
+	requestHeaders map[string]requestHeaderInfo
 	maxRequestName int
 }
 
-// keyLock 的引用计数覆盖持有者和等待者, 最后一个请求离开时即可删除登记,
-// 不因历史请求键持续增长, 也不使不同请求键互相等待业务处理.
+// keyLock 用容量为 1 的令牌通道串行化同键回源, 使等待者可响应请求 Context 取消/到期.
+// 引用计数覆盖当前持有者与仍在排队的等待者, 最后一个请求离开时删除登记, 不因历史请求键持续增长.
 type keyLock struct {
-	mu   sync.Mutex
+	ch   chan struct{}
 	refs int
 	// owner 是当前持锁请求的身份, 由 Cache.mu 保护; 同一请求重入时据此识别, 不在自己持有的锁上等待.
 	owner any
@@ -110,28 +127,46 @@ func New(ttl time.Duration, cfg Config) *Cache {
 	publicCfg := cfg
 	publicCfg.Vary = append([]string(nil), cfg.Vary...)
 	c := &Cache{
-		Config:       publicCfg,
-		cfg:          cfg,
-		ttl:          ttl,
-		store:        store,
-		pass:         pass,
-		passes:       passes,
-		locks:        make(map[[32]byte]*keyLock),
-		requestNames: make(map[string]string),
+		Config:         publicCfg,
+		cfg:            cfg,
+		ttl:            ttl,
+		store:          store,
+		pass:           pass,
+		passes:         passes,
+		locks:          make(map[[32]byte]*keyLock),
+		requestHeaders: make(map[string]requestHeaderInfo),
 	}
-	names := slices.Concat(skipRequestHeaders[:], listRequestHeaders[:], keyHeaders[:], cfg.Vary)
-	for _, name := range names {
-		c.requestNames[strings.ToLower(name)] = name
+	registerHeader := func(name string, rule requestHeaderRule, inKey bool) {
+		lower := strings.ToLower(name)
+		info := c.requestHeaders[lower]
+		info.canonical = name
+		if rule != ruleNone {
+			info.rule = rule
+		}
+		if inKey {
+			info.inKey = true
+		}
+		c.requestHeaders[lower] = info
 		c.maxRequestName = max(c.maxRequestName, len(name))
 	}
+	for _, name := range keyHeaders {
+		registerHeader(name, ruleNone, true)
+	}
+	for _, name := range cfg.Vary {
+		registerHeader(name, ruleNone, true)
+	}
+	for _, name := range skipRequestHeaders {
+		registerHeader(name, ruleSkipNonEmpty, false)
+	}
+	registerHeader(connectionHeader, ruleConnection, false)
+	registerHeader(acceptHeader, ruleAccept, false)
 	return c
 }
 
-// RequestHeaderName 判断请求头是否参与跳过检查或请求键, 是则返回规范名. 名称按 ASCII 大小写无关匹配,
-// 关闭头名规范化的框架同样能识别小写凭据. 在栈上转小写后查表, 常规长度不分配; 适配器据此只收集需要的字段.
-func (c *Cache) RequestHeaderName(name []byte) (string, bool) {
+// lookupRequestHeader 按 ASCII 大小写无关名称查找已登记的请求头规则, 常规长度在栈上转小写不分配.
+func (c *Cache) lookupRequestHeader(name []byte) (requestHeaderInfo, bool) {
 	if len(name) == 0 || len(name) > c.maxRequestName {
-		return "", false
+		return requestHeaderInfo{}, false
 	}
 	var buf [64]byte
 	lower := buf[:0]
@@ -144,8 +179,40 @@ func (c *Cache) RequestHeaderName(name []byte) (string, bool) {
 		}
 		lower = append(lower, ch)
 	}
-	canonical, ok := c.requestNames[string(lower)]
-	return canonical, ok
+	info, ok := c.requestHeaders[string(lower)]
+	return info, ok
+}
+
+// RequestHeaderName 判断请求头是否参与跳过检查或请求键, 是则返回规范名. 名称按 ASCII 大小写无关匹配,
+// 关闭头名规范化的框架同样能识别小写凭据. 在栈上转小写后查表, 常规长度不分配; 适配器据此只收集需要的字段.
+func (c *Cache) RequestHeaderName(name []byte) (string, bool) {
+	info, ok := c.lookupRequestHeader(name)
+	return info.canonical, ok
+}
+
+// InspectRequestHeader 零分配检查单个原始请求头字段行: 若触发跳过规则则 skip=true,
+// 否则返回规范名及该字段是否参与请求键计算 (inKey), 供适配器在不走缓存的请求上跳过 map 分配.
+func (c *Cache) InspectRequestHeader(name, value []byte) (canonical string, inKey, skip bool) {
+	info, ok := c.lookupRequestHeader(name)
+	if !ok {
+		return "", false, false
+	}
+	switch info.rule {
+	case ruleNone:
+	case ruleSkipNonEmpty:
+		if len(value) > 0 {
+			return "", false, true
+		}
+	case ruleConnection:
+		if hasTokenValue(utils.B2S(value), "upgrade") {
+			return "", false, true
+		}
+	case ruleAccept:
+		if hasEventStreamValue(utils.B2S(value)) {
+			return "", false, true
+		}
+	}
+	return info.canonical, info.inKey, false
 }
 
 // Get 返回仍新鲜的只读条目并更新 LRU 次序, 命中不会续期.
@@ -208,36 +275,70 @@ func (e *Entry) Age() string {
 	return strconv.FormatInt(int64(seconds), 10)
 }
 
-// Acquire 合并同一请求键的回源. 调用方必须 defer 返回的释放函数, 并在返回后再次 Get;
-// 只有已准入的缓存可供后续请求复用, 不共享失败或私人响应结果.
+// Acquire 合并同一请求键的回源, 等价于 AcquireContext(context.Background(), key, owner).
+func (c *Cache) Acquire(key [32]byte, owner any) func(abandoned bool) {
+	return c.AcquireContext(context.Background(), key, owner)
+}
+
+// AcquireContext 在请求 ctx 约束下合并同一请求键的回源.
+// 调用方必须 defer 返回的释放函数, 并在返回后再次检查 ctx 与 Get; 只有已准入的缓存可供后续请求复用.
 //
 // 持锁者释放时若该键仍无新鲜条目 (未准入, 超限, 非 200, 错误, panic 或已经到期等),
-// 释放前先登记 min(ttl, passWindow) 的直通窗口 (hit-for-pass): 已排队的等待者取得锁后立即放手
+// 释放前先登记 min(ttl, passWindow) 的直通窗口 (hit-for-pass): 已排队的等待者取得令牌后立即放手
 // 并发回源, 窗口内新到达的请求也不再排队. 直通请求不持有键锁, 其可准入响应照常写入并结束窗口;
-// 窗口到期后恢复单个领头请求回源. 正常冷请求合并回源; 窗口内已放行的请求仍可能同时完成可缓存响应.
-// 释放时传入 abandoned=true 表示持锁请求因客户端取消而没有得到结果, 不代表响应不可缓存:
-// 不登记直通, 由下一位等待者接任领头, 避免单个断开的客户端让全部排队请求同时回源.
+// 窗口到期后恢复单个领头请求回源.
+// 释放时传入 abandoned=true 表示持锁请求未执行业务或因客户端取消而没有得到结果, 不代表响应不可缓存:
+// 不登记直通, 由下一位等待者接任领头, 避免单个断开或超时的客户端让全部排队请求同时回源.
+//
+// 等待者在排队期间若遇到 ctx 结束 (客户端断开或外层请求期限到达), 立即扣减等待计数并返回无操作释放函数,
+// 避免在慢领头请求上堆积已取消的等待协程; 不设置固定等锁超时, 确保慢接口在微缓存场景下仍能合并回源而不发生同步惊群.
 //
 // owner 标识当前请求 (框架上下文指针, 须可比较), 非 nil 时同一请求经内部重路由或重复注册再次进入时
-// 直接直通: 持锁者就在其调用栈上, 等待必然自锁. nil 不参与识别. 释放函数只能执行一次;
-// 不提供取消等待, 由各框架按自身上下文管理处理生命周期.
-func (c *Cache) Acquire(key [32]byte, owner any) func(abandoned bool) {
+// 直接直通: 持锁者就在其调用栈上, 等待必然自锁. nil 不参与识别. 释放函数只能执行一次.
+func (c *Cache) AcquireContext(ctx context.Context, key [32]byte, owner any) func(abandoned bool) {
 	if c.passing(key) {
 		return releasePass
 	}
 	c.mu.Lock()
 	lock := c.locks[key]
 	if lock == nil {
-		lock = &keyLock{}
+		// 首个领头请求直接持有令牌 (通道保持为空), 无需再次加锁写 owner.
+		lock = &keyLock{
+			ch:    make(chan struct{}, 1),
+			refs:  1,
+			owner: owner,
+		}
 		c.locks[key] = lock
-	} else if owner != nil && lock.owner == owner {
+		c.mu.Unlock()
+		return c.makeRelease(key, lock)
+	}
+	if owner != nil && lock.owner == owner {
 		c.mu.Unlock()
 		return releasePass
 	}
 	lock.refs++
 	c.mu.Unlock()
-	lock.mu.Lock()
-	// 等待期间上一持锁者可能已登记直通, 立即放锁, 让其余等待者也依次快速放行而不再等待业务.
+
+	var done <-chan struct{}
+	if ctx != nil {
+		if ctx.Err() != nil {
+			c.leaveWaiter(key, lock)
+			return releasePass
+		}
+		done = ctx.Done()
+	}
+	if done == nil {
+		<-lock.ch
+	} else {
+		select {
+		case <-lock.ch:
+		case <-done:
+			c.leaveWaiter(key, lock)
+			return releasePass
+		}
+	}
+
+	// 等待期间上一持锁者可能已登记直通, 立即把令牌传给下一位等待者并直通放行.
 	if c.passing(key) {
 		c.unlock(key, lock)
 		return releasePass
@@ -245,6 +346,11 @@ func (c *Cache) Acquire(key [32]byte, owner any) func(abandoned bool) {
 	c.mu.Lock()
 	lock.owner = owner
 	c.mu.Unlock()
+	return c.makeRelease(key, lock)
+}
+
+// makeRelease 生成当前令牌持有者的唯一释放闭包.
+func (c *Cache) makeRelease(key [32]byte, lock *keyLock) func(abandoned bool) {
 	return func(abandoned bool) {
 		// 先登记再放锁, 保证被唤醒的等待者一定能看到直通标记.
 		if !abandoned && !c.fresh(key) {
@@ -254,17 +360,28 @@ func (c *Cache) Acquire(key [32]byte, owner any) func(abandoned bool) {
 	}
 }
 
-// unlock 清除持有者并释放键锁, 最后一个持有者或等待者离开时删除登记, 锁表大小只与在途请求键相关.
-// 登记先于互斥锁释放更新: 引用归零时已无等待者, 新到达的请求另建锁, 不会与旧锁交错.
+// leaveWaiter 在等待者因 Context 结束放弃排队时扣减引用计数; 若持有者此前已释放且无其他等待者, 一并回收锁登记.
+func (c *Cache) leaveWaiter(key [32]byte, lock *keyLock) {
+	c.mu.Lock()
+	lock.refs--
+	if lock.refs == 0 {
+		delete(c.locks, key)
+	}
+	c.mu.Unlock()
+}
+
+// unlock 清除持有者并将令牌移交给下一位等待者; 若已无等待者则直接删除锁登记, 锁表大小只与在途请求键相关.
 func (c *Cache) unlock(key [32]byte, lock *keyLock) {
 	c.mu.Lock()
 	lock.owner = nil
 	lock.refs--
 	if lock.refs == 0 {
 		delete(c.locks, key)
+		c.mu.Unlock()
+		return
 	}
+	lock.ch <- struct{}{}
 	c.mu.Unlock()
-	lock.mu.Unlock()
 }
 
 // passing 判断键是否处于直通窗口. 以存入的单调时钟截止时刻复核, 墙钟回拨不会延长窗口.

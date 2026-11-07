@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -57,37 +59,59 @@ func newResponseCache(ttl time.Duration, withBody bool, configs ...CacheConfig) 
 		if entry, ok := store.Get(key); ok {
 			return replyWithFiberCache(c, entry)
 		}
+		// 入口上下文在 Acquire 与 Next 之前读取, 内层中间件替换并在返回时 cancel 的派生上下文不影响它;
+		// 外层同步期限已到时等待者可立即脱离键锁, 执行结果可能不完整故同样不保存.
+		entryCtx := c.Context()
 		// 以当前上下文标识持锁者: RestartRouting 或重复注册使同一请求再次进入时直通, 不在自己持有的锁上等待.
-		// fasthttp 不因客户端断开取消处理, 释放时从不放弃领头.
-		release := store.Acquire(key, c)
-		defer release(false)
+		// 未执行业务就离开或入口上下文被主动取消时按放弃释放, 不登记直通窗口; 执行超时等未准入结果照常开启直通.
+		release := store.AcquireContext(entryCtx, key, c)
+		executed := false
+		defer func() { release(!executed || errors.Is(entryCtx.Err(), context.Canceled)) }()
+		if entryCtx.Err() != nil {
+			return c.Next()
+		}
 		if entry, ok := store.Get(key); ok {
 			return replyWithFiberCache(c, entry)
 		}
-		// 外层在业务之前已设置的头不进入条目, 命中时由外层为当前请求重新设置, 避免回放按访客条件设置的值.
-		// 业务会改写响应缓冲区, 跨越 Next 的快照必须持有独立副本.
-		outer := fiberCacheResponseHeaders(c, true)
-		// 入口上下文在 Next 之前读取, 内层中间件替换并在返回时 cancel 的派生上下文不影响它;
-		// 外层同步期限已到时结果可能不完整, 同样不保存.
-		entryCtx := c.Context()
+		// 外层在业务之前已设置的非表示头不进入条目, 命中时由外层为当前请求重新设置, 避免回放按访客条件设置的值.
+		// 表示头 (如 fasthttp 默认 Content-Type) 不参与 OmitInherited, 仅存在非表示头时才克隆独立快照.
+		outer := fiberOuterNonRepHeaders(c)
 
+		executed = true
 		err := c.Next()
 		// 缓存运行在请求协程, 内层超时标记由同一协程写入, 读取安全. 真实截止后工作协程仍可能访问 Ctx,
 		// 此时只返回原错误, 不读取活动请求或响应; OnTimeout 写出兜底并返回 nil 也由标记识别.
 		if err != nil || entryCtx.Err() != nil || c.RequestCtx().LastTimeoutErrorResponse() != nil {
 			return err
 		}
-		// Body() 会消费 fasthttp 的响应流; SendStream, SSE 和 SendFile 必须先在此退出.
-		// 接管连接后真实输出由 hijack 处理器负责, 响应对象可能根本不发送 (HijackSetNoResponse),
-		// 缓存它会向后续请求回放源站没有发出的内容.
-		if c.RequestCtx().Hijacked() || c.Response().IsBodyStream() || c.Response().SkipBody {
-			return nil
-		}
-		if entry, ok := store.Prepare(fiberCacheResponseHeaders(c, true), c.Response().Body(), c.StatusCode()); ok {
-			entry.OmitInherited(outer)
-			store.Set(key, entry)
-		}
+		storeFiberCacheResponse(c, store, key, outer)
 		return nil
+	}
+}
+
+// storeFiberCacheResponse 在请求未劫持、非流式且通过准入扫描时将 200 响应写入缓存.
+func storeFiberCacheResponse(c fiber.Ctx, store *httpcache.Cache, key [32]byte, outer http.Header) {
+	// Body() 会消费 fasthttp 的响应流; SendStream, SSE 和 SendFile 必须先在此退出.
+	// 接管连接后真实输出由 hijack 处理器负责, 响应对象可能根本不发送 (HijackSetNoResponse),
+	// 缓存它会向后续请求回放源站没有发出的内容.
+	if c.RequestCtx().Hijacked() || c.Response().IsBodyStream() || c.Response().SkipBody {
+		return
+	}
+	status := c.StatusCode()
+	body := c.Response().Body()
+	if status != fiber.StatusOK || len(body) > store.Config.MaxBodyBytes {
+		return
+	}
+	// 先在原始响应头上零分配完成完整准入扫描, 使 no-store, private, Set-Cookie 等直通响应不分配 http.Header.
+	var respScan httpcache.ResponseScan
+	for name, value := range c.Response().Header.All() {
+		if !store.ScanResponseHeader(name, value, &respScan) {
+			return
+		}
+	}
+	if entry, ok := store.Prepare(fiberCacheResponseHeaders(c), body, status); ok {
+		entry.OmitInherited(outer)
+		store.Set(key, entry)
 	}
 }
 
@@ -98,68 +122,117 @@ func fiberCacheRequestKey(c fiber.Ctx, store *httpcache.Cache, withBody bool) ([
 	if (!withBody && method != fiber.MethodGet) || (withBody && method != fiber.MethodPost) || c.Request().IsBodyStream() {
 		return [32]byte{}, false
 	}
-	if !fiberCacheInitialResponse(c, store) {
+	body := c.Request().Body()
+	if (!withBody && len(body) > 0) || len(body) > store.Config.MaxRequestBodyBytes {
 		return [32]byte{}, false
 	}
-	requestHeaders := fiberCacheRequestHeaders(c, store)
+	keyHeaderCount, ok := scanFiberRequestHeaders(c, store)
+	if !ok || !fiberCacheInitialResponse(c, store) {
+		return [32]byte{}, false
+	}
+	var requestHeaders http.Header
+	if keyHeaderCount > 0 {
+		var stackBacking [8]string
+		requestHeaders = collectFiberKeyHeaders(c, store, keyHeaderCount, stackBacking[:0])
+	}
 	req := httpcache.Request{
 		Method:        method,
 		Scheme:        c.Scheme(),
-		Host:          string(c.Request().Header.Host()),
+		Host:          utils.B2S(c.Request().Header.Host()),
 		EffectiveHost: c.Host(),
 		URI:           c.OriginalURL(),
 		Path:          c.Path(),
 		Query:         utils.B2S(c.Request().URI().QueryString()),
 		Header:        requestHeaders,
 	}
-	if httpcache.SkipRequest(req) {
-		return [32]byte{}, false
-	}
-	body := c.Request().Body()
-	if (!withBody && len(body) > 0) || len(body) > store.Config.MaxRequestBodyBytes {
-		return [32]byte{}, false
-	}
 	// Key 同步消费正文和零拷贝字段, 在下游改写或框架回收缓冲区之前完成哈希, 无需额外复制.
 	return store.Key(req, body), true
 }
 
+// scanFiberRequestHeaders 在原始请求头上零分配完成跳过检查, 并返回参与键计算的字段行数.
+func scanFiberRequestHeaders(c fiber.Ctx, store *httpcache.Cache) (int, bool) {
+	count := 0
+	for name, value := range c.Request().Header.All() {
+		_, inKey, skip := store.InspectRequestHeader(name, value)
+		if skip {
+			return 0, false
+		}
+		if inKey {
+			count++
+		}
+	}
+	return count, true
+}
+
+// collectFiberKeyHeaders 仅收集参与缓存键计算的请求头字段行, 常规数量复用调用方栈缓冲.
+func collectFiberKeyHeaders(c fiber.Ctx, store *httpcache.Cache, count int, backing []string) http.Header {
+	var headers http.Header
+	if count <= cap(backing) {
+		headers = make(http.Header)
+	} else {
+		headers = make(http.Header, count)
+		backing = make([]string, 0, count)
+	}
+	for name, value := range c.Request().Header.All() {
+		canonical, inKey, _ := store.InspectRequestHeader(name, value)
+		if !inKey {
+			continue
+		}
+		addFiberCacheHeader(headers, &backing, canonical, utils.B2S(value))
+	}
+	return headers
+}
+
 // fiberCacheInitialResponse 保留上游已经形成的状态, 正文和流, 命中不能覆盖当前请求的响应策略.
-// 流式检查先于 Body, 隐私和变化头同样受共用准入规则约束. 检查同步完成, 头映射零拷贝引用响应缓冲区.
+// 流式检查先于 Body, 隐私和变化头直接在原始响应头上零分配扫描校验.
 func fiberCacheInitialResponse(c fiber.Ctx, store *httpcache.Cache) bool {
 	if c.Response().IsBodyStream() || c.Response().SkipBody || c.StatusCode() != fiber.StatusOK ||
 		len(c.Response().Body()) > 0 {
 		return false
 	}
-	return store.CanServe(fiberCacheResponseHeaders(c, false), c.StatusCode())
+	var scan httpcache.ResponseScan
+	for name, value := range c.Response().Header.All() {
+		if !store.ScanResponseHeader(name, value, &scan) {
+			return false
+		}
+	}
+	return true
 }
 
-// fiberCacheRequestHeaders 只复制跳过检查和请求键需要的请求头, 按规范名保留全部字段行.
-// 不能只取首行, 否则空首行可能掩盖后续 Authorization, Cookie 或 Cache-Control; 名称大小写无关匹配,
-// 关闭头名规范化时小写凭据同样被识别. User-Agent 等无关字段不复制, 命中路径分配不随请求头数量增长.
-func fiberCacheRequestHeaders(c fiber.Ctx, store *httpcache.Cache) http.Header {
-	headers := make(http.Header, 4)
-	backing := make([]string, 0, 8)
-	for name, value := range c.Request().Header.All() {
-		if canonical, ok := store.RequestHeaderName(name); ok {
-			// 请求头只在业务执行前同步用于跳过检查和计算键, 不进入缓存条目, 可零拷贝引用请求缓冲区.
-			addFiberCacheHeader(headers, &backing, canonical, utils.B2S(value))
+// fiberOuterNonRepHeaders 仅在外层已预设非表示响应头时复制独立快照供 OmitInherited 比对;
+// 只有 fasthttp 默认 Content-Type 等表示头时零分配返回 nil.
+func fiberOuterNonRepHeaders(c fiber.Ctx) http.Header {
+	count := 0
+	for name := range c.Response().Header.All() {
+		if !httpcache.IsRepresentationHeader(http.CanonicalHeaderKey(utils.B2S(name))) {
+			count++
+		}
+	}
+	if count == 0 {
+		return nil
+	}
+	headers := make(http.Header, count)
+	backing := make([]string, 0, count)
+	for name, value := range c.Response().Header.All() {
+		key := http.CanonicalHeaderKey(utils.B2S(name))
+		if !httpcache.IsRepresentationHeader(key) {
+			addFiberCacheHeader(headers, &backing, strings.Clone(key), string(value))
 		}
 	}
 	return headers
 }
 
-// fiberCacheResponseHeaders 把响应头映射为共用策略使用的规范名 http.Header, 统一执行隐私和端到端头准入检查.
-// owned 为 false 时零拷贝引用响应缓冲区, 只能在响应被改写前同步使用 (命中前的策略检查);
-// 跨越业务处理或存入条目的快照必须传 true 复制名称与值.
-func fiberCacheResponseHeaders(c fiber.Ctx, owned bool) http.Header {
-	headers := make(http.Header, 4)
-	backing := make([]string, 0, 4)
+// fiberCacheResponseHeaders 把响应头零拷贝映射为规范名 http.Header 供 Prepare 入库,
+// Prepare 内部在保存条目时会对名称与值做独立字符串克隆以隔离 fasthttp 缓冲区.
+func fiberCacheResponseHeaders(c fiber.Ctx) http.Header {
+	total := c.Response().Header.Len()
+	if total == 0 {
+		return nil
+	}
+	headers := make(http.Header, total)
+	backing := make([]string, 0, total)
 	for name, value := range c.Response().Header.All() {
-		key, val := http.CanonicalHeaderKey(utils.B2S(name)), utils.B2S(value)
-		if owned {
-			key, val = strings.Clone(key), string(value)
-		}
-		addFiberCacheHeader(headers, &backing, key, val)
+		addFiberCacheHeader(headers, &backing, http.CanonicalHeaderKey(utils.B2S(name)), utils.B2S(value))
 	}
 	return headers
 }
@@ -186,7 +259,7 @@ func replyWithFiberCache(c fiber.Ctx, entry *httpcache.Entry) error {
 	var buf [4]string
 	representationNames := buf[:0]
 	for name := range c.Response().Header.All() {
-		if httpcache.IsRepresentationHeader(string(name)) {
+		if httpcache.IsRepresentationHeader(utils.B2S(name)) {
 			representationNames = append(representationNames, string(name))
 		}
 	}
