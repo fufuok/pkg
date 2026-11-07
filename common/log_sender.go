@@ -25,6 +25,12 @@ func initLogSender() {
 func logSender() {
 	num := 0
 	bb := buffer.Get()
+	// 最后一个空批次仍归 sender 所有; 非空批次交给 postLog 后清空引用.
+	defer func() {
+		if bb != nil {
+			bb.Put()
+		}
+	}()
 	cfg := config.Config().LogConf
 	lastLoadTime := time.Now()
 	interval := cfg.PostIntervalDuration
@@ -51,6 +57,7 @@ func logSender() {
 			if !ok {
 				if bb.Len() > 0 {
 					postLog(bb)
+					bb = nil
 				}
 				Log().Warn().Msg("Log sender exited")
 				return
@@ -83,13 +90,7 @@ func postLog(bb *buffer.Buffer) {
 	bb.B[0] = '['
 	_ = bb.WriteByte(']')
 
-	// 推送日志数据到接口 POST JSON
-	_ = ants.Submit(func() {
-		defer bb.Put()
-		if _, err := req.SetBodyJsonBytes(bb.B).Post(api); err != nil {
-			LogSampled().Warn().Err(err).Str("api", api).Msg("Posting log")
-		}
-	})
+	submitLog(api, bb.B, bb.Put)
 }
 
 // PostLog 异步推送日志, 使用调用时已发布的接口地址, 不依赖 sender 的周期配置刷新.
@@ -99,10 +100,29 @@ func PostLog(bs []byte) {
 		return
 	}
 
-	// 推送日志数据到接口 POST JSON
-	_ = ants.Submit(func() {
-		if _, err := req.SetBodyJsonBytes(bs).Post(api); err != nil {
+	submitLog(api, bs, nil)
+}
+
+// submitLog 转交正文的生命周期; 提交成功由后台任务回收资源, 提交被池拒绝则由调用方立即回收.
+// release 至多执行一次. 诊断仅写本地采样日志, 避免远端故障递归放大.
+func submitLog(api string, bs []byte, release func()) {
+	err := ants.Submit(func() {
+		if release != nil {
+			defer release()
+		}
+		resp, err := req.SetBodyJsonBytes(bs).Post(api)
+		if err != nil {
 			LogSampled().Warn().Err(err).Str("api", api).Msg("Posting log")
+			return
+		}
+		if !resp.IsSuccessState() {
+			LogSampled().Warn().Int("status", resp.StatusCode).Str("api", api).Msg("Posting log")
 		}
 	})
+	if err != nil {
+		if release != nil {
+			release()
+		}
+		LogSampled().Warn().Err(err).Str("api", api).Msg("Submitting log")
+	}
 }

@@ -44,12 +44,25 @@ var (
 	// logAlarm 报警日志, 写入通用日志并发送报警
 	logAlarm atomic.Pointer[zerolog.Logger]
 
-	logAlarmWriter = newAlarmWriter(zerolog.WarnLevel)
-	logCurrentConf config.LogConf
-	logAlarmOnConf atomic.Bool
+	logAlarmWriter  = newAlarmWriter(zerolog.WarnLevel)
+	logCurrentConf  config.LogConf
+	logCurrentDebug bool
+	logAlarmOnConf  atomic.Bool
+
+	// 生命周期串行维护底层文件 writer; 已发布 logger 可继续并发写入同一实例.
+	logFileWriter *lumberjack.Roller
+	logFileConf   logFileWriterConf
 )
 
 var disabledLogger = zerolog.Nop()
+
+// logFileWriterConf 只包含影响文件目标和轮转行为的参数, 不包括格式、级别或推送配置.
+type logFileWriterConf struct {
+	file       string
+	maxSize    int64
+	maxAge     int
+	maxBackups int
+}
 
 // Log 返回通用日志记录器
 // common.Log().Debug().Msg("debug")
@@ -120,7 +133,7 @@ func loadLogger() error {
 		}
 	}
 	cfg := config.Config().LogConf
-	if logCurrentConf == cfg {
+	if logCurrentConf == cfg && logCurrentDebug == config.Debug {
 		return nil
 	}
 	if err := newLogger(cfg); err != nil {
@@ -141,37 +154,48 @@ func loadLogger() error {
 	}).With().Bool("sampling", true).Logger()
 	logSampled.Store(&newLogSampled)
 	logCurrentConf = cfg
+	logCurrentDebug = config.Debug
 
 	Log().Warn().Str("version", config.Version).Str("tz", config.DefaultTimeZone).
 		Str("app_name", config.AppName).Str("bin_name", config.BinName).Str("deb_name", config.DebName).
 		Int("cpus", runtime.NumCPU()).Int("procs", runtime.GOMAXPROCS(0)).
 		Bool("alarm_on", alarmOn).Str("alarm_code", cfg.AlarmCode).Bool("app_sampler", AppLoggerUseSampler).
-		Msg("Logger sssinitialized")
+		Msg("Logger initialized")
 	return nil
 }
 
-// newLogger 使用传入的配置构建通用和报警记录器, 文件打开失败时保留旧记录器.
+// newLogger 构建通用和报警记录器, 文件目标和轮转参数未变时复用底层 writer.
+// 构建失败不更新缓存或已发布记录器; 真正更换 writer 不关闭仍可能被旧 logger 引用的实例.
 // 1. Debug 调试时, 日志高亮输出到控制台
 // 2. 非调试模式时, 日志输出到文件(可选关闭高亮, 可选 JSON 输出, 保存最近 10 个 30 天内的日志)
 func newLogger(cfg config.LogConf) (err error) {
 	var wr io.Writer
 	wr = zerolog.ConsoleWriter{Out: os.Stdout, NoColor: cfg.NoColor, TimeFormat: LogTimeFormat}
 	if !config.Debug {
-		wr, err = lumberjack.NewRoller(
-			cfg.File,
-			// 以 MiB 为单位
-			cfg.MaxSize*Megabyte,
-			&lumberjack.Options{
-				// 以 天 为单位
-				MaxAge:     time.Duration(cfg.MaxAge) * Days,
-				MaxBackups: cfg.MaxBackups,
-				LocalTime:  true,
-				Compress:   true,
-			},
-		)
-		if err != nil {
-			return err
+		fileConf := logFileWriterConf{
+			file: cfg.File, maxSize: cfg.MaxSize, maxAge: cfg.MaxAge, maxBackups: cfg.MaxBackups,
 		}
+		fileWriter := logFileWriter
+		if fileWriter == nil || logFileConf != fileConf {
+			fileWriter, err = lumberjack.NewRoller(
+				cfg.File,
+				// 以 MiB 为单位.
+				cfg.MaxSize*Megabyte,
+				&lumberjack.Options{
+					// 以天为单位.
+					MaxAge:     time.Duration(cfg.MaxAge) * Days,
+					MaxBackups: cfg.MaxBackups,
+					LocalTime:  true,
+					Compress:   true,
+				},
+			)
+			if err != nil {
+				return err
+			}
+		}
+		// writer 与其参数只在构造成功后一起替换, 保留失败后的同配置重试能力.
+		logFileWriter, logFileConf = fileWriter, fileConf
+		wr = fileWriter
 		if !cfg.NoPretty {
 			wr = zerolog.ConsoleWriter{Out: wr, NoColor: cfg.NoColor, TimeFormat: LogTimeFormat}
 		}

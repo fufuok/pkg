@@ -77,6 +77,7 @@ func TestAlarmSwitchConcurrentReload(t *testing.T) {
 	cfg := prepareCommonConfig(t)
 	installCommonTestLoggers(io.Discard, zerolog.TraceLevel)
 	logCurrentConf = cfg.LogConf
+	logCurrentDebug = config.Debug
 	writer := newAlarmWriter(zerolog.WarnLevel)
 	writer.off.Store(true)
 	var wg sync.WaitGroup
@@ -99,6 +100,7 @@ func TestAlarmSwitchRuntimeActivation(t *testing.T) {
 	cfg := prepareCommonRuntime(t)
 	installCommonTestLoggers(io.Discard, zerolog.TraceLevel)
 	logCurrentConf = cfg.LogConf
+	logCurrentDebug = config.Debug
 	pool := &queuedLogPool{Pooler: commonTestState.helperPool}
 	previousPool := ants.SwapDefaultAntsPool(pool)
 	t.Cleanup(func() { ants.SwapDefaultAntsPool(previousPool) })
