@@ -58,6 +58,6 @@ func (q *Queue[T]) Len() uint64 {
 // RateState 返回入队速率, 当前计数, 上一次计数
 func (q *Queue[T]) RateState() (rate float64, enqueueCount, lastEnqueueCount uint64) {
 	enqueueCount = q.enqueueCount.Load()
-	rate, lastEnqueueCount = q.queueRate.RateWithLastCount(q.enqueueCount.Load())
+	rate, lastEnqueueCount = q.queueRate.RateWithLastCount(enqueueCount)
 	return
 }

@@ -3,9 +3,7 @@ package middleware
 import (
 	"fmt"
 	"sync/atomic"
-	"time"
 
-	"github.com/fufuok/freelru"
 	"github.com/gofiber/fiber/v3"
 
 	"github.com/fufuok/pkg/common"
@@ -13,35 +11,18 @@ import (
 	"github.com/fufuok/pkg/web/fiber/tproxy"
 )
 
-var (
-	// 存放最近检查的黑名单 IP
-	blacklistLRU    freelru.Cache[string, bool]
-	useBlacklistLRU atomic.Bool
-)
+// 存放最近检查的黑名单 IP 缓存快照
+var blacklistCache atomic.Pointer[ipCache]
 
 // UseBlacklistCache 重新设置黑名单检查时缓存, 配置变化时可选再次调用, 由应用端 Start() Runtime() 调用
 func UseBlacklistCache(capacity, lifetime uint32) error {
-	useBlacklistLRU.Store(false)
-	PurgeBlacklistCache()
-
-	if capacity == 0 {
-		return nil
-	}
-
-	lru, err := freelru.NewShardedDefault[string, bool](capacity, time.Duration(lifetime)*time.Second)
-	if err != nil {
-		return err
-	}
-
-	blacklistLRU = lru
-	useBlacklistLRU.Store(blacklistLRU != nil)
-	return nil
+	return swapIPCache(&blacklistCache, capacity, lifetime)
 }
 
 // PurgeBlacklistCache 配置项变化时需要清空缓存, 由应用端在 Runtime() 调用
 func PurgeBlacklistCache() {
-	if blacklistLRU != nil {
-		blacklistLRU.Purge()
+	if c := blacklistCache.Load(); c != nil {
+		c.lru.Purge()
 	}
 }
 
@@ -56,20 +37,22 @@ func CheckBlacklist(asAPI bool) fiber.Handler {
 	}
 }
 
-// BlacklistChecker 是否存在于黑名单, true 是黑名单 (黑名单为空时: 放过, false)
+// BlacklistChecker 是否存在于黑名单, true 是黑名单 (黑名单为空的生产常态下直接跳过客户端 IP 解析).
 func BlacklistChecker(c fiber.Ctx) bool {
-	clientIP := tproxy.GetClientIP(c)
-	if len(config.Blacklist) > 0 {
-		if useBlacklistLRU.Load() {
-			if ok, loaded := blacklistLRU.Get(clientIP); loaded {
-				return ok
-			}
-		}
-		_, ok := common.LookupIPNetsString(clientIP, config.Blacklist)
-		if useBlacklistLRU.Load() {
-			blacklistLRU.Add(clientIP, ok)
-		}
-		return ok
+	bl := config.Blacklist
+	if len(bl) == 0 {
+		return false
 	}
-	return false
+	clientIP := tproxy.GetClientIP(c)
+	cache := blacklistCache.Load()
+	if cache != nil {
+		if ok, loaded := cache.lru.Get(clientIP); loaded {
+			return ok
+		}
+	}
+	_, ok := common.LookupIPNetsString(clientIP, bl)
+	if cache != nil {
+		cache.lru.Add(clientIP, ok)
+	}
+	return ok
 }

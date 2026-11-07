@@ -4,9 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync/atomic"
-	"time"
 
-	"github.com/fufuok/freelru"
 	"github.com/gin-gonic/gin"
 
 	"github.com/fufuok/pkg/common"
@@ -17,35 +15,18 @@ import (
 
 type ForbiddenChecker = func(*gin.Context) bool
 
-var (
-	// 存放最近检查的白名单 IP
-	whitelistLRU    freelru.Cache[string, bool]
-	useWhitelistLRU atomic.Bool
-)
+// 存放最近检查的白名单 IP 缓存快照
+var whitelistCache atomic.Pointer[ipCache]
 
 // UseWhitelistCache 重新设置白名单检查时缓存, 配置变化时可选再次调用, 由应用端 Start() Runtime() 调用
 func UseWhitelistCache(capacity, lifetime uint32) error {
-	useWhitelistLRU.Store(false)
-	PurgeWhitelistCache()
-
-	if capacity == 0 {
-		return nil
-	}
-
-	lru, err := freelru.NewShardedDefault[string, bool](capacity, time.Duration(lifetime)*time.Second)
-	if err != nil {
-		return err
-	}
-
-	whitelistLRU = lru
-	useWhitelistLRU.Store(whitelistLRU != nil)
-	return nil
+	return swapIPCache(&whitelistCache, capacity, lifetime)
 }
 
 // PurgeWhitelistCache 配置项变化时需要清空缓存, 由应用端在 Runtime() 调用
 func PurgeWhitelistCache() {
-	if whitelistLRU != nil {
-		whitelistLRU.Purge()
+	if c := whitelistCache.Load(); c != nil {
+		c.lru.Purge()
 	}
 }
 
@@ -85,22 +66,24 @@ func CheckWhitelistAnd(checker ForbiddenChecker, asAPI bool) gin.HandlerFunc {
 	}
 }
 
-// WhitelistChecker 是否通过了白名单检查, true 是白名单 (白名单为空时: 通过, true)
+// WhitelistChecker 是否通过了白名单检查, true 是白名单 (白名单为空时直接放行, 避免无谓解析客户端 IP).
 func WhitelistChecker(c *gin.Context) bool {
-	clientIP := c.ClientIP()
-	if len(config.Whitelist) > 0 {
-		if useWhitelistLRU.Load() {
-			if ok, loaded := whitelistLRU.Get(clientIP); loaded {
-				return ok
-			}
-		}
-		_, ok := common.LookupIPNetsString(clientIP, config.Whitelist)
-		if useWhitelistLRU.Load() {
-			whitelistLRU.Add(clientIP, ok)
-		}
-		return ok
+	wl := config.Whitelist
+	if len(wl) == 0 {
+		return true
 	}
-	return true
+	clientIP := c.ClientIP()
+	cache := whitelistCache.Load()
+	if cache != nil {
+		if ok, loaded := cache.lru.Get(clientIP); loaded {
+			return ok
+		}
+	}
+	_, ok := common.LookupIPNetsString(clientIP, wl)
+	if cache != nil {
+		cache.lru.Add(clientIP, ok)
+	}
+	return ok
 }
 
 func responseForbidden(c *gin.Context, msg string, asAPI bool) {

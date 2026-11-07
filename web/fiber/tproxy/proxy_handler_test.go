@@ -247,14 +247,6 @@ func TestProxyHandlerHTTPSIPv6DefaultPort(t *testing.T) {
 // TestProxyHandlerFailureClearsResponse 保留传输错误身份, 清除未完成的上游正文与响应头.
 // 应用仍负责错误状态和回包, 包内不能提前写入特定业务的 JSON 信封.
 func TestProxyHandlerFailureClearsResponse(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	refusedAddress := "http://" + listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		conn, buffered, err := w.(http.Hijacker).Hijack()
 		if err != nil {
@@ -266,6 +258,15 @@ func TestProxyHandlerFailureClearsResponse(t *testing.T) {
 		_ = buffered.Flush()
 	}))
 	defer upstream.Close()
+	// 在活跃测试服务绑定端口后再分配并关闭拒绝端口, 避免同一测试内的监听复用刚释放的临时端口.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	refusedAddress := "http://" + listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
 	for _, tt := range []struct {
 		name    string
 		address string

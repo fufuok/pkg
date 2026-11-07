@@ -32,7 +32,6 @@ func AllLogCondition(*gin.Context, time.Duration) bool {
 
 // WebLogger Web 日志, 记录错误日志, 推送请求日志到接口
 func WebLogger(cond LogCondition) gin.HandlerFunc {
-	gin.Logger()
 	if cond == nil {
 		cond = DefaultLogCondition
 	}

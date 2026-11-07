@@ -38,6 +38,8 @@ func Benchmark_MPSC_UMPSCQueue(b *testing.B) {
 	}
 }
 
+// Benchmark_MPSC_Chanx 每轮包含队列构造、80 万元素传递及关闭, 不表示单元素延迟.
+// 等待输出关闭后才开始下一轮, 避免后台转发协程积累污染基准.
 func Benchmark_MPSC_Chanx(b *testing.B) {
 	for n := 0; n < b.N; n++ {
 		ch := chanx.NewUnboundedChan[int](context.Background(), 1024)
@@ -60,6 +62,10 @@ func Benchmark_MPSC_Chanx(b *testing.B) {
 			_ = <-ch.Out
 		}
 		wg.Wait()
+		close(ch.In)
+		if _, ok := <-ch.Out; ok {
+			b.Fatal("unexpected extra queue element")
+		}
 	}
 }
 
