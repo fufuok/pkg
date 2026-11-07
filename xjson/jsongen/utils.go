@@ -13,14 +13,9 @@ import (
 	"github.com/fufuok/pkg/utils"
 )
 
-// DisableEscapeHTML will disable the automatic escaping of certain
-// "problamatic" HTML characters when encoding to JSON.
-// These character include '>', '<' and '&', which get escaped to \u003e,
-// \u0026, and \u003c respectively.
-//
-// This is a global flag and will affect all further gjson operations.
-// Ideally, if used, it should be set one time before other gjson functions
-// are called.
+// DisableEscapeHTML 禁用 JSON 编码时对 HTML 敏感字符的自动转义.
+// 默认将 '>', '<' 和 '&' 分别转义为 \u003e, \u003c 和 \u0026.
+// 这是 jsongen 的全局编码开关, 应在其他 jsongen 函数调用前一次性设置.
 var DisableEscapeHTML = false
 
 var hexchars = [...]byte{

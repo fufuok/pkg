@@ -121,7 +121,7 @@ func IPv42LongLittle(ip net.IP) int {
 	return int(ip4[3])<<24 | int(ip4[2])<<16 | int(ip4[1])<<8 | int(ip4[0])
 }
 
-// Int2IPv6 数值转 IPv4
+// Int2IPv6 数值转 IPv6.
 func Int2IPv6(ipInt *big.Int) net.IP {
 	if ipInt.Sign() == -1 {
 		return nil
@@ -133,7 +133,7 @@ func Int2IPv6(ipInt *big.Int) net.IP {
 		return nil
 	}
 
-	// 前面补零, 补齐 16 位. 不把零长度切片 append 到原数据,
+	// 前面补零, 补齐 16 字节. 不把零长度切片 append 到原数据,
 	// 避免 makezero 告警, 也不改变补齐后的字节顺序.
 	if n < 16 {
 		padded := make([]byte, 16)

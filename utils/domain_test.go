@@ -61,7 +61,7 @@ func TestCheckDomain(t *testing.T) {
 		{n: "www.\xbd\xb2.com", e: "domain has invalid rune at offset 4"},
 		{n: "-example.com", e: "domain label '-example' at offset 0 begins with a hyphen"},
 		{n: "example-.com", e: "domain label 'example-' at offset 0 ends with a hyphen"},
-		{n: "example.-com", e: "domain's top level domain '-com' at offset 8 begin with a hyphen"},
+		{n: "example.-com", e: "domain's top level domain '-com' at offset 8 begins with a hyphen"},
 		// 15
 		{n: "example.com-", e: "domain's top level domain 'com-' at offset 8 ends with a hyphen"},
 		{n: "example.1com", e: "domain's top level domain '1com' at offset 8 begins with a digit"},

@@ -11,23 +11,23 @@ import (
 var (
 	bigIECExp = big.NewInt(1024)
 
-	// BigByte is one byte in bit.Ints
+	// BigByte 用 big.Int 表示 1 字节.
 	BigByte = big.NewInt(1)
-	// BigKiByte is 1,024 bytes in bit.Ints
+	// BigKiByte 用 big.Int 表示 1 KiB, 即 1,024 字节.
 	BigKiByte = (&big.Int{}).Mul(BigByte, bigIECExp)
-	// BigMiByte is 1,024 k bytes in bit.Ints
+	// BigMiByte 用 big.Int 表示 1 MiB, 即 1,024 KiB.
 	BigMiByte = (&big.Int{}).Mul(BigKiByte, bigIECExp)
-	// BigGiByte is 1,024 m bytes in bit.Ints
+	// BigGiByte 用 big.Int 表示 1 GiB, 即 1,024 MiB.
 	BigGiByte = (&big.Int{}).Mul(BigMiByte, bigIECExp)
-	// BigTiByte is 1,024 g bytes in bit.Ints
+	// BigTiByte 用 big.Int 表示 1 TiB, 即 1,024 GiB.
 	BigTiByte = (&big.Int{}).Mul(BigGiByte, bigIECExp)
-	// BigPiByte is 1,024 t bytes in bit.Ints
+	// BigPiByte 用 big.Int 表示 1 PiB, 即 1,024 TiB.
 	BigPiByte = (&big.Int{}).Mul(BigTiByte, bigIECExp)
-	// BigEiByte is 1,024 p bytes in bit.Ints
+	// BigEiByte 用 big.Int 表示 1 EiB, 即 1,024 PiB.
 	BigEiByte = (&big.Int{}).Mul(BigPiByte, bigIECExp)
-	// BigZiByte is 1,024 e bytes in bit.Ints
+	// BigZiByte 用 big.Int 表示 1 ZiB, 即 1,024 EiB.
 	BigZiByte = (&big.Int{}).Mul(BigEiByte, bigIECExp)
-	// BigYiByte is 1,024 z bytes in bit.Ints
+	// BigYiByte 用 big.Int 表示 1 YiB, 即 1,024 ZiB.
 	BigYiByte = (&big.Int{}).Mul(BigZiByte, bigIECExp)
 )
 

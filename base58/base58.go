@@ -46,7 +46,7 @@ func Decode(b string) []byte {
 	//   x *= 58^10
 	//   x += t
 	//
-	// Of course, in addition, we'll need to handle boundary condition when `b` is not multiple of 58^10.
+	// 输入长度不是 10 的倍数时, 最后一组按剩余的 base58 字符数处理.
 	// In that case we'll use the bigRadix[n] lookup for the appropriate power.
 	for t := b; len(t) > 0; {
 		n := min(len(t), 10)

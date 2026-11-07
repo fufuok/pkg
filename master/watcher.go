@@ -90,7 +90,7 @@ func (w Watcher) Stop() {
 func initWatcher() {
 	mainFile = utils.Executable(true)
 	if mainFile == "" {
-		log.Fatalln("Failed to initialize Watcher: miss executable", "\nbye.")
+		log.Fatalln("Failed to initialize Watcher: missing executable", "\nbye.")
 	}
 
 	isRuntime = true

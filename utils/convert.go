@@ -180,7 +180,7 @@ func B64Decode(s string) []byte {
 	return nil
 }
 
-// B64UrlEncode Base64 解码, 安全 URL, 替换: "+/" 为 "-_"
+// B64UrlEncode 使用 URL 安全的 Base64 编码, 替换: "+/" 为 "-_".
 func B64UrlEncode(b []byte) string {
 	return base64.URLEncoding.EncodeToString(b)
 }

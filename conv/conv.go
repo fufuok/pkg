@@ -238,7 +238,7 @@ func Atot(a string) bool {
 }
 
 // Atof converts string to float64
-// For infinte numbers use 'Infinity' or '-Infinity', not 'Inf' or '-Inf'.
+// 无穷值使用 'Infinity' 或 '-Infinity', 不接受 'Inf' 或 '-Inf'.
 // Returns NaN for invalid syntax
 func Atof(a string) float64 {
 	f, err := parseFloat(a)

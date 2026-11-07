@@ -106,7 +106,7 @@ func (t Result) String() string {
 	}
 }
 
-// Bool returns an boolean representation.
+// Bool 返回该结果的布尔表示.
 func (t Result) Bool() bool {
 	switch t.Type {
 	default:
@@ -173,7 +173,7 @@ func (t Result) Uint() uint64 {
 	}
 }
 
-// Float returns an float64 representation.
+// Float 返回该结果的 float64 表示.
 func (t Result) Float() float64 {
 	switch t.Type {
 	default:
@@ -1204,7 +1204,7 @@ func parseObject(c *parseContext, i int, path string) (int, bool) {
 		for ; i < len(c.json); i++ {
 			if c.json[i] == '"' {
 				// parse_key_string
-				// this is slightly different from getting s string value
+				// 此处的处理与获取字符串值略有不同.
 				// because we don't need the outer quotes.
 				i++
 				s := i
@@ -2023,14 +2023,9 @@ func appendHex16(dst []byte, x uint16) []byte {
 	)
 }
 
-// DisableEscapeHTML will disable the automatic escaping of certain
-// "problamatic" HTML characters when encoding to JSON.
-// These character include '>', '<' and '&', which get escaped to \u003e,
-// \u0026, and \u003c respectively.
-//
-// This is a global flag and will affect all further gjson operations.
-// Ideally, if used, it should be set one time before other gjson functions
-// are called.
+// DisableEscapeHTML 禁用 JSON 编码时对 HTML 敏感字符的自动转义.
+// 默认将 '>', '<' 和 '&' 分别转义为 \u003e, \u003c 和 \u0026.
+// 这是 gjson 的全局编码开关, 应在其他 gjson 函数调用前一次性设置.
 var DisableEscapeHTML = false
 
 // AppendJSONString is a convenience function that converts the provided string
@@ -2247,7 +2242,7 @@ func GetBytes(json []byte, path string) Result {
 	return getBytes(json, path)
 }
 
-// runeit returns the rune from the the \uXXXX
+// runeit 将 \uXXXX 中的四位十六进制数转换为 rune.
 func runeit(json string) rune {
 	n, _ := strconv.ParseUint(json[:4], 16, 64)
 	return rune(n)
@@ -3059,7 +3054,7 @@ func modReverse(json, arg string) string {
 //
 //	[1,[2],[3,4],[5,[6,7]]] -> [1,2,3,4,5,[6,7]]
 //
-// The {"deep":true} arg can be provide for deep flattening.
+// 可通过 {"deep":true} 参数递归展开嵌套数组.
 //
 //	[1,[2],[3,4],[5,[6,7]]] -> [1,2,3,4,5,6,7]
 //
@@ -3438,15 +3433,14 @@ func revSquash(json string) string {
 //
 //	gjson.Get(json, "friends.#.first")
 //
-// The returned value will be in the form of a JSON array:
+// 返回普通 Go 字符串切片形式的路径集合, 例如:
 //
-//	["friends.0.first","friends.1.first","friends.2.first"]
+//	[]string{"friends.0.first", "friends.1.first", "friends.2.first"}
 //
 // The param 'json' must be the original JSON used when calling Get.
 //
-// Returns an empty string if the paths cannot be determined, which can happen
-// when the Result came from a path that contained a multipath, modifier,
-// or a nested query.
+// 缺少结果索引或结果数量与索引数量不一致时返回 nil; 单项无法还原时, 对应元素为空字符串.
+// 包含多路径, 修饰符或嵌套查询的结果可能无法还原路径.
 func (t Result) Paths(json string) []string {
 	if t.Indexes == nil {
 		return nil
@@ -3467,7 +3461,7 @@ func (t Result) Paths(json string) []string {
 //
 //	gjson.Get(json, "friends.#(last=Murphy)")
 //
-// The returned value will be in the form of a JSON string:
+// 返回普通 Go 路径字符串, 例如:
 //
 //	"friends.0"
 //
@@ -3575,8 +3569,8 @@ func isSafePathKeyChar(c byte) bool {
 //	   }
 //	}`
 //	user := gjson.Get(json, "user")
-//	println(user.Get(gjson.Escape("first.name"))
-//	println(user.Get(gjson.Escape("last.name"))
+//	println(user.Get(gjson.Escape("first.name")).String())
+//	println(user.Get(gjson.Escape("last.name")).String())
 //	// Output:
 //	// Janet
 //	// Prichard

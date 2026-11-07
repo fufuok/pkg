@@ -26,7 +26,7 @@
 // Features:
 //
 //   - Size: 12 bytes (96 bits), smaller than UUID, larger than snowflake
-//   - Base32 hex encoded by default (16 bytes storage when transported as printable string)
+//   - 默认使用 Base32 hex 编码, 可打印字符串占 20 字节.
 //   - Non configured, you don't need set a unique machine and/or data center id
 //   - K-ordered
 //   - Embedded time with 1 second precision
@@ -70,8 +70,7 @@ const (
 )
 
 var (
-	// objectIDCounter is atomically incremented when generating a new ObjectId. It's
-	// used as the counter part of an id. This id is initialized with a random value.
+	// objectIDCounter 从随机值开始, 每次生成 ID 时原子递增, 作为 ID 的计数器部分.
 	objectIDCounter = randInt()
 
 	// machineID is generated once and used in subsequent calls to the New* functions.
@@ -94,9 +93,7 @@ func init() {
 		dec[encoding[i]] = byte(i)
 	}
 
-	// If /proc/self/cpuset exists and is not /, we can assume that we are in a
-	// form of container and use the content of cpuset xor-ed with the PID in
-	// order get a reasonable machine global unique PID.
+	// 容器中的 PID 可能重复, 将 cpuset 内容的校验和混入 PID, 降低容器间碰撞的概率.
 	b, err := os.ReadFile("/proc/self/cpuset")
 	if err == nil && len(b) > 1 {
 		pid ^= int(crc32.ChecksumIEEE(b))
@@ -179,7 +176,7 @@ func (id ID) Encode(dst []byte) []byte {
 	return dst
 }
 
-// MarshalText implements encoding/text TextMarshaler interface
+// MarshalText 实现 encoding.TextMarshaler 接口.
 func (id ID) MarshalText() ([]byte, error) {
 	text := make([]byte, encodedLen)
 	encode(text, id[:])
@@ -224,7 +221,7 @@ func encode(dst, id []byte) {
 	dst[0] = encoding[id[0]>>3]
 }
 
-// UnmarshalText implements encoding/text TextUnmarshaler interface
+// UnmarshalText 实现 encoding.TextUnmarshaler 接口.
 func (id *ID) UnmarshalText(text []byte) error {
 	if len(text) != encodedLen {
 		return ErrInvalidID
@@ -383,8 +380,7 @@ func (s sorter) Swap(i, j int) {
 	s[i], s[j] = s[j], s[i]
 }
 
-// Sort sorts an array of IDs inplace.
-// It works by wrapping `[]ID` and use `sort.Sort`.
+// Sort 通过 sort.Sort 对 ID 切片原地排序.
 func Sort(ids []ID) {
 	sort.Sort(sorter(ids))
 }

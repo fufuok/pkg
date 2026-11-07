@@ -28,7 +28,7 @@ var (
 
 func main() {
 	flag.StringVar(&baseSecretValue, "base", "", "自定义基础密钥")
-	flag.StringVar(&baseSecretSalt, "salt", baseSecretSalt, "自定义基础密钥(可选)")
+	flag.StringVar(&baseSecretSalt, "salt", baseSecretSalt, "自定义基础密钥盐(可选)")
 	flag.StringVar(&appName, "appname", appName, "应用名, 用于加密基础密钥")
 
 	flag.StringVar(&base58Value, "b58", "", "base58")

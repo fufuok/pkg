@@ -13,9 +13,7 @@ const (
 
 var maxRuneBytes = [...]byte{244, 143, 191, 191}
 
-// Match returns true if str matches pattern. This is a very
-// simple wildcard match where '*' matches on any number characters
-// and '?' matches on any one character.
+// Match 判断 str 是否匹配 pattern; '*' 匹配任意字符序列, '?' 匹配任意单个字符.
 //
 // pattern:
 //
@@ -23,8 +21,8 @@ var maxRuneBytes = [...]byte{244, 143, 191, 191}
 //
 // term:
 //
-//	'*'         matches any sequence of non-Separator characters
-//	'?'         matches any single non-Separator character
+//	'*'         匹配任意字符序列, 包括路径分隔符
+//	'?'         匹配任意单个字符, 包括路径分隔符
 //	c           matches character c (c != '*', '?', '\\')
 //	'\\' c      matches character c
 //
@@ -34,7 +32,7 @@ func Match(str, pattern string) bool {
 }
 
 // MatchNoCase is the same as Match but performs a case-insensitive match.
-// Such that string "Hello World" with match with lower case pattern "hello*"
+// 例如, 字符串 "Hello World" 可以匹配小写模式 "hello*".
 // 仅忽略 ASCII 字母大小写, 其他 Unicode 字符仍按原值匹配.
 func MatchNoCase(str, pattern string) bool {
 	return match0(str, pattern, true)
@@ -48,14 +46,12 @@ func match0(str, pattern string, nocase bool) bool {
 	return match(str, pattern, 0, nil, -1, nocase) == rMatch
 }
 
-// MatchLimit is the same as Match but will limit the complexity of the match
-// operation. This is to avoid long running matches, specifically to avoid ReDos
-// attacks from arbritary inputs.
+// MatchLimit 与 Match 类似, 但会限制匹配复杂度, 避免任意输入造成长时间匹配或 ReDoS 攻击.
 //
 // How it works:
 // The underlying match routine is recursive and may call itself when it
 // encounters a sandwiched wildcard pattern, such as: `user:*:name`.
-// Everytime it calls itself a counter is incremented.
+// 每次递归调用都会增加计数器.
 // The operation is stopped when counter > maxcomp*len(str).
 // 大小写敏感匹配与忽略大小写入口共用预算规则, 超限时通过 stopped 标识.
 func MatchLimit(str, pattern string, maxcomp int) (matched, stopped bool) {
@@ -185,7 +181,7 @@ func match(str, pat string, slen int, counter *int, maxcomp int, nocase bool,
 }
 
 // matchTrimSuffix matches and trims any non-wildcard suffix characters.
-// Returns the trimed string and pattern.
+// 返回裁剪后的字符串和模式.
 //
 // This is called because the pattern contains extra data after the wildcard
 // star. Here we compare any suffix characters in the pattern to the suffix of

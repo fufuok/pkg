@@ -40,7 +40,7 @@ func InitCSTLocation() (name string, loc *time.Location, cst *time.Location, ok 
 	return
 }
 
-// InitLocation 解析并初始化本地时区
+// InitLocation 解析时区, 失败时返回当前本地时区; 不修改 time.Local.
 func InitLocation(name string) (*time.Location, bool) {
 	loc, err := time.LoadLocation(name)
 	if err != nil {
@@ -149,7 +149,7 @@ func BeginOfTomorrow(t time.Time) time.Time {
 	return BeginOfDay(t.AddDate(0, 0, 1))
 }
 
-// EndOfTomorrow 明天 0 点
+// EndOfTomorrow 明天最后一刻.
 func EndOfTomorrow(t time.Time) time.Time {
 	return EndOfDay(t.AddDate(0, 0, 1))
 }
@@ -160,7 +160,7 @@ func BeginOfSecond(t time.Time) time.Time {
 	return time.Date(y, m, d, t.Hour(), t.Minute(), t.Second(), 0, t.Location())
 }
 
-// EndOfSecond 最后一毫秒
+// EndOfSecond 当前秒的最后一纳秒.
 func EndOfSecond(t time.Time) time.Time {
 	return BeginOfSecond(t).Add(time.Second - time.Nanosecond)
 }
@@ -171,7 +171,7 @@ func BeginOfMinute(t time.Time) time.Time {
 	return time.Date(y, m, d, t.Hour(), t.Minute(), 0, 0, t.Location())
 }
 
-// EndOfMinute 最后一秒
+// EndOfMinute 当前分钟的最后一纳秒.
 func EndOfMinute(t time.Time) time.Time {
 	return BeginOfMinute(t).Add(time.Minute - time.Nanosecond)
 }
@@ -182,7 +182,8 @@ func BeginOfHour(t time.Time) time.Time {
 	return time.Date(y, m, d, t.Hour(), 0, 0, 0, t.Location())
 }
 
-// EndOfHour 最后一分
+// EndOfHour 以 BeginOfHour(t) 为起点, 按固定一小时计算区间末端, 精度为纳秒.
+// 时区发生非整小时跳变时, 结果不保证落在本地小时边界.
 func EndOfHour(t time.Time) time.Time {
 	return BeginOfHour(t).Add(time.Hour - time.Nanosecond)
 }
@@ -206,7 +207,7 @@ func BeginOfLastWeek(t time.Time) time.Time {
 	return BeginOfWeek(t.AddDate(0, 0, -7))
 }
 
-// EndOfLastWeek 上周一最后一刻
+// EndOfLastWeek 上周末最后一刻.
 func EndOfLastWeek(t time.Time) time.Time {
 	return EndOfWeek(t.AddDate(0, 0, -7))
 }
@@ -216,7 +217,7 @@ func BeginOfNextWeek(t time.Time) time.Time {
 	return BeginOfWeek(t.AddDate(0, 0, 7))
 }
 
-// EndOfNextWeek 下周一最后一刻
+// EndOfNextWeek 下周末最后一刻.
 func EndOfNextWeek(t time.Time) time.Time {
 	return EndOfWeek(t.AddDate(0, 0, 7))
 }

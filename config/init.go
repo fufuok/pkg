@@ -54,7 +54,7 @@ func ParseDuration(s string, defDur time.Duration, minDur ...time.Duration) (tim
 		return defDur, err
 	}
 
-	// 配置的时间间间隔小于最小值则使用默认值
+	// 配置的时间间隔小于最小值则使用默认值
 	if len(minDur) > 0 && dur < minDur[0] {
 		return defDur, nil
 	}

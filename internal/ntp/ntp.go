@@ -680,9 +680,7 @@ func fixHostPort(address string, defaultPort int) (fixed string, err error) {
 		return fmt.Sprintf("%s:%d", address, defaultPort), nil
 	}
 
-	// Exactly one colon? A port have been included along with an IPv4 or
-	// domain address. (IPv6 addresses are guaranteed to have more than one
-	// colon.)
+	// 只有一个冒号时, IPv4 或域名地址已经包含端口; IPv6 地址至少包含两个冒号.
 	prev := strings.LastIndexByte(address[:last], ':')
 	if prev < 0 {
 		return address, nil

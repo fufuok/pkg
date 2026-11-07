@@ -49,8 +49,8 @@ func RunPath() string {
 
 // Executable 当前执行程序绝对路径
 // true 时返回解析符号链接后的绝对路径
-// Excutable: E:\tmp\linkapp.exe
-// Excutable(true): D:\Fufu\Test\abc\app.exe
+// Executable(): E:\tmp\linkapp.exe
+// Executable(true): D:\Fufu\Test\abc\app.exe
 func Executable(evalSymlinks ...bool) string {
 	exe, _ := os.Executable()
 	if len(evalSymlinks) > 0 && evalSymlinks[0] {
@@ -62,8 +62,8 @@ func Executable(evalSymlinks ...bool) string {
 
 // ExecutableDir 当前执行程序所在目录
 // true 时返回解析符号链接后的目录
-// ExcutableDir: E:\tmp
-// ExcutableDir(true): D:\Fufu\Test\abc
+// ExecutableDir(): E:\tmp
+// ExecutableDir(true): D:\Fufu\Test\abc
 func ExecutableDir(evalSymlinks ...bool) string {
 	return filepath.Dir(Executable(evalSymlinks...))
 }

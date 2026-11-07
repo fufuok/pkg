@@ -196,7 +196,7 @@ func ToUpper(b string) string {
 	return B2S(res)
 }
 
-// TrimLeft is the equivalent of strings.TrimLeft
+// TrimLeft 移除开头连续的 cutset 字节, 不解析 Unicode 字符集合.
 // Ref: fiber
 func TrimLeft(s string, cutset byte) string {
 	lenStr, start := len(s), 0
@@ -206,7 +206,7 @@ func TrimLeft(s string, cutset byte) string {
 	return s[start:]
 }
 
-// TrimRight is the equivalent of strings.TrimRight
+// TrimRight 移除结尾连续的 cutset 字节, 不解析 Unicode 字符集合.
 // Ref: fiber
 func TrimRight(s string, cutset byte) string {
 	lenStr := len(s)
@@ -216,7 +216,7 @@ func TrimRight(s string, cutset byte) string {
 	return s[:lenStr]
 }
 
-// Trim is the equivalent of strings.Trim
+// Trim 移除首尾连续的 cutset 字节, 不解析 Unicode 字符集合.
 // Ref: fiber
 func Trim(s string, cutset byte) string {
 	i, j := 0, len(s)-1
@@ -248,10 +248,8 @@ func EqualFold(b, s string) bool {
 	return true
 }
 
-// CutString xslices s around the first instance of sep,
-// returning the text before and after sep.
-// The found result reports whether sep appears in s.
-// If sep does not appear in s, cut returns s, "", false.
+// CutString 按首次出现的 sep 分割 s, 返回分隔符前后的文本.
+// found 表示是否找到 sep; 未找到时返回 s, "", false.
 // Ref: go1.18
 func CutString(s, sep string) (before, after string, found bool) {
 	if before0, after0, ok := strings.Cut(s, sep); ok {
@@ -420,7 +418,7 @@ func LastString(s, sep string, defaultStr ...string) string {
 	return ""
 }
 
-// FirstString 获取文本内容第一个分隔符(单字节: sep[0])前的内容
+// FirstString 获取首个完整分隔符之前的内容, 支持多字符和 UTF-8 分隔符.
 func FirstString(s, sep string, defaultStr ...string) string {
 	before, _, ok := strings.Cut(s, sep)
 	if ok {

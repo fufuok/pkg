@@ -8,14 +8,16 @@ Go 1.27 起 `encoding/json` 由 json v2 引擎实现, 但默认仍套 v1 语义.
 
 `Valid` 只做语法校验, 两个构建版本结论一致: 恰好一个 JSON 值, 允许首尾空白, 嵌套上限 10000 层, 重复字段合法. 默认 `go_json` 在不超过 4 MiB 时走 `goccy/go-json`, 超过 4 MiB 时自动切回标准库 `encoding/json.Valid` 零拷贝状态机, 防止偶发大包在 `goccy` 内部 `sync.Pool` 中整包复制并长期驻留内存. 它不检查字符串内的 UTF-8 合法性 (非法字节和孤立代理项转义都判为合法), 需要严格 UTF-8 的调用方应先调用 `utf8.Valid`. 契约由无构建标签的 `valid_test.go` 在默认和 `std_json` 下各验证一遍.
 
-## 四实现日常应用基准
+## 四实现日常应用基准 (历史说明)
 
-`json/cmd/jsonbench` 是可编译的独立测试程序, 用同一份固定数据对比:
+以下记录历史本地基准程序的设计和运行方式. `json/cmd/jsonbench` 未纳入版本管理且已从当前工作区清理, 当前检出无法直接执行本节命令; 历史版本号不代表当前依赖或最新发布版本. `pkg/json` 的当前默认实现和版本以根目录 `go.mod` 为准.
+
+该程序曾用同一份固定数据对比:
 
 - `stdjson_v1`: Go 1.27 `encoding/json`, v1 语义.
 - `stdjson_v2`: Go 1.27 `encoding/json/v2`, v2 默认语义.
-- `goccy`: `github.com/goccy/go-json v0.10.6`, 当前最新正式版和 `pkg/json` 默认实现.
-- `sonic`: `github.com/bytedance/sonic v1.15.3`, 当前最新正式版, 原生支持 Go 1.27 的 amd64/arm64.
+- `goccy`: `github.com/goccy/go-json v0.10.6`, 历史基准使用的版本; `pkg/json` 默认采用该库.
+- `sonic`: `github.com/bytedance/sonic v1.15.3`, 历史基准使用的版本, 原生支持 Go 1.27 的 amd64/arm64.
 
 基准程序使用目录内独立的 `go.mod` 和 `go.sum`, 不依赖根模块 `pkg`. 根目录的 `go mod tidy` 和 `go test ./...` 不会扫描该子模块, Sonic 的基准依赖也不会被提升到根模块的直接依赖. 根模块仍可能因 Gin 的可选 Sonic 实现保留间接依赖, 这不表示 `pkg/json` 切换了实现. 本地基准目录仍保持 Git 忽略.
 
@@ -117,4 +119,4 @@ try {
 
 2026-08 的上一轮生产 Linux Go 1.27.0 amd64 测试使用 sonic `v1.15.2`. 当时该版本在 Go 1.27 回退到 `encoding/json`, 因此 sonic 数据无效; typed struct 上 json v2 比 goccy 慢约 `1.3x-3.6x`, 当时结论是继续使用 goccy.
 
-sonic `v1.15.3` 已改变这个前提. 当前仓库暂不改变 `pkg/json` 默认实现, 最终选型应以新程序在目标生产 CPU、真实 CPU 配额和 native sonic 下的串行/并行结果为准.
+sonic `v1.15.3` 已改变这个前提. 当前仓库暂不改变 `pkg/json` 默认实现; 后续选型需恢复或重建基准程序, 以目标生产 CPU、真实 CPU 配额和 native sonic 下的串行/并行结果为准.

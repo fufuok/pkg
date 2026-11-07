@@ -59,7 +59,7 @@ var (
 	LogPath string
 	LogFile string
 
-	// ConfigPath 主配置文件绝对路径, .env 配置文件路径
+	// ConfigPath 主配置目录, ConfigFile 主配置文件路径; EnvFilePath 和 EnvMainFile 分别为环境文件目录和主文件路径.
 	ConfigPath  string
 	ConfigFile  string
 	EnvFilePath string
@@ -163,7 +163,7 @@ var (
 	// WebTimeout Web 请求超时
 	WebTimeout = 30 * time.Second
 
-	// WebBodyLimit POST 最大 8M, 超过该值影响: 413 Request Entity Too Large
+	// WebBodyLimit Fiber 请求体默认上限为 8MiB, 超过时返回 413 Request Entity Too Large.
 	WebBodyLimit = 8 << 20
 
 	// WebTokenSalt 用于加密代理客户端请求 IP 的盐, 默认为 BaseSecretValue 项目基础密钥值

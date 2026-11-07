@@ -191,7 +191,7 @@ func TestEmpty(t *testing.T) {
 	Empty(t, TStruct{}, "struct with zero values is empty")
 	Empty(t, TString(""), "empty aliased string is empty")
 	Empty(t, sP, "ptr to nil value is empty")
-	Empty(t, [1]int{}, "array is state")
+	Empty(t, [1]int{}, "array is in its zero state")
 
 	NotEmpty(t, "something", "Non Empty string is not empty")
 	NotEmpty(t, errors.New("something"), "Non nil object is not empty")
@@ -202,7 +202,7 @@ func TestEmpty(t *testing.T) {
 	NotEmpty(t, TStruct{x: 1}, "struct with initialized values is empty")
 	NotEmpty(t, TString("abc"), "non-empty aliased string is empty")
 	NotEmpty(t, xP, "ptr to non-nil value is not empty")
-	NotEmpty(t, [1]int{42}, "array is not state")
+	NotEmpty(t, [1]int{42}, "array is not in its zero state")
 }
 
 func TestAssertContains(t *testing.T) {

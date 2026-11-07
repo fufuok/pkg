@@ -105,9 +105,8 @@ func (ps *PubSub[T, M]) Unsub(ch chan M, topics ...T) {
 	ps.cmdChan <- cmd[T, M]{op: unsub, topics: topics, ch: ch}
 }
 
-// Close closes all channels currently subscribed to the specified topics. If a
-// channel is subscribed to multiple topics, some of which is not specified, it
-// is not closed.
+// Close 移除指定主题的订阅, 并关闭已无其他主题订阅的 channel.
+// 若 channel 还订阅了本次未指定的主题, 则保持打开.
 func (ps *PubSub[T, M]) Close(topics ...T) {
 	ps.cmdChan <- cmd[T, M]{op: closeTopic, topics: topics}
 }

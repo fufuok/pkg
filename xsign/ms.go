@@ -31,7 +31,7 @@ func MSGenSignWithRaw(raw, token string) string {
 	return xhash.MD5Hex(raw + token)
 }
 
-// MSGetSignRaw 拼接参数为待加密的字符串, 如: k1=v1&k2=v2&
+// MSGetSignRaw 拼接参数为待签名的字符串, 例如 "k1=v1&k2=v2&".
 // 如果参数中包含 `sign` 字段会填充到第二个返回值
 func MSGetSignRaw(params any) (raw, sign string) {
 	if assert.IsEmpty(params) {

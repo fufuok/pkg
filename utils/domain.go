@@ -68,7 +68,7 @@ func CheckDomain(name string) error {
 	case len(name)-l > 63:
 		return fmt.Errorf("domain's top level domain '%s' has byte length %d, can't exceed 63", name[l:], len(name)-l)
 	case name[l] == '-':
-		return fmt.Errorf("domain's top level domain '%s' at offset %d begin with a hyphen", name[l:], l)
+		return fmt.Errorf("domain's top level domain '%s' at offset %d begins with a hyphen", name[l:], l)
 	case name[len(name)-1] == '-':
 		return fmt.Errorf("domain's top level domain '%s' at offset %d ends with a hyphen", name[l:], l)
 	case name[l] >= '0' && name[l] <= '9':

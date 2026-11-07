@@ -23,9 +23,8 @@ type Options struct {
 	// Optimistic is a hint that the value likely exists which
 	// allows for the sjson to perform a fast-track search and replace.
 	Optimistic bool
-	// ReplaceInPlace is a hint to replace the input json rather than
-	// allocate a new json byte slice. When this field is specified
-	// the input json will not longer be valid and it should not be used
+	// ReplaceInPlace 提示复用输入 JSON 切片, 而非重新分配结果切片.
+	// 此时原输入 JSON 可能已被覆盖, 调用方不应继续使用原切片.
 	// In the case when the destination slice doesn't have enough free
 	// bytes to replace the data in place, a new bytes slice will be
 	// created under the hood.
@@ -162,7 +161,7 @@ func appendBuild(buf []byte, array bool, paths []pathResult, raw string,
 	return buf
 }
 
-// atoui does a rip conversion of string -> unigned int.
+// atoui 将十进制路径片段解析为整数索引, 拒绝强制键名和包含非数字字符的片段.
 func atoui(r pathResult) (n int, ok bool) {
 	if r.force {
 		return 0, false
@@ -461,8 +460,7 @@ func SetRaw(json, path, value string) (string, error) {
 }
 
 // SetRawOptions sets a raw json value for the specified path with options.
-// This furnction works the same as SetOptions except that the value is set
-// as a raw block of json. This allows for setting premarshalled json objects.
+// 与 SetOptions 类似, 但 value 直接作为原始 JSON 写入, 可用于已序列化的 JSON 对象.
 func SetRawOptions(json, path, value string, opts *Options) (string, error) {
 	var optimistic bool
 	if opts != nil {

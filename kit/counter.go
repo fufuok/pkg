@@ -12,12 +12,8 @@ import (
 // pool for P tokens
 var ptokenPool sync.Pool
 
-// a P token is used to point at the current OS thread (P)
-// on which the goroutine is run; exact identity of the thread,
-// as well as P migration tolerance, is not important since
-// it's used to as a best effort mechanism for assigning
-// concurrent operations (goroutines) to different stripes of
-// the counter
+// ptoken 保存随机分片索引, 在竞争时尝试其他分片以分散并发更新.
+// 令牌由池复用, 不要求与运行 goroutine 的 P 或操作系统线程绑定.
 type ptoken struct {
 	idx uint32
 	// Padding to prevent false sharing.
@@ -117,7 +113,7 @@ func (c *Counter) Load() int64 {
 	return c.Value()
 }
 
-// Store sets the counter value to the given newValue.
+// Store 将计数器设置为 val.
 // This operation resets all stripes and stores the entire value in the first stripe.
 // Note: This operation is not atomic and should be used with care in concurrent environments.
 func (c *Counter) Store(val int64) {
@@ -158,8 +154,7 @@ func (c *UCounter) Inc() {
 	c.Add(1)
 }
 
-// Add adds the delta to the counter.
-// It panics if delta is negative.
+// Add 累加无符号增量 delta.
 func (c *UCounter) Add(delta uint64) {
 	if delta == 0 {
 		return
@@ -188,7 +183,7 @@ func (c *UCounter) Load() uint64 {
 	return c.Value()
 }
 
-// Store sets the counter value to the given newValue.
+// Store 将计数器设置为 val.
 // This operation resets all stripes and stores the entire value in the first stripe.
 // Note: This operation is not atomic and should be used with care in concurrent environments.
 func (c *UCounter) Store(val uint64) {

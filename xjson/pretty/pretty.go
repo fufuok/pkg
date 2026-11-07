@@ -9,7 +9,7 @@ import (
 
 // Options is Pretty options
 type Options struct {
-	// Width is an max column width for single line arrays
+	// Width 是单行数组的最大列宽.
 	// Default is 80
 	Width int
 	// Prefix is a prefix for all lines
@@ -26,8 +26,7 @@ type Options struct {
 // DefaultOptions is the default options for pretty formats.
 var DefaultOptions = &Options{Width: 80, Prefix: "", Indent: "  ", SortKeys: false}
 
-// Pretty converts the input json into a more human readable format where each
-// element is on it's own line with clear indentation.
+// Pretty 将输入 JSON 格式化为更易读的文本, 通过换行和缩进展示各元素.
 func Pretty(json []byte) []byte { return PrettyOptions(json, nil) }
 
 // PrettyOptions is like Pretty but with customized options.
@@ -460,9 +459,7 @@ func init() {
 	}
 }
 
-// Color will colorize the json. The style parma is used for customizing
-// the colors. Passing nil to the style param will use the default
-// TerminalStyle.
+// Color 按 style 为 JSON 添加颜色; style 为 nil 时使用默认的 TerminalStyle.
 func Color(src []byte, style *Style) []byte {
 	if style == nil {
 		style = TerminalStyle
@@ -595,13 +592,11 @@ func Color(src []byte, style *Style) []byte {
 	return dst
 }
 
-// Spec strips out comments and trailing commas and convert the input to a
-// valid JSON per the official spec: https://tools.ietf.org/html/rfc8259
+// Spec 将注释和尾逗号替换为空白, 供普通 JSON 解析器处理扩展输入.
 //
-// The resulting JSON will always be the same length as the input and it will
-// include all of the same line breaks at matching offsets. This is to ensure
-// the result can be later processed by a external parser and that that
-// parser will report messages or errors with the correct offsets.
+// 输入的注释和字符串语法完整时, 保留长度和换行位置, 便于外部解析器定位原始偏移.
+// 本函数不校验 JSON 合法性, 也不修复其他语法错误或未闭合注释.
+// JSON 规范: https://tools.ietf.org/html/rfc8259
 func Spec(src []byte) []byte {
 	return spec(src, nil)
 }

@@ -120,7 +120,7 @@ func (j *Job) start(ctx context.Context, r Runner, once bool, opts ...cron.Entry
 			// 每任务单例执行, 不允许任务重叠
 			if !j.runningMu.TryLock() {
 				logger.Warn().Str("job", j.name).Bool("real_blocked", IsRealBlocked() != nil).
-					Msg("Job overlapped and were skipped")
+					Msg("Job overlapped and was skipped")
 				return
 			}
 			defer j.runningMu.Unlock()

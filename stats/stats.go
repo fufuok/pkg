@@ -126,7 +126,7 @@ func getMemoryStats(ms *runtime.MemStats) map[string]any {
 	// (HeapIdle - HeapReleased) 表示已保留但未使用的内存，HeapSys 表示系统为堆分配的总内存
 	trueFragRatio := float64(ms.HeapIdle-ms.HeapReleased) / float64(ms.HeapSys+1) // +1 防止除零
 	return map[string]any{
-		// TotalAlloc: 程序启动后累计向操作系统申请的字节数（包括已释放的内存）
+		// TotalAlloc: 程序启动后累计分配的堆对象字节数, 包括已回收对象, 不等同于向操作系统申请的内存总量.
 		// Total bytes allocated for heap objects since program start (累计分配的堆对象字节数)
 		"TotalAlloc": utils.HumanIBytes(ms.TotalAlloc),
 		// HeapSys: 堆内存虚拟占用大小，即总共向系统申请的字节数
@@ -135,8 +135,7 @@ func getMemoryStats(ms *runtime.MemStats) map[string]any {
 		// HeapAlloc: 当前堆内存分配的字节数（使用中+未使用但未被GC释放的）
 		// Bytes of allocated heap objects (当前已分配且未被GC回收的堆对象字节数)
 		"HeapAlloc": utils.HumanIBytes(ms.HeapAlloc),
-		// HeapInuse: 当前堆内存中正在使用的字节数（包括已分配但未被GC回收的）
-		// Bytes in use by heap objects (当前正在使用的堆内存字节数)
+		// HeapInuse: 使用中 span 的总字节数, 包括 span 内尚未被对象占用的空间.
 		"HeapInuse": utils.HumanIBytes(ms.HeapInuse),
 		// HeapReleased: 已释放回操作系统的堆内存字节数（可被再次分配）
 		// Bytes released to the OS (已释放回操作系统但未被再次分配的堆内存字节数)
@@ -144,7 +143,7 @@ func getMemoryStats(ms *runtime.MemStats) map[string]any {
 		// HeapIdle: 堆内存中空闲的字节数（包括已释放但未返还给系统的内存）
 		// Bytes in idle spans (未被使用的堆内存，包括HeapReleased，可被再次分配)
 		"HeapIdle": utils.HumanIBytes(ms.HeapIdle),
-		// HeapObjects: 当前堆内存中已分配的堆对象数量, 堆中存活的对象数量
+		// HeapObjects: 已分配且尚未回收的堆对象数量, 包括不可达但尚未回收的对象.
 		// Number of allocated heap objects (当前堆对象数量)
 		"HeapObjects": utils.Commau(ms.HeapObjects),
 		// StackInuse: 栈内存使用字节数

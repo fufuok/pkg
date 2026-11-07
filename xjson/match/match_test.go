@@ -61,7 +61,7 @@ func TestMatch(t *testing.T) {
 }
 
 // TestWildcardMatch - Tests validate the logic of wild card matching.
-// `WildcardMatch` supports '*' and '?' wildcards.
+// Match 支持 '*' 和 '?' 通配符.
 // Sample usage: In resource matching for folder policy validation.
 func TestWildcardMatch(t *testing.T) {
 	testCases := []struct {
@@ -358,7 +358,7 @@ func TestWildcardMatch(t *testing.T) {
 			matched: false,
 		},
 	}
-	// Iterating over the test cases, call the function under test and asert the output.
+	// 逐个调用待测函数并断言匹配结果.
 	for i, testCase := range testCases {
 		// println("=====", i+1, "=====")
 		actualResult := Match(testCase.text, testCase.pattern)
