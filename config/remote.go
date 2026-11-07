@@ -149,7 +149,11 @@ func GetDataSourceBodyContext(ctx context.Context, params DataSourceArgs) (strin
 }
 
 // writeFileAtomic 先在目标文件同目录写入临时文件再重命名替换, 防止半截写入被文件监控读取.
+// 若目标文件已存在则继承其文件权限位, 避免破坏既有部署的组读权限; 新建文件使用传入的默认 perm.
 func writeFileAtomic(targetPath string, content []byte, perm os.FileMode) (err error) {
+	if info, statErr := os.Stat(targetPath); statErr == nil && !info.IsDir() {
+		perm = info.Mode().Perm()
+	}
 	dir := filepath.Dir(targetPath)
 	tmpFile, err := os.CreateTemp(dir, ".tmp-conf-*")
 	if err != nil {
@@ -157,7 +161,7 @@ func writeFileAtomic(targetPath string, content []byte, perm os.FileMode) (err e
 	}
 	tmpName := tmpFile.Name()
 	defer func() {
-		if err != nil {
+		if tmpName != "" {
 			_ = os.Remove(tmpName)
 		}
 	}()
@@ -166,12 +170,15 @@ func writeFileAtomic(targetPath string, content []byte, perm os.FileMode) (err e
 		_ = tmpFile.Close()
 		return err
 	}
-	if err = tmpFile.Chmod(perm); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
 	if err = tmpFile.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, targetPath)
+	if err = os.Chmod(tmpName, perm); err != nil {
+		return err
+	}
+	if err = os.Rename(tmpName, targetPath); err != nil {
+		return err
+	}
+	tmpName = ""
+	return nil
 }

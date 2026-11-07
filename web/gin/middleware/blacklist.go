@@ -39,7 +39,7 @@ func CheckBlacklist(asAPI bool) gin.HandlerFunc {
 
 // BlacklistChecker 是否存在于黑名单, true 是黑名单 (黑名单为空的生产常态下直接跳过客户端 IP 解析).
 func BlacklistChecker(c *gin.Context) bool {
-	bl := config.Blacklist
+	bl := config.BlacklistSnapshot()
 	if len(bl) == 0 {
 		return false
 	}

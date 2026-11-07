@@ -68,7 +68,7 @@ func CheckWhitelistAnd(checker ForbiddenChecker, asAPI bool) gin.HandlerFunc {
 
 // WhitelistChecker 是否通过了白名单检查, true 是白名单 (白名单为空时直接放行, 避免无谓解析客户端 IP).
 func WhitelistChecker(c *gin.Context) bool {
-	wl := config.Whitelist
+	wl := config.WhitelistSnapshot()
 	if len(wl) == 0 {
 		return true
 	}

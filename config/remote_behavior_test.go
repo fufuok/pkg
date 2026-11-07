@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -157,4 +158,24 @@ func TestGetDataSourceContextCancelAndAtomicWrite(t *testing.T) {
 	entries, dirErr := os.ReadDir(dir)
 	assert.Nil(t, dirErr)
 	assert.Equal(t, 1, len(entries))
+}
+
+// TestWriteFileAtomicPreservesExistingFilePerm 验证覆盖已存在配置文件时继承其原有权限位.
+func TestWriteFileAtomicPreservesExistingFilePerm(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file mode bits are not preserved identically on Windows")
+	}
+	path := filepath.Join(t.TempDir(), "whitelist.conf")
+	assert.Nil(t, os.WriteFile(path, []byte("10.0.0.1\n"), 0o640))
+	assert.Nil(t, os.Chmod(path, 0o644))
+
+	assert.Nil(t, writeFileAtomic(path, []byte("10.0.0.2\n"), 0o600))
+
+	info, err := os.Stat(path)
+	assert.Nil(t, err)
+	assert.Equal(t, os.FileMode(0o644), info.Mode().Perm())
+
+	body, err := os.ReadFile(path)
+	assert.Nil(t, err)
+	assert.Equal(t, "10.0.0.2\n", string(body))
 }

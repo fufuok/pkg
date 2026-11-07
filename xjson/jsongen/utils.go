@@ -7,9 +7,9 @@
 package jsongen
 
 import (
+	"slices"
 	"unicode/utf8"
 
-	"github.com/fufuok/pkg/pools/bytespool"
 	"github.com/fufuok/pkg/utils"
 )
 
@@ -23,19 +23,59 @@ var hexchars = [...]byte{
 	'a', 'b', 'c', 'd', 'e', 'f',
 }
 
-// EscapeString 转义 JSON 字符串, 并在前后加上双引号
-func EscapeString(s string) string {
-	dst := bytespool.Make(len(s) + 2)
-	return utils.B2S(AppendJSONString(dst, s))
+// needsJSONEscape 判断字符串是否包含必须转义的控制字符、引号、反斜杠、HTML 字符或特殊 UTF-8 序列.
+// 返回 false 时, AppendJSONString(dst, s) 的输出严格等于 `"` + s + `"`.
+func needsJSONEscape(s string) bool {
+	escapeHTML := !DisableEscapeHTML
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < ' ' || c == '"' || c == '\\' {
+			return true
+		}
+		if escapeHTML && (c == '<' || c == '>' || c == '&') {
+			return true
+		}
+		if c >= utf8.RuneSelf {
+			r, n := utf8.DecodeRuneInString(s[i:])
+			if (r == utf8.RuneError && n == 1) || r == '\u2028' || r == '\u2029' {
+				return true
+			}
+			i += n - 1
+		}
+	}
+	return false
 }
 
-// AppendJSONString is a convenience function that converts the provided string
-// to a valid JSON string and appends it to dst.
+// EscapeString 转义 JSON 字符串, 并在前后加上双引号.
+func EscapeString(s string) string {
+	if !needsJSONEscape(s) {
+		dst := make([]byte, len(s)+2)
+		dst[0] = '"'
+		copy(dst[1:], s)
+		dst[len(s)+1] = '"'
+		return utils.B2S(dst)
+	}
+	dst := make([]byte, 0, len(s)+8)
+	return utils.B2S(appendEscapedJSONString(dst, s))
+}
+
+// AppendJSONString 将 s 编码为带双引号的合法 JSON 字符串并追加到 dst.
+func AppendJSONString(dst []byte, s string) []byte {
+	if !needsJSONEscape(s) {
+		dst = slices.Grow(dst, len(s)+2)
+		dst = append(dst, '"')
+		dst = append(dst, s...)
+		return append(dst, '"')
+	}
+	dst = slices.Grow(dst, len(s)+6)
+	return appendEscapedJSONString(dst, s)
+}
+
+// appendEscapedJSONString 处理已知包含至少一处待转义字符的字符串编码.
 //
 //nolint:cyclop,nestif
-func AppendJSONString(dst []byte, s string) []byte {
-	dst = append(dst, make([]byte, len(s)+2)...)
-	dst = append(dst[:len(dst)-len(s)-2], '"')
+func appendEscapedJSONString(dst []byte, s string) []byte {
+	dst = append(dst, '"')
 	for i := 0; i < len(s); i++ {
 		if s[i] < ' ' {
 			dst = append(dst, '\\')
@@ -63,7 +103,6 @@ func AppendJSONString(dst []byte, s string) []byte {
 		} else if s[i] == '"' {
 			dst = append(dst, '\\', '"')
 		} else if s[i] > 127 {
-			// read utf8 character
 			r, n := utf8.DecodeRuneInString(s[i:])
 			if n == 0 {
 				break

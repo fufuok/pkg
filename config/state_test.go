@@ -84,6 +84,9 @@ func preserveConfigPackageState(t *testing.T) {
 		mainConf.Store(state.mainConf)
 		Whitelist = state.whitelist
 		Blacklist = state.blacklist
+		whitelistSnap.Store(state.whitelistSnap)
+		blacklistSnap.Store(state.blacklistSnap)
+		testerMode.Store(state.testerMode)
 		extraEnvFiles = slices.Clone(state.extraEnvFiles)
 		envFileKeys = maps.Clone(state.envFileKeys)
 		restoreTesterEnvironment(state.environment)

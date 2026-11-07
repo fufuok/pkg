@@ -2,8 +2,6 @@ package response
 
 import (
 	"strconv"
-
-	"github.com/fufuok/pkg/utils"
 )
 
 var (
@@ -46,10 +44,16 @@ func APISuccessData(data any, count int) *APIData {
 	}
 }
 
-// APISuccessBytesData API 请求成功返回值(JSON Bytes)
+// APISuccessBytesData API 请求成功返回值(JSON Bytes), 栈上格式化数值并单次精确分配响应切片.
 func APISuccessBytesData(data []byte, count int) []byte {
-	n := utils.S2B(strconv.Itoa(count))
-	return utils.JoinBytes(okA, data, okB, n, okC)
+	var numBuf [20]byte
+	n := strconv.AppendInt(numBuf[:0], int64(count), 10)
+	buf := make([]byte, 0, len(okA)+len(data)+len(okB)+len(n)+len(okC))
+	buf = append(buf, okA...)
+	buf = append(buf, data...)
+	buf = append(buf, okB...)
+	buf = append(buf, n...)
+	return append(buf, okC...)
 }
 
 // APISuccessNilData API 请求成功返回, 无数据

@@ -4,6 +4,8 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -98,4 +100,95 @@ func TestGinEmptyIPListZeroAllocFastPath(t *testing.T) {
 	if allocs != 0 {
 		t.Fatalf("empty IP list check allocs = %v, want 0", allocs)
 	}
+}
+
+// TestGinConcurrentLoadConfigAndIPChecker 验证生产模式 LoadConfig 热重载与并发黑白名单请求之间零数据竞争.
+func TestGinConcurrentLoadConfigAndIPChecker(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	resetGinIPTestState(t)
+
+	config.InitTester()
+	tempRoot := filepath.Dir(config.RootPath)
+	cfgFile := config.ConfigFile
+	wlFile := filepath.Join(tempRoot, "etc", "whitelist.conf")
+	blFile := filepath.Join(tempRoot, "etc", "blacklist.conf")
+	// 切回非 tester 运行态以模拟真实生产 LoadConfig 发布与快照读取
+	config.StopTester()
+
+	oldRoot, oldCfgFile := config.RootPath, config.ConfigFile
+	oldAppSecret := config.AppBaseSecretValue
+	oldLogPath, oldDefLogPath := config.LogPath, config.DefaultLogPath
+	oldWLFile, oldBLFile := config.WhitelistConfigFile, config.BlacklistConfigFile
+	oldDefWLFile, oldDefBLFile := config.DefaultWhitelistConfigFile, config.DefaultBlacklistConfigFile
+	oldEnvPath, oldEnvMain := config.EnvFilePath, config.EnvMainFile
+	oldConfPtr := config.Config()
+	t.Cleanup(func() {
+		config.RootPath, config.ConfigFile = oldRoot, oldCfgFile
+		config.AppBaseSecretValue = oldAppSecret
+		config.LogPath, config.DefaultLogPath = oldLogPath, oldDefLogPath
+		config.WhitelistConfigFile, config.BlacklistConfigFile = oldWLFile, oldBLFile
+		config.DefaultWhitelistConfigFile, config.DefaultBlacklistConfigFile = oldDefWLFile, oldDefBLFile
+		config.EnvFilePath, config.EnvMainFile = oldEnvPath, oldEnvMain
+		_ = oldConfPtr
+	})
+
+	testDir := t.TempDir()
+	_ = tempRoot
+	_ = cfgFile
+	etcDir := filepath.Join(testDir, "etc")
+	if err := os.MkdirAll(etcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wlFile = filepath.Join(etcDir, "whitelist.conf")
+	blFile = filepath.Join(etcDir, "blacklist.conf")
+	mainFile := filepath.Join(etcDir, "app.json")
+	if err := os.WriteFile(wlFile, []byte("10.0.0.0/8\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blFile, []byte("198.51.100.0/24\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mainJSON := `{"whitelist_conf":{"path":"` + filepath.ToSlash(wlFile) + `"},"blacklist_conf":{"path":"` + filepath.ToSlash(blFile) + `"}}`
+	if err := os.WriteFile(mainFile, []byte(mainJSON), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	config.AppBaseSecretValue = "RaceTestSecret"
+	config.RootPath = filepath.Join(testDir, "bin")
+	config.DefaultLogPath = filepath.Join(testDir, "log")
+	config.ConfigFile = mainFile
+	config.EnvFilePath = etcDir
+	config.EnvMainFile = filepath.Join(etcDir, "app.env")
+	config.DefaultWhitelistConfigFile = wlFile
+	config.DefaultBlacklistConfigFile = blFile
+
+	if err := config.LoadConfig(); err != nil {
+		t.Fatalf("initial LoadConfig: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+			c.Request.RemoteAddr = "10.1.2.3:8080"
+			for range 200 {
+				if !WhitelistChecker(c) {
+					t.Error("expected 10.1.2.3 to be whitelisted")
+					return
+				}
+				if BlacklistChecker(c) {
+					t.Error("expected 10.1.2.3 not to be blacklisted")
+					return
+				}
+			}
+		})
+	}
+	for range 20 {
+		if err := config.LoadConfig(); err != nil {
+			t.Fatalf("concurrent LoadConfig: %v", err)
+		}
+	}
+	wg.Wait()
 }

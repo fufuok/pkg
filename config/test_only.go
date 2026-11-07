@@ -61,6 +61,9 @@ type configTesterState struct {
 	mainConf                   *MainConf
 	whitelist                  map[*net.IPNet]int64
 	blacklist                  map[*net.IPNet]int64
+	whitelistSnap              *map[*net.IPNet]int64
+	blacklistSnap              *map[*net.IPNet]int64
+	testerMode                 bool
 	extraEnvFiles              []string
 	envFileKeys                map[string]struct{}
 	environment                map[string]testerEnvironmentValue
@@ -120,6 +123,9 @@ func InitTester() {
 	nodeIPFetcherRunning = false
 	Whitelist = nil
 	Blacklist = nil
+	whitelistSnap.Store(nil)
+	blacklistSnap.Store(nil)
+	testerMode.Store(true)
 	extraEnvFiles = nil
 	envFileKeys = nil
 	mainConf.Store(nil)
@@ -169,6 +175,9 @@ func StopTester() {
 	nodeIPFetcherRunning = state.nodeIPFetcherRunning
 	Whitelist = state.whitelist
 	Blacklist = state.blacklist
+	whitelistSnap.Store(state.whitelistSnap)
+	blacklistSnap.Store(state.blacklistSnap)
+	testerMode.Store(state.testerMode)
 	extraEnvFiles = slices.Clone(state.extraEnvFiles)
 	envFileKeys = maps.Clone(state.envFileKeys)
 	mainConf.Store(state.mainConf)
@@ -212,6 +221,9 @@ func captureConfigTesterState() *configTesterState {
 		mainConf:                   mainConf.Load(),
 		whitelist:                  Whitelist,
 		blacklist:                  Blacklist,
+		whitelistSnap:              whitelistSnap.Load(),
+		blacklistSnap:              blacklistSnap.Load(),
+		testerMode:                 testerMode.Load(),
 		extraEnvFiles:              slices.Clone(extraEnvFiles),
 		envFileKeys:                maps.Clone(envFileKeys),
 		environment:                captureTesterEnvironment(),

@@ -100,6 +100,29 @@ func BenchmarkGenJson(b *testing.B) {
 	}
 }
 
+// BenchmarkGenIPIPRecord 模拟生产 IP 查询服务单次构造 14 字段 JSON 并完整序列化的端到端热路径.
+func BenchmarkGenIPIPRecord(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		js := NewMap()
+		js.PutString("ip", "118.118.1.1")
+		js.PutString("first_ip", "118.118.0.0")
+		js.PutString("last_ip", "118.118.63.255")
+		js.PutString("country", "中国")
+		js.PutString("province", "四川")
+		js.PutString("city", "成都")
+		js.PutString("isp", "电信")
+		js.PutString("network", "118.118.0.0/18")
+		js.PutInt("asn", 4134)
+		js.PutString("owner", "Chinanet")
+		js.PutString("country_code", "CN")
+		js.PutString("timezone", "Asia/Shanghai")
+		js.PutString("latitude", "30.6667")
+		js.PutString("longitude", "104.0667")
+		_ = js.Serialize(nil)
+	}
+}
+
 // go test -run=^$ -benchmem -count=2 -bench=^BenchmarkGenJson
 // goos: linux
 // goarch: amd64

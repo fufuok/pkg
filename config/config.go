@@ -19,15 +19,39 @@ var (
 	// AlarmOn 全局报警开关 (区别是否被排除报警, 如测试节点)
 	AlarmOn atomic.Bool
 
-	// Whitelist 接口 IP 白名单配置
+	// Whitelist 接口 IP 白名单配置 (兼容旧直接访问; 并发热路径请优先使用 WhitelistSnapshot)
 	Whitelist map[*net.IPNet]int64
 
-	// Blacklist 接口 IP 黑名单配置
+	// Blacklist 接口 IP 黑名单配置 (兼容旧直接访问; 并发热路径请优先使用 BlacklistSnapshot)
 	Blacklist map[*net.IPNet]int64
+
+	whitelistSnap atomic.Pointer[map[*net.IPNet]int64]
+	blacklistSnap atomic.Pointer[map[*net.IPNet]int64]
+	testerMode    atomic.Bool
 
 	// 全局配置项
 	mainConf atomic.Pointer[MainConf]
 )
+
+// WhitelistSnapshot 并发安全地获取最新 IP 白名单快照.
+// 生产运行期通过原子指针无锁读取, 消除与 LoadConfig 热重载之间的并发读写竞争;
+// 未加载主配置或处于 InitTester 测试环境时回退读取 Whitelist 变量, 兼容单测直接赋值.
+func WhitelistSnapshot() map[*net.IPNet]int64 {
+	if p := whitelistSnap.Load(); p != nil && !testerMode.Load() {
+		return *p
+	}
+	return Whitelist
+}
+
+// BlacklistSnapshot 并发安全地获取最新 IP 黑名单快照.
+// 生产运行期通过原子指针无锁读取, 消除与 LoadConfig 热重载之间的并发读写竞争;
+// 未加载主配置或处于 InitTester 测试环境时回退读取 Blacklist 变量, 兼容单测直接赋值.
+func BlacklistSnapshot() map[*net.IPNet]int64 {
+	if p := blacklistSnap.Load(); p != nil && !testerMode.Load() {
+		return *p
+	}
+	return Blacklist
+}
 
 // MainConf 接口配置
 type MainConf struct {
@@ -316,6 +340,8 @@ func readConfig() (*MainConf, error) {
 	BlacklistConfigFile = cfg.BlacklistConf.Path
 	Whitelist = whitelist
 	Blacklist = blacklist
+	whitelistSnap.Store(&whitelist)
+	blacklistSnap.Store(&blacklist)
 
 	if Debug {
 		fmt.Printf("\n\n%s\n\n", json.MustJSONUnEscapeIndentString(cfg))
