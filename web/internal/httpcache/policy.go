@@ -81,7 +81,13 @@ type ResponseScan struct {
 
 // ScanResponseHeader 零分配校验单个原始响应头字段行是否满足共享缓存策略, 完整覆盖跨行重复的 max-age/s-maxage.
 // 全部字段行扫描通过后等价于 CanServe(..., http.StatusOK) 为 true, 无需构造中间 http.Header.
+// scan 必须非 nil 且在同一响应的全部字段行间复用, 否则无法识别跨行重复的新鲜度声明.
 func (c *Cache) ScanResponseHeader(name, value []byte, scan *ResponseScan) bool {
+	// fasthttp 不校验也不规范化含非法字节的头名, "set-cookie " 会原样写出, 且 CanonicalHeaderKey 对其原样返回,
+	// 无法命中危险名单; 下游代理可能删除冒号前空白使其生效, 因此非法头名一律拒绝缓存.
+	if !validHeaderName(utils.B2S(name)) {
+		return false
+	}
 	canonical := http.CanonicalHeaderKey(utils.B2S(name))
 	if unsafeResponseHeaderName(canonical) {
 		return false
@@ -150,9 +156,10 @@ func unsafeResponseHeaderName(canonical string) bool {
 // unsafeResponse 拒绝会话, 认证, 局部正文和连接级状态, 不重放每次请求生成的头.
 // 即使危险字段值为空也跳过, 保留处理器明确设置该字段的意图. 后续检查按规范名查找, 直接写入 map 的
 // "set-cookie" 或 "cache-control: private" 会被客户端照常处理却逃过检查, 因此含非规范名即失败拒绝.
+// CanonicalHeaderKey 对空名或含空格, 冒号等非法字节的名称原样返回, 不能代替合法性检查, 须先单独校验.
 func unsafeResponse(header http.Header) bool {
 	for name := range header {
-		if name != http.CanonicalHeaderKey(name) || unsafeResponseHeaderName(name) {
+		if !validHeaderName(name) || name != http.CanonicalHeaderKey(name) || unsafeResponseHeaderName(name) {
 			return true
 		}
 	}

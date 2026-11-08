@@ -1040,6 +1040,64 @@ func TestFiberCacheReplayAbsentRepresentation(t *testing.T) {
 	}
 }
 
+// TestFiberCacheRejectsInvalidHeaderName 验证业务写入的非法头名不被缓存回放.
+// fasthttp 不校验头名, "set-cookie " 会原样写出; 下游代理删除冒号前空白即成为有效 Set-Cookie.
+// net/http 客户端会拒绝这类响应, 因此直接驱动 fasthttp 上下文读取原始响应头.
+func TestFiberCacheRejectsInvalidHeaderName(t *testing.T) {
+	app := fiber.New()
+	calls := 0
+	app.Get("/", CacheByRequestURI(time.Minute), func(c fiber.Ctx) error {
+		calls++
+		c.Response().Header.Set("set-cookie ", "sid="+strconv.Itoa(calls))
+		return c.SendString("ok")
+	})
+	handler := app.Handler()
+	for i := 1; i <= 2; i++ {
+		var ctx fasthttp.RequestCtx
+		ctx.Request.SetRequestURI("http://example.test/")
+		handler(&ctx)
+		raw := ctx.Response.Header.String()
+		if want := "sid=" + strconv.Itoa(i); !strings.Contains(raw, want) {
+			t.Fatalf("request %d replayed another visitor's header, want %q in:\n%s", i, want, raw)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("handler calls = %d, want 2", calls)
+	}
+}
+
+// TestFiberCacheNonNormalizedReplay 验证 DisableHeaderNormalizing 下命中回放与冷请求一致:
+// 外层小写写入的表示头被业务删除后命中不重新露出, 业务替换的非表示头不与外层小写旧值重复输出.
+func TestFiberCacheNonNormalizedReplay(t *testing.T) {
+	app := fiber.New(fiber.Config{DisableHeaderNormalizing: true})
+	var calls atomic.Int32
+	app.Use(func(c fiber.Ctx) error {
+		c.Response().Header.Set("content-language", "en")
+		c.Response().Header.Set("x-frame-options", "SAMEORIGIN")
+		c.Response().Header.Set("x-outer", "kept")
+		return c.Next()
+	})
+	app.Get("/", CacheByRequestURI(time.Minute), func(c fiber.Ctx) error {
+		calls.Add(1)
+		c.Response().Header.Del("content-language")
+		c.Response().Header.Del("x-frame-options")
+		c.Response().Header.Set("X-Frame-Options", "DENY")
+		return c.SendString("ok")
+	})
+	for i := range 2 {
+		body, header := fiberCacheTestRequest(t, app, http.MethodGet, "http://example.test/", "", nil)
+		if string(body) != "ok" || len(header.Values("Content-Language")) != 0 ||
+			!slices.Equal(header.Values("X-Frame-Options"), []string{"DENY"}) ||
+			!slices.Equal(header.Values("X-Outer"), []string{"kept"}) {
+			t.Fatalf("request %d: body = %q, language = %q, frame = %q, outer = %q", i, body,
+				header.Values("Content-Language"), header.Values("X-Frame-Options"), header.Values("X-Outer"))
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls.Load())
+	}
+}
+
 // TestFiberCacheRequestTrailers 使用真实 HTTP 连接发送 chunked POST, 请求 trailer 不参与普通正文缓存.
 func TestFiberCacheRequestTrailers(t *testing.T) {
 	app := fiber.New()

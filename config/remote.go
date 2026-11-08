@@ -152,7 +152,8 @@ func GetDataSourceBodyContext(ctx context.Context, params DataSourceArgs) (strin
 // 兼容边界:
 //  1. 目标是符号链接时替换链接指向的真实文件, 不把链接本身换成普通文件; 悬空链接沿用 os.WriteFile 跟随创建.
 //  2. 已存在的目标继承其权限位, 新建文件使用传入的 perm; 替换后的属主为当前进程用户.
-//  3. 目录不可写但目标文件已存在且可写时, 回退为原地覆写 (与改造前 os.WriteFile 一致, 不具备原子性).
+//  3. 目标文件已存在且可写, 但目录不可写或重命名替换失败 (Docker 单文件 bind mount 返回 EBUSY, Windows 目标被
+//     未授予删除共享的句柄打开) 时, 回退为原地覆写 (与改造前 os.WriteFile 一致, 不具备原子性).
 func writeFileAtomic(targetPath string, content []byte, perm os.FileMode) (err error) {
 	if info, lstatErr := os.Lstat(targetPath); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
 		resolved, evalErr := filepath.EvalSymlinks(targetPath)
@@ -170,7 +171,7 @@ func writeFileAtomic(targetPath string, content []byte, perm os.FileMode) (err e
 	tmpFile, err := os.CreateTemp(dir, ".tmp-conf-*")
 	if err != nil {
 		if existing && errors.Is(err, fs.ErrPermission) {
-			return os.WriteFile(targetPath, content, perm)
+			return overwriteInPlace(targetPath, content, perm, err)
 		}
 		return err
 	}
@@ -192,8 +193,21 @@ func writeFileAtomic(targetPath string, content []byte, perm os.FileMode) (err e
 		return err
 	}
 	if err = os.Rename(tmpName, targetPath); err != nil {
+		// 新建目标无回退对象, 原样返回; 已存在目标回退原地覆写, 临时文件仍由 defer 清理.
+		if existing {
+			return overwriteInPlace(targetPath, content, perm, err)
+		}
 		return err
 	}
 	tmpName = ""
+	return nil
+}
+
+// overwriteInPlace 在原子替换不可用时原地覆写已存在的目标 (非原子, 与改造前 os.WriteFile 一致).
+// cause 是触发回退的创建临时文件或重命名错误; 回退也失败时与写入错误合并返回, 保留两处路径上下文.
+func overwriteInPlace(targetPath string, content []byte, perm os.FileMode, cause error) error {
+	if err := os.WriteFile(targetPath, content, perm); err != nil {
+		return errors.Join(cause, err)
+	}
 	return nil
 }

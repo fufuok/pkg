@@ -60,6 +60,32 @@ func TestPrepareRejectsNoncanonicalHeaders(t *testing.T) {
 	}
 }
 
+// TestPrepareRejectsInvalidHeaderNames 验证空名或含空格, 冒号等非法字节的头名一律拒绝缓存.
+// CanonicalHeaderKey 对这类名称原样返回, 规范性比较无法识别; fasthttp 会把 "set-cookie " 原样写出,
+// 下游代理删除冒号前空白后即成为有效 Set-Cookie, 若被缓存将回放给所有访客.
+func TestPrepareRejectsInvalidHeaderNames(t *testing.T) {
+	c := New(time.Minute, Config{})
+	names := []string{"", "set-cookie ", "Set-Cookie ", "cache-control ", "Bad:Name", "X Trace", "X-Trace\t"}
+	for _, name := range names {
+		header := http.Header{name: {"sid=secret"}}
+		if _, ok := c.Prepare(header, []byte("body"), http.StatusOK); ok {
+			t.Fatalf("invalid header name %q accepted by Prepare", name)
+		}
+		if c.CanServe(header, http.StatusOK) {
+			t.Fatalf("invalid header name %q accepted by CanServe", name)
+		}
+		if c.ScanResponseHeader([]byte(name), []byte("sid=secret"), &ResponseScan{}) {
+			t.Fatalf("invalid header name %q accepted by ScanResponseHeader", name)
+		}
+	}
+	// 合法 token 字符 (含 RFC 9110 tchar 符号) 不受影响.
+	for _, name := range []string{"X-Trace", "X-A.b_c~1"} {
+		if !c.ScanResponseHeader([]byte(name), []byte("1"), &ResponseScan{}) {
+			t.Fatalf("valid header name %q rejected by ScanResponseHeader", name)
+		}
+	}
+}
+
 // TestEntryOmitInherited 验证外层预设且未被业务改动的非表示头不进入条目, 业务新增或改写的字段保留,
 // 表示头即使来自外层也必须保留以描述正文.
 func TestEntryOmitInherited(t *testing.T) {

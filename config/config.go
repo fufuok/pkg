@@ -36,6 +36,7 @@ var (
 // WhitelistSnapshot 并发安全地获取最新 IP 白名单快照.
 // 生产运行期通过原子指针无锁读取, 消除与 LoadConfig 热重载之间的并发读写竞争;
 // 未加载主配置或处于 InitTester 测试环境时回退读取 Whitelist 变量, 兼容单测直接赋值.
+// 返回的 map 为所有调用方共享的只读快照, 不得原地增删改; 需要调整时应复制后自行使用, 否则与并发读者产生数据竞争.
 func WhitelistSnapshot() map[*net.IPNet]int64 {
 	if p := whitelistSnap.Load(); p != nil && !testerMode.Load() {
 		return *p
@@ -46,6 +47,7 @@ func WhitelistSnapshot() map[*net.IPNet]int64 {
 // BlacklistSnapshot 并发安全地获取最新 IP 黑名单快照.
 // 生产运行期通过原子指针无锁读取, 消除与 LoadConfig 热重载之间的并发读写竞争;
 // 未加载主配置或处于 InitTester 测试环境时回退读取 Blacklist 变量, 兼容单测直接赋值.
+// 返回的 map 为所有调用方共享的只读快照, 不得原地增删改; 需要调整时应复制后自行使用, 否则与并发读者产生数据竞争.
 func BlacklistSnapshot() map[*net.IPNet]int64 {
 	if p := blacklistSnap.Load(); p != nil && !testerMode.Load() {
 		return *p

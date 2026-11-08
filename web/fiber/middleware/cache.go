@@ -22,7 +22,7 @@ type CacheConfig = httpcache.Config
 // ttl 非正值使用默认有效期, 可选配置最多一项. 缓存仅属于当前实例和当前进程.
 // 须注册在 pkg WithTimeout 外层; 注册在其内层时整段透传, 不命中也不存储.
 // 外置的原生或第三方异步 timeout 不在支持范围, 不根据 context 是否有期限猜测执行位置.
-// 禁用头名规范化时请求侧凭据与隐私检查仍有效, 但非规范表示头不保证被清理或替换, 应用须使用规范头名.
+// 禁用头名规范化时请求侧凭据, 隐私检查与命中回放的同名头清理均按规范名大小写无关处理.
 func CacheByRequestURI(ttl time.Duration, configs ...CacheConfig) fiber.Handler {
 	return newResponseCache(ttl, false, configs...)
 }
@@ -254,27 +254,36 @@ func addFiberCacheHeader(headers http.Header, backing *[]string, name, value str
 // 因此回放时条目头优先; 业务未触及的外层头不在条目中, 命中时保留外层本次请求设置的值.
 // SetBody 会复制缓存正文, 避免后续压缩或业务中间件修改 Fiber 缓冲区时污染共享条目.
 func replyWithFiberCache(c fiber.Ctx, entry *httpcache.Entry) error {
-	// fasthttp 的 All 迭代中不能修改头集合, 先复制实际名称再清除旧表示元数据.
-	// 缓存条目中缺失的表示头也必须清除, 不能重新露出冷请求业务已删除的默认值.
-	var buf [4]string
-	representationNames := buf[:0]
-	for name := range c.Response().Header.All() {
-		if httpcache.IsRepresentationHeader(utils.B2S(name)) {
-			representationNames = append(representationNames, string(name))
+	header := &c.Response().Header
+	// 单遍找出须清除的现有字段: 全部表示头 (条目缺失的也要清除, 不能重新露出冷请求业务已删除的默认值)
+	// 及条目中同名的其他头. 名称按规范形式比较, DisableHeaderNormalizing 下外层写入的小写头同样被清除或替换;
+	// 默认规范化时名称已是规范形式, CanonicalHeaderKey 原样返回不分配.
+	// fasthttp 的 All 迭代中不能修改头集合, 原始名称先拷入栈缓冲, 迭代结束后按原始字节删除, 常规头量不分配.
+	var nameBuf [128]byte
+	var endBuf [8]int
+	names, ends := nameBuf[:0], endBuf[:0]
+	for name := range header.All() {
+		canonical := http.CanonicalHeaderKey(utils.B2S(name))
+		if !httpcache.IsRepresentationHeader(canonical) {
+			if _, ok := entry.Header[canonical]; !ok {
+				continue
+			}
 		}
+		names = append(names, name...)
+		ends = append(ends, len(names))
 	}
-	for _, name := range representationNames {
-		c.Response().Header.Del(name)
+	start := 0
+	for _, end := range ends {
+		header.DelBytes(names[start:end])
+		start = end
 	}
 	// Add 自行复制字段字节, 直接只读遍历共享头, 省去中间 map 和值切片克隆.
 	for name, values := range entry.Header {
-		// 表示头必须与缓存正文一致; 其他条目头是业务显式结果, 同样覆盖外层同名值, 避免命中时放宽业务收紧的策略.
-		c.Response().Header.Del(name)
 		for _, value := range values {
-			c.Response().Header.Add(name, value)
+			header.Add(name, value)
 		}
 	}
-	c.Response().Header.Set("Age", entry.Age())
+	header.Set("Age", entry.Age())
 	c.Status(fiber.StatusOK)
 	c.Response().SetBody(entry.Body)
 	return nil

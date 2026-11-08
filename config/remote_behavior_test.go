@@ -221,6 +221,28 @@ func TestWriteFileAtomicReadOnlyDirFallback(t *testing.T) {
 	assert.Equal(t, "10.0.0.2\n", string(body))
 }
 
+// TestWriteFileAtomicRenameFailureFallback 验证目录可写但重命名替换失败时, 已存在的目标回退为原地覆写.
+// Windows 上目标被其他句柄打开 (未授予 FILE_SHARE_DELETE) 时 Rename 失败而原地写成功;
+// Linux 上该场景对应 Docker 单文件 bind mount 的 EBUSY, 此处打开的句柄不阻止 Rename, 走原子替换同样应成功.
+func TestWriteFileAtomicRenameFailureFallback(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "whitelist.conf")
+	assert.Nil(t, os.WriteFile(path, []byte("10.0.0.1\n"), 0o600))
+	held, err := os.Open(path)
+	assert.Nil(t, err)
+	defer func() { _ = held.Close() }()
+
+	assert.Nil(t, writeFileAtomic(path, []byte("10.0.0.2\n"), 0o600))
+
+	body, err := os.ReadFile(path)
+	assert.Nil(t, err)
+	assert.Equal(t, "10.0.0.2\n", string(body))
+	// 失败的临时文件由 defer 清理, 不在配置目录残留.
+	matches, err := filepath.Glob(filepath.Join(dir, ".tmp-conf-*"))
+	assert.Nil(t, err)
+	assert.Equal(t, 0, len(matches))
+}
+
 // TestGetDataSourceWithCheckContextWritesAfterAcceptedUpdate 验证 shouldUpdate 返回 true 后即使 ctx 被取消也完成落盘,
 // 防止带副作用的回调已更新内存而磁盘仍为旧内容.
 func TestGetDataSourceWithCheckContextWritesAfterAcceptedUpdate(t *testing.T) {
