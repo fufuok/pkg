@@ -8,9 +8,13 @@
 package gjson
 
 import (
+	"iter"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -18,6 +22,22 @@ import (
 
 	"github.com/fufuok/pkg/xjson/match"
 	"github.com/fufuok/pkg/xjson/pretty"
+)
+
+var (
+	// disableEscapeHTML 由 SetEscapeHTML 写入, 运行期可并发读写.
+	disableEscapeHTML atomic.Bool
+
+	// disableModifiers 仅供 ldflags 注入 "true"; 必须保持字符串常量初始化, 否则 -X 不生效.
+	disableModifiers = "false"
+	// modifiersAreDisabled 在包初始化时由 disableModifiers 计算, 之后只读.
+	modifiersAreDisabled = disableModifiers == "true"
+
+	// stockModifiers 是内置修饰符表, 由 init 填充后只读, 读取无需加锁.
+	stockModifiers map[string]func(json, arg string) string
+	// userModifiers 保存 AddModifier 注册的自定义修饰符, 读写均由 userModifiersLock 保护.
+	userModifiers     map[string]func(json, arg string) string
+	userModifiersLock sync.RWMutex
 )
 
 // Type is Result type
@@ -129,7 +149,13 @@ func (t Result) Int() int64 {
 	case True:
 		return 1
 	case String:
-		n, _ := parseInt(t.Str)
+		n, ok := parseInt(t.Str)
+		if !ok {
+			f, err := strconv.ParseFloat(t.Str, 64)
+			if err == nil {
+				n = f2i(f)
+			}
+		}
 		return n
 	case Number:
 		// try to directly convert the float64 to int64
@@ -143,7 +169,29 @@ func (t Result) Int() int64 {
 			return i
 		}
 		// fallback to a standard conversion
-		return int64(t.Num)
+		return f2i(t.Num)
+	}
+}
+
+// f2u 将 float64 饱和转换为 uint64: 超上限取最大值, 负数取 0.
+func f2u(f float64) uint64 {
+	if f >= math.MaxUint64 {
+		return math.MaxUint64
+	} else if f < 0 {
+		return 0
+	} else {
+		return uint64(f)
+	}
+}
+
+// f2i 将 float64 饱和转换为 int64: 超出范围时取对应端点值.
+func f2i(f float64) int64 {
+	if f >= math.MaxInt64 {
+		return math.MaxInt64
+	} else if f < math.MinInt64 {
+		return math.MinInt64
+	} else {
+		return int64(f)
 	}
 }
 
@@ -155,7 +203,13 @@ func (t Result) Uint() uint64 {
 	case True:
 		return 1
 	case String:
-		n, _ := parseUint(t.Str)
+		n, ok := parseUint(t.Str)
+		if !ok {
+			f, err := strconv.ParseFloat(t.Str, 64)
+			if err == nil {
+				n = f2u(f)
+			}
+		}
 		return n
 	case Number:
 		// try to directly convert the float64 to uint64
@@ -169,7 +223,7 @@ func (t Result) Uint() uint64 {
 			return u
 		}
 		// fallback to a standard conversion
-		return uint64(t.Num)
+		return f2u(t.Num)
 	}
 }
 
@@ -681,9 +735,10 @@ func (t Result) Value() any {
 		return t.Num
 	case JSON:
 		r := t.arrayOrMap(0, true)
-		if r.vc == '{' {
+		switch r.vc {
+		case '{':
 			return r.oi
-		} else if r.vc == '[' {
+		case '[':
 			return r.ai
 		}
 		return nil
@@ -951,7 +1006,7 @@ right:
 
 // peek at the next byte and see if it's a '@', '[', or '{'.
 func isDotPiperChar(s string) bool {
-	if DisableModifiers {
+	if modifiersAreDisabled {
 		return false
 	}
 	c := s[0]
@@ -963,8 +1018,7 @@ func isDotPiperChar(s string) bool {
 				break
 			}
 		}
-		_, ok := modifiers[s[1:i]]
-		return ok
+		return getModifier(s[1:i]) != nil
 	}
 	return c == '[' || c == '{'
 }
@@ -1946,7 +2000,8 @@ func parseSubSelectors(path string) (sels []subSelector, out string, ok bool) {
 		case '\\':
 			i++
 		case '@':
-			if modifier == 0 && i > 0 && (path[i-1] == '.' || path[i-1] == '|') {
+			if modifier == 0 && i > 0 && (path[i-1] == '.' ||
+				path[i-1] == '|') {
 				modifier = i
 			}
 		case ':':
@@ -2023,10 +2078,16 @@ func appendHex16(dst []byte, x uint16) []byte {
 	)
 }
 
-// DisableEscapeHTML 禁用 JSON 编码时对 HTML 敏感字符的自动转义.
-// 默认将 '>', '<' 和 '&' 分别转义为 \u003e, \u003c 和 \u0026.
-// 这是 gjson 的全局编码开关, 应在其他 gjson 函数调用前一次性设置.
-var DisableEscapeHTML = false
+// SetEscapeHTML 设置编码 JSON 字符串时是否转义 HTML 敏感字符, 运行期可并发调用.
+// 默认转义, 将 '>', '<' 和 '&' 分别写为 \u003e, \u003c 和 \u0026.
+func SetEscapeHTML(escapeHTML bool) {
+	disableEscapeHTML.Store(!escapeHTML)
+}
+
+// escapeHTML 报告当前是否需要转义 HTML 敏感字符.
+func escapeHTML() bool {
+	return !disableEscapeHTML.Load()
+}
 
 // AppendJSONString is a convenience function that converts the provided string
 // to a valid JSON string and appends it to dst.
@@ -2051,10 +2112,13 @@ func AppendJSONString(dst []byte, s string) []byte {
 				dst = append(dst, 'u')
 				dst = appendHex16(dst, uint16(s[i]))
 			}
-		} else if !DisableEscapeHTML &&
-			(s[i] == '>' || s[i] == '<' || s[i] == '&') {
-			dst = append(dst, '\\', 'u')
-			dst = appendHex16(dst, uint16(s[i]))
+		} else if s[i] == '>' || s[i] == '<' || s[i] == '&' {
+			if escapeHTML() {
+				dst = append(dst, '\\', 'u')
+				dst = appendHex16(dst, uint16(s[i]))
+			} else {
+				dst = append(dst, s[i])
+			}
 		} else if s[i] == '\\' {
 			dst = append(dst, '\\', '\\')
 		} else if s[i] == '"' {
@@ -2127,15 +2191,15 @@ type parseContext struct {
 // use the Valid function first.
 func Get(json, path string) Result {
 	if len(path) > 1 {
-		if (path[0] == '@' && !DisableModifiers) || path[0] == '!' {
+		if (path[0] == '@' && !modifiersAreDisabled) || path[0] == '!' {
 			// possible modifier
 			var ok bool
 			var npath string
 			var rjson string
-			if path[0] == '@' && !DisableModifiers {
+			if path[0] == '@' && !modifiersAreDisabled {
 				npath, rjson, ok = execModifier(json, path)
 			} else if path[0] == '!' {
-				npath, rjson, ok = execStatic(json, path)
+				npath, rjson, ok = execStatic(path)
 			}
 			if ok {
 				path = npath
@@ -2287,13 +2351,17 @@ func unescape(json string) string {
 				}
 				r := runeit(json[i+1:])
 				i += 5
-				if utf16.IsSurrogate(r) {
-					// need another code
+				// 仅当高代理后紧跟合法低代理时才合并为一个码点; 孤立代理按 U+FFFD 输出,
+				// 且不吞掉后续转义, 与 encoding/json 解码结果一致.
+				if r >= 0xD800 && r < 0xDC00 {
+					// high surrogate
 					if len(json[i:]) >= 6 && json[i] == '\\' &&
 						json[i+1] == 'u' {
-						// we expect it to be correct so just consume it
-						r = utf16.DecodeRune(r, runeit(json[i+2:]))
-						i += 6
+						r2 := runeit(json[i+2:])
+						if r2 >= 0xDC00 && r2 < 0xE000 {
+							r = utf16.DecodeRune(r, r2)
+							i += 6
+						}
 					}
 				}
 				// provide enough space to encode the largest utf8 possible
@@ -2615,6 +2683,12 @@ func validarray(data []byte, i int) (outi int, ok bool) {
 	return i, false
 }
 
+// ishex 报告 c 是否为十六进制数字字符.
+func ishex(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+		(c >= 'A' && c <= 'F')
+}
+
 func validstring(data []byte, i int) (outi int, ok bool) {
 	for ; i < len(data); i++ {
 		if data[i] < ' ' {
@@ -2631,12 +2705,7 @@ func validstring(data []byte, i int) (outi int, ok bool) {
 			case 'u':
 				for range 4 {
 					i++
-					if i >= len(data) {
-						return i, false
-					}
-					if !((data[i] >= '0' && data[i] <= '9') ||
-						(data[i] >= 'a' && data[i] <= 'f') ||
-						(data[i] >= 'A' && data[i] <= 'F')) {
+					if i >= len(data) || !ishex(data[i]) {
 						return i, false
 					}
 				}
@@ -2771,42 +2840,56 @@ func ValidBytes(json []byte) bool {
 	return ok
 }
 
-func parseUint(s string) (n uint64, ok bool) {
+// parseUint 解析纯十进制数字串, 空串或含非数字字符时返回 false.
+// 数值超过 uint64 上限时饱和为最大值并返回 true.
+func parseUint(s string) (uint64, bool) {
 	var i int
 	if i == len(s) {
 		return 0, false
 	}
+	var n uint64
 	for ; i < len(s); i++ {
-		if s[i] >= '0' && s[i] <= '9' {
-			n = n*10 + uint64(s[i]-'0')
-		} else {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, false
+		}
+		next := n*10 + uint64(s[i]-'0')
+		if next < n {
+			goto overflow
+		}
+		n = next
+	}
+	return n, true
+overflow:
+	// check that the remaining characters are valid
+	for ; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
 			return 0, false
 		}
 	}
-	return n, true
+	return 18446744073709551615, true
 }
 
-func parseInt(s string) (n int64, ok bool) {
-	var i int
+// parseInt 解析可带前导 '-' 的十进制整数, 超出 int64 范围时饱和到对应端点值.
+func parseInt(s string) (int64, bool) {
 	var sign bool
 	if len(s) > 0 && s[0] == '-' {
 		sign = true
-		i++
+		s = s[1:]
 	}
-	if i == len(s) {
+	n, ok := parseUint(s)
+	if !ok {
 		return 0, false
 	}
-	for ; i < len(s); i++ {
-		if s[i] >= '0' && s[i] <= '9' {
-			n = n*10 + int64(s[i]-'0')
-		} else {
-			return 0, false
-		}
-	}
 	if sign {
-		return n * -1, true
+		if n > 9223372036854775808 {
+			return -9223372036854775808, true
+		}
+		return -int64(n), true
 	}
-	return n, true
+	if n > 9223372036854775807 {
+		return 9223372036854775807, true
+	}
+	return int64(n), true
 }
 
 // safeInt validates a given JSON number
@@ -2822,7 +2905,7 @@ func safeInt(f float64) (n int64, ok bool) {
 
 // execStatic parses the path to find a static value.
 // The input expects that the path already starts with a '!'
-func execStatic(json, path string) (pathOut, res string, ok bool) {
+func execStatic(path string) (pathOut, res string, ok bool) {
 	name := path[1:]
 	if len(name) > 0 {
 		switch name[0] {
@@ -2875,7 +2958,7 @@ func execModifier(json, path string) (pathOut, res string, ok bool) {
 			break
 		}
 	}
-	if fn, ok := modifiers[name]; ok {
+	if fn := getModifier(name); fn != nil {
 		var args string
 		if hasArgs {
 			var parsedArgs bool
@@ -2920,13 +3003,8 @@ func unwrap(json string) string {
 	return json
 }
 
-// DisableModifiers will disable the modifier syntax
-var DisableModifiers = false
-
-var modifiers map[string]func(json, arg string) string
-
 func init() {
-	modifiers = map[string]func(json, arg string) string{
+	stockModifiers = map[string]func(json, arg string) string{
 		"pretty":  modPretty,
 		"ugly":    modUgly,
 		"reverse": modReverse,
@@ -2941,19 +3019,46 @@ func init() {
 		"group":   modGroup,
 		"dig":     modDig,
 	}
+	userModifiers = map[string]func(json, arg string) string{}
 }
 
 // AddModifier binds a custom modifier command to the GJSON syntax.
-// This operation is not thread safe and should be executed prior to
-// using all other gjson function.
+// Provide the name of the modifier without the '@' prefix.
+// 内置修饰符 (如 pretty/this/valid) 不可覆盖, 同名注册会被忽略.
+// 可与查询并发调用; 同名自定义修饰符以最后一次注册为准.
 func AddModifier(name string, fn func(json, arg string) string) {
-	modifiers[name] = fn
+	if stockModifiers[name] != nil {
+		// 内置表无锁只读, 不允许覆盖, 否则每次查询都需要加锁.
+		return
+	}
+	userModifiersLock.Lock()
+	userModifiers[name] = fn
+	userModifiersLock.Unlock()
+}
+
+// getUserModifier 在读锁下查找自定义修饰符, 不存在时返回 nil.
+// 标记 noinline 是为了让调用方 getModifier 保持可内联, 内置修饰符查找不经过锁.
+//
+//go:noinline
+func getUserModifier(name string) func(json, arg string) string {
+	userModifiersLock.RLock()
+	fn := userModifiers[name]
+	userModifiersLock.RUnlock()
+	return fn
+}
+
+// getModifier 先查无锁的内置表, 未命中再查自定义表; 均不存在时返回 nil.
+func getModifier(name string) func(json, arg string) string {
+	fn := stockModifiers[name]
+	if fn == nil {
+		fn = getUserModifier(name)
+	}
+	return fn
 }
 
 // ModifierExists returns true when the specified modifier exists.
 func ModifierExists(name string, fn func(json, arg string) string) bool {
-	_, ok := modifiers[name]
-	return ok
+	return getModifier(name) != nil
 }
 
 // cleanWS remove any non-whitespace from string
@@ -3530,7 +3635,7 @@ func (t Result) Path(json string) string {
 		}
 	}
 	if len(comps) == 0 {
-		if DisableModifiers {
+		if modifiersAreDisabled {
 			goto fail
 		}
 		return "@this"
@@ -3617,4 +3722,50 @@ func modDig(json, arg string) string {
 	}
 	out = append(out, ']')
 	return string(out)
+}
+
+// All iterates over a json result.
+// This works identically to ForEach, but allows modern Go loops:
+//
+//	for key, value := range res.All() {
+//		fmt.Printf("%s %s\n", key, value)
+//	}
+//
+// 与 ForEach 语义相同: 数组的 key 为 Number 类型的下标, 非对象/数组结果以空 key 迭代一次, 中途 break 即停止解析.
+func (t Result) All() iter.Seq2[Result, Result] {
+	return func(yield func(Result, Result) bool) {
+		t.ForEach(yield)
+	}
+}
+
+// Keys iterates over a json result.
+// This works identically to ForEach, but allows modern Go loops:
+//
+//	for key := range res.Keys() {
+//		fmt.Printf("%s\n", key)
+//	}
+//
+// 对象返回键名, 数组返回 Number 类型的下标.
+func (t Result) Keys() iter.Seq[Result] {
+	return func(yield func(Result) bool) {
+		t.ForEach(func(key, _ Result) bool {
+			return yield(key)
+		})
+	}
+}
+
+// Values iterates over a json result.
+// This works identically to ForEach, but allows modern Go loops:
+//
+//	for value := range res.Values() {
+//		fmt.Printf("%s\n", value)
+//	}
+//
+// 适合只关心数组元素或对象值的场景, 不生成中间切片.
+func (t Result) Values() iter.Seq[Result] {
+	return func(yield func(Result) bool) {
+		t.ForEach(func(_, value Result) bool {
+			return yield(value)
+		})
+	}
 }

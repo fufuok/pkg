@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -348,14 +349,13 @@ func TestPlus53BitInts(t *testing.T) {
 	assert(t, Get(json, "overflow_int53").Int() == 2251799813685248)
 	assert(t, Get(json, "min_uint64").Uint() == 0)
 	assert(t, Get(json, "max_uint64").Uint() == 18446744073709551615)
-	// this next value overflows the max uint64 by one which will just
-	// flip the number to zero
-	assert(t, Get(json, "overflow_uint64").Int() == 0)
+	// 上游 v1.19.1 起溢出值饱和到类型端点, 不再回绕.
+	assert(t, Get(json, "overflow_uint64").Int() == math.MaxInt64)
+	assert(t, Get(json, "overflow_uint64").Uint() == math.MaxUint64)
 	assert(t, Get(json, "min_int64").Int() == -9223372036854775808)
 	assert(t, Get(json, "max_int64").Int() == 9223372036854775807)
-	// this next value overflows the max int64 by one which will just
-	// flip the number to the negative sign.
-	assert(t, Get(json, "overflow_int64").Int() == -9223372036854775808)
+	assert(t, Get(json, "overflow_int64").Uint() == 9223372036854775808)
+	assert(t, Get(json, "overflow_int64").Int() == math.MaxInt64)
 }
 
 func TestIssue38(t *testing.T) {
@@ -2599,7 +2599,7 @@ func TestGroup(t *testing.T) {
 func goJSONMarshal(i any) ([]byte, error) {
 	buffer := &bytes.Buffer{}
 	encoder := json.NewEncoder(buffer)
-	encoder.SetEscapeHTML(!DisableEscapeHTML)
+	encoder.SetEscapeHTML(escapeHTML())
 	err := encoder.Encode(i)
 	return bytes.TrimRight(buffer.Bytes(), "\n"), err
 }
@@ -2692,6 +2692,7 @@ func TestJSONString(t *testing.T) {
 		t.Fatalf("expected '%v', got '%v'", s, value.String())
 	}
 	testJSONString(t, s)
+	testJSONString(t, string([]byte{0xfd}))
 	testJSONString(t, "R\xfd\xfc\a!\x82eO\x16?_\x0f\x9ab\x1dr")
 	testJSONString(t, "_\xb9\v\xad\xb3|X!\xb6\xd9U&\xa4\x1a\x95\x04")
 	// 非法 UTF-8 必须仍是合法 JSON, 且 gjson 继续输出历史 \ufffd, 不跟随 Go 1.27 json v2 的 U+FFFD 字节.
@@ -2747,11 +2748,8 @@ func TestDeepModifierWithOptions(t *testing.T) {
 	results := GetManyBytes([]byte(rawJson), jsonPathExpr)
 	assert(t, len(results) == 1)
 	actual := results[0].Raw
-	expected := `[[{
-  "a": 3,
-  "b": 1,
-  "c": 2
-}
+	// pretty v1.3.0 起宽度内的短对象输出为单行.
+	expected := `[[{ "a": 3, "b": 1, "c": 2 }
 ]]`
 	if expected != actual {
 		t.Fatal(strconv.Quote(rawJson) + "\n\t" +
@@ -2853,4 +2851,175 @@ func TestEscape(t *testing.T) {
 	assert(t, user.Get(Escape("first.name")).String() == "Janet")
 	assert(t, user.Get(Escape("last.name")).String() == "Prichard")
 	assert(t, user.Get("first.name").String() == "")
+}
+
+func TestIter(t *testing.T) {
+	json := `{
+		"a":1,
+		"b":2,
+		"c":3,
+		"d":4
+	}`
+	c := 'a'
+	i := 1
+	for key, value := range Parse(json).All() {
+		assert(t, key.String() == fmt.Sprintf("%c", c))
+		assert(t, int(value.Int()) == i)
+		c++
+		i++
+	}
+
+	c = 'a'
+	for key := range Parse(json).Keys() {
+		assert(t, key.String() == fmt.Sprintf("%c", c))
+		c++
+	}
+
+	i = 1
+	for value := range Parse(json).Values() {
+		assert(t, int(value.Int()) == i)
+		i++
+	}
+}
+
+func TestIntOverflow(t *testing.T) {
+	// https://github.com/tidwall/gjson/issues/394
+
+	// Numbers
+	assert(t, Parse("18446744073709551613").Uint() == 18446744073709551613)
+	assert(t, Parse("18446744073709551614").Uint() == 18446744073709551614)
+	assert(t, Parse("18446744073709551615").Uint() == 18446744073709551615)
+	assert(t, Parse("18446744073709551616").Uint() == 18446744073709551615)
+	assert(t, Parse("18446744073709551616.0").Uint() == 18446744073709551615)
+	assert(t, Parse("18446744073709551616.1").Uint() == 18446744073709551615)
+	assert(t, Parse("18446744073709551617.1").Uint() == 18446744073709551615)
+	assert(t, Parse("9223372036854775805").Int() == 9223372036854775805)
+	assert(t, Parse("9223372036854775806").Int() == 9223372036854775806)
+	assert(t, Parse("9223372036854775807").Int() == 9223372036854775807)
+	assert(t, Parse("9223372036854775808").Int() == 9223372036854775807)
+	assert(t, Parse("9223372036854775809").Int() == 9223372036854775807)
+	assert(t, Parse("9223372036854775809.0").Int() == 9223372036854775807)
+	assert(t, Parse("9223372036854775809.1").Int() == 9223372036854775807)
+	assert(t, Parse("9223372036854775809.1").Int() == 9223372036854775807)
+	assert(t, Parse("-9223372036854775805").Int() == -9223372036854775805)
+	assert(t, Parse("-9223372036854775806").Int() == -9223372036854775806)
+	assert(t, Parse("-9223372036854775807").Int() == -9223372036854775807)
+	assert(t, Parse("-9223372036854775808").Int() == -9223372036854775808)
+	assert(t, Parse("-9223372036854775809").Int() == -9223372036854775808)
+	assert(t, Parse("-9223372036854775809.0").Int() == -9223372036854775808)
+	assert(t, Parse("-9223372036854775809.1").Int() == -9223372036854775808)
+	assert(t, Parse("-9223372036854775809.1").Int() == -9223372036854775808)
+
+	// Strings
+	assert(t, Parse(`"18446744073709551613"`).Uint() == 18446744073709551613)
+	assert(t, Parse(`"18446744073709551614"`).Uint() == 18446744073709551614)
+	assert(t, Parse(`"18446744073709551615"`).Uint() == 18446744073709551615)
+	assert(t, Parse(`"18446744073709551616"`).Uint() == 18446744073709551615)
+	assert(t, Parse(`"18446744073709551616.0"`).Uint() == 18446744073709551615)
+	assert(t, Parse(`"18446744073709551616.1"`).Uint() == 18446744073709551615)
+	assert(t, Parse(`"18446744073709551617.1"`).Uint() == 18446744073709551615)
+	assert(t, Parse(`"9223372036854775805"`).Int() == 9223372036854775805)
+	assert(t, Parse(`"9223372036854775806"`).Int() == 9223372036854775806)
+	assert(t, Parse(`"9223372036854775807"`).Int() == 9223372036854775807)
+	assert(t, Parse(`"9223372036854775808"`).Int() == 9223372036854775807)
+	assert(t, Parse(`"9223372036854775809"`).Int() == 9223372036854775807)
+	assert(t, Parse(`"9223372036854775809.0"`).Int() == 9223372036854775807)
+	assert(t, Parse(`"9223372036854775809.1"`).Int() == 9223372036854775807)
+	assert(t, Parse(`"9223372036854775809.1"`).Int() == 9223372036854775807)
+	assert(t, Parse(`"-9223372036854775805"`).Int() == -9223372036854775805)
+	assert(t, Parse(`"-9223372036854775806"`).Int() == -9223372036854775806)
+	assert(t, Parse(`"-9223372036854775807"`).Int() == -9223372036854775807)
+	assert(t, Parse(`"-9223372036854775808"`).Int() == -9223372036854775808)
+	assert(t, Parse(`"-9223372036854775809"`).Int() == -9223372036854775808)
+	assert(t, Parse(`"-9223372036854775809.0"`).Int() == -9223372036854775808)
+	assert(t, Parse(`"-9223372036854775809.1"`).Int() == -9223372036854775808)
+	assert(t, Parse(`"-9223372036854775809.1"`).Int() == -9223372036854775808)
+}
+
+func TestIssue403(t *testing.T) {
+	// addresses high surrogates
+	inputs := []string{`"a\ud83d\u2026b"`, `"\ud83d\ud83d\ude00"`}
+	for i := range inputs {
+		var s1 string
+		json.Unmarshal([]byte(inputs[i]), &s1)
+		s2 := Parse(inputs[i]).String()
+		assert(t, s1 == s2)
+	}
+}
+
+// TestIntStringFallback 覆盖上游 v1.19.1 字符串数值的浮点回退与负数 Uint 归零.
+func TestIntStringFallback(t *testing.T) {
+	assert(t, Parse(`"1.9"`).Int() == 1)
+	assert(t, Parse(`"-1.9"`).Int() == -1)
+	assert(t, Parse(`"1e3"`).Uint() == 1000)
+	assert(t, Parse(`"-5"`).Uint() == 0)
+	assert(t, Parse(`-5`).Uint() == 0)
+	assert(t, Parse(`"abc"`).Int() == 0)
+	assert(t, Parse(`"Inf"`).Int() == math.MaxInt64)
+	assert(t, Parse(`"-Inf"`).Int() == math.MinInt64)
+}
+
+// TestSetEscapeHTML 验证 SetEscapeHTML 可在运行期切换 HTML 敏感字符转义.
+func TestSetEscapeHTML(t *testing.T) {
+	t.Cleanup(func() { SetEscapeHTML(true) })
+	escaped := string(AppendJSONString(nil, "<&>"))
+	assert(t, escaped != `"<&>"` && strings.Contains(escaped, "003c"))
+
+	SetEscapeHTML(false)
+	assert(t, string(AppendJSONString(nil, "<&>")) == `"<&>"`)
+	SetEscapeHTML(true)
+	assert(t, string(AppendJSONString(nil, "<&>")) == escaped)
+}
+
+// TestModifiersDisabled 模拟 ldflags 注入后的禁用状态, 修饰符和 Path 的 @this 回退均失效.
+func TestModifiersDisabled(t *testing.T) {
+	t.Cleanup(func() { modifiersAreDisabled = false })
+	json := `{"a":1}`
+	assert(t, Get(json, "@this").Raw == json)
+	modifiersAreDisabled = true
+	assert(t, !Get(json, "@this").Exists())
+	assert(t, Parse(json).Get("a").Path(json) == "a")
+	modifiersAreDisabled = false
+	assert(t, Get(json, "@this").Raw == json)
+}
+
+// TestAddModifierSafety 验证内置修饰符不可覆盖, 自定义修饰符可与查询并发注册.
+func TestAddModifierSafety(t *testing.T) {
+	AddModifier("this", func(string, string) string { return `"hijacked"` })
+	assert(t, Get(`{"a":1}`, "@this").Raw == `{"a":1}`)
+	assert(t, ModifierExists("this", nil))
+
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Go(func() {
+			name := fmt.Sprintf("concurrent%d", i)
+			AddModifier(name, func(json, _ string) string { return json })
+			for range 100 {
+				_ = Get(`{"a":1}`, "@"+name).Raw
+				_ = Get(`{"a":1}`, "@pretty").Raw
+			}
+			assert(t, ModifierExists(name, nil))
+		})
+	}
+	wg.Wait()
+	assert(t, !ModifierExists("not-registered", nil))
+}
+
+// TestUnescapeSurrogates 补充孤立代理边界, 结果须与 encoding/json 一致.
+func TestUnescapeSurrogates(t *testing.T) {
+	// 用 ~ 代替反斜杠书写 JSON 转义, 避免多层转义难以阅读.
+	bs := string(rune(92))
+	for _, in := range []string{
+		`"~ud83d~u2026b"`, `"~ud83d~ud83d~ude00"`, `"~ude00x"`, `"x~ud83d"`,
+		`"~ud83dx"`, `"~ud83d~ude00"`, `"~ud83d~u0041"`,
+	} {
+		in = strings.ReplaceAll(in, "~", bs)
+		var want string
+		if err := json.Unmarshal([]byte(in), &want); err != nil {
+			t.Fatal(err)
+		}
+		if got := Parse(in).String(); got != want {
+			t.Fatalf("unescape %s = %q, want %q", in, got, want)
+		}
+	}
 }

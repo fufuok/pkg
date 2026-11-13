@@ -3,7 +3,9 @@ package sjson
 import (
 	"encoding/hex"
 	"fmt"
+	"math"
 	"math/rand"
+	"strconv"
 	"testing"
 	"time"
 
@@ -363,7 +365,10 @@ func TestDeleteOptions(t *testing.T) {
 		{"array", `[1,2,3]`, "1", `[1,3]`, false},
 		{"escaped_key", `{"a.b":1,"c":2}`, `a\.b`, `{"c":2}`, false},
 		{"missing", `{"a":1}`, "b", `{"a":1}`, false},
-		{"empty_path", `{"a":1}`, "", `{"a":1}`, true},
+		// 上游 v1.2.7 起空路径表示空字符串键, 不存在时视为无变化.
+		{"empty_path", `{"a":1}`, "", `{"a":1}`, false},
+		{"empty_key", `{"":1,"a":2}`, "", `{"a":2}`, false},
+		{"array_last", `[1,2,3]`, "-1", `[1,2]`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			for _, options := range []*Options{nil, {}, {Optimistic: true, ReplaceInPlace: true}} {
@@ -385,5 +390,123 @@ func TestDeleteOptions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestIssue97(t *testing.T) {
+	json, err := Set(`{"rate":0}`, "rate", math.NaN())
+	if err == nil {
+		t.FailNow()
+	}
+	if json != `{"rate":"NaN"}` {
+		t.FailNow()
+	}
+	json, err = Set(`{"rate":0}`, "rate", math.Inf(-1))
+	if err == nil {
+		t.FailNow()
+	}
+	if json != `{"rate":"-Inf"}` {
+		t.FailNow()
+	}
+	json, err = Set(`{"rate":0}`, "rate", math.Inf(0))
+	if err == nil {
+		t.FailNow()
+	}
+	if json != `{"rate":"+Inf"}` {
+		t.FailNow()
+	}
+}
+
+func TestIssue77(t *testing.T) {
+	value, err := Delete(`{"":"1","1":"2"}`, "")
+	if value != `{"1":"2"}` || err != nil {
+		t.FailNow()
+	}
+}
+
+func TestIssue98(t *testing.T) {
+	// 2^64 wraps to 0 -> [4,2,3]? appends at a wrapped index, returns [1,2,3,4]
+	json, err := Set(`[1,2,3]`, "18446744073709551616", 4)
+	if json != "[1,2,3]" || err == nil {
+		t.FailNow()
+	}
+	if err.Error() != "cannot set array element for non-numeric key '18446744073709551616'" {
+		t.FailNow()
+	}
+	json, err = Set(`[1,2,3]`, "100001", 4)
+	if err != nil {
+		t.FailNow()
+	}
+	json, err = Set(`[1,2,3]`, "100003", 4)
+	if err != nil {
+		t.FailNow()
+	}
+	json, err = Set(`[1,2,3]`, "100004", 4)
+	if json != "[1,2,3]" || err == nil {
+		t.FailNow()
+	}
+	if err.Error() != "cannot pad array for key '100004', has 3 elements, limit is 100000" {
+		t.FailNow()
+	}
+
+	json, err = Set("", "b.this.4", "5")
+	if json != `{"b":{"this":[null,null,null,null,"5"]}}` || err != nil {
+		t.FailNow()
+	}
+	json, err = Set("", "b.this.100001", "5")
+	if json != "" || err == nil {
+		t.FailNow()
+	}
+	if err.Error() != "cannot pad array for key '100001', has 0 elements, limit is 100000" {
+		t.FailNow()
+	}
+	json, err = Set("", "b.this.18446744073709551616", "5")
+	if json != `{"b":{"this":{"18446744073709551616":"5"}}}` {
+		t.FailNow()
+	}
+
+	// testRaw(t, setRaw,
+	// 	`{"b":{"this":[null,null,null,null,4]}}`,
+	// 	``,
+	// 	"b.this.4", `4`)
+}
+
+func TestIssue99(t *testing.T) {
+	json, err := Delete(`{"#":200,"-1":true}`, "-1")
+	if json != `{"#":200}` || err != nil {
+		t.FailNow()
+	}
+}
+
+// TestUpstreamBoundaries 补充上游 v1.2.6~v1.2.9 行为的本地边界: 非有限浮点, 补齐上限与空键.
+func TestUpstreamBoundaries(t *testing.T) {
+	// float32 非有限值与 float64 走同一路径, 结果保持合法 JSON 且返回错误.
+	got, err := SetBytes([]byte(`{"v":0}`), "v", float32(math.Inf(1)))
+	if string(got) != `{"v":"+Inf"}` || err == nil {
+		t.Fatalf("float32 Inf = (%s, %v)", got, err)
+	}
+	if !gjson.ValidBytes(got) {
+		t.Fatalf("result must stay valid JSON: %s", got)
+	}
+	// 有限浮点不受影响.
+	if got, err := Set(`{"v":0}`, "v", 1.5); got != `{"v":1.5}` || err != nil {
+		t.Fatalf("finite float = (%s, %v)", got, err)
+	}
+
+	// 恰好补齐 maxpad 个 null 允许, 多一个即拒绝且不修改输入.
+	if _, err := Set(`[]`, strconv.Itoa(maxpad), 1); err != nil {
+		t.Fatalf("pad exactly maxpad: %v", err)
+	}
+	if got, err := Set(`[]`, strconv.Itoa(maxpad+1), 1); got != `[]` || err == nil {
+		t.Fatalf("pad over maxpad = (%s, %v)", got, err)
+	}
+	// 超出 int 范围的片段按对象键处理, 不再回绕成小索引.
+	if got, err := Set(``, "a.99999999999999999999", 1); got != `{"a":{"99999999999999999999":1}}` || err != nil {
+		t.Fatalf("overflow key = (%s, %v)", got, err)
+	}
+
+	// 空路径写入空字符串键.
+	if got, err := Set(`{"a":1}`, "", 2); got != `{"a":1,"":2}` || err != nil {
+		t.Fatalf("set empty key = (%s, %v)", got, err)
 	}
 }
