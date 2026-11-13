@@ -2947,7 +2947,25 @@ func TestIssue403(t *testing.T) {
 	}
 }
 
-// TestIntStringFallback 覆盖上游 v1.19.1 字符串数值的浮点回退与负数 Uint 归零.
+// TestIntOverflowWrapMiss 覆盖上游 next < n 漏检的溢出: 乘 10 回绕后仍大于旧值时也必须饱和.
+func TestIntOverflowWrapMiss(t *testing.T) {
+	for _, raw := range []string{"25000000000000000000", "99999999999999999999", "184467440737095516150"} {
+		assert(t, Parse(raw).Uint() == math.MaxUint64)
+		assert(t, Parse(raw).Int() == math.MaxInt64)
+		assert(t, Parse(`"`+raw+`"`).Uint() == math.MaxUint64)
+		assert(t, Parse(`"`+raw+`"`).Int() == math.MaxInt64)
+		assert(t, Parse(`"-`+raw+`"`).Int() == math.MinInt64)
+	}
+	// 溢出后仍须校验剩余字符.
+	_, ok := parseUint("184467440737095516160x")
+	assert(t, !ok)
+	// 超大数组下标不得回绕成小下标命中元素.
+	assert(t, !Get(`[1,2,3]`, "18446744073709551616").Exists())
+	assert(t, !Get(`[1,2,3]`, "25000000000000000000").Exists())
+	assert(t, Get(`[1,2,3]`, "2").Int() == 3)
+}
+
+// TestIntStringFallback 覆盖上游 v1.19.1 字符串数值的浮点回退, 及本地 NaN 归零保护.
 func TestIntStringFallback(t *testing.T) {
 	assert(t, Parse(`"1.9"`).Int() == 1)
 	assert(t, Parse(`"-1.9"`).Int() == -1)
@@ -2955,6 +2973,12 @@ func TestIntStringFallback(t *testing.T) {
 	assert(t, Parse(`"-5"`).Uint() == 0)
 	assert(t, Parse(`-5`).Uint() == 0)
 	assert(t, Parse(`"abc"`).Int() == 0)
+	// NaN 在各 CPU 架构上都返回 0, 不依赖 int64(NaN) 的实现定义结果.
+	assert(t, Parse(`"NaN"`).Int() == 0)
+	assert(t, Parse(`"NaN"`).Uint() == 0)
+	assert(t, Parse(`NaN`).Uint() == 0)
+	assert(t, Parse(`NaN`).Int() == 0)
+	assert(t, f2i(math.NaN()) == 0 && f2u(math.NaN()) == 0)
 	assert(t, Parse(`"Inf"`).Int() == math.MaxInt64)
 	assert(t, Parse(`"-Inf"`).Int() == math.MinInt64)
 }
@@ -3022,4 +3046,21 @@ func TestUnescapeSurrogates(t *testing.T) {
 			t.Fatalf("unescape %s = %q, want %q", in, got, want)
 		}
 	}
+}
+
+// TestValidNestingDepth 覆盖本地修正: 嵌套层数上限与 encoding/json 一致, 超深输入返回 false 而非栈溢出.
+func TestValidNestingDepth(t *testing.T) {
+	nest := func(n int) string {
+		return strings.Repeat("[", n) + strings.Repeat("]", n)
+	}
+	for _, n := range []int{1, maxNestingDepth} {
+		s := nest(n)
+		assert(t, Valid(s) && json.Valid([]byte(s)))
+	}
+	s := nest(maxNestingDepth + 1)
+	assert(t, !Valid(s) && !json.Valid([]byte(s)))
+	obj := strings.Repeat(`{"a":`, maxNestingDepth+1) + "1" + strings.Repeat("}", maxNestingDepth+1)
+	assert(t, !ValidBytes([]byte(obj)))
+	// 上游实现在约 600 万层时耗尽 1GB 栈导致进程退出.
+	assert(t, !Valid(strings.Repeat("[", 6_000_000)))
 }

@@ -12,7 +12,8 @@ import (
 	"github.com/fufuok/pkg/xjson/gjson"
 )
 
-// maxpad 限制按路径索引补齐数组时可追加的 null 数量, 防止超大索引耗尽内存.
+// maxpad 限制单次 Set 调用中补齐数组可追加的 null 总数, 防止超大索引耗尽内存.
+// 本地修正: 上游只限制每层, 路径 "a" 后重复 100 次 ".100000" (701 字节) 仍会生成约 50MB JSON.
 const maxpad = 100000
 
 type errorType struct {
@@ -144,10 +145,18 @@ func makePadError(key string, nels int) error {
 	}
 }
 
+// makeTotalPadError 构造多层路径累计补齐超限错误; total 为加上本层后的累计补齐数.
+func makeTotalPadError(key string, total int) error {
+	return &errorType{
+		fmt.Sprintf("cannot pad array for key '%s', total padding %d "+
+			"exceeds limit %d", key, total, maxpad),
+	}
+}
+
 // appendBuild builds a json block from a json path.
-// 新建数组的前导补齐超过 maxpad 时返回错误, 调用方应放弃本次修改并保留原 JSON.
+// padded 为本次调用此前已补齐的 null 数; 累计超过 maxpad 时返回错误, 调用方应放弃本次修改并保留原 JSON.
 func appendBuild(buf []byte, array bool, paths []pathResult, raw string,
-	stringify bool,
+	stringify bool, padded int,
 ) ([]byte, error) {
 	var err error
 	if !array {
@@ -158,18 +167,21 @@ func appendBuild(buf []byte, array bool, paths []pathResult, raw string,
 		n, numeric := atoui(paths[1])
 		if numeric || (!paths[1].force && paths[1].part == "-1") {
 			buf = append(buf, '[')
-			if n > maxpad {
-				return nil, makePadError(paths[1].part, 0)
+			if n > maxpad-padded {
+				if padded == 0 {
+					return nil, makePadError(paths[1].part, 0)
+				}
+				return nil, makeTotalPadError(paths[1].part, padded+n)
 			}
 			buf = appendRepeat(buf, "null,", n)
-			buf, err = appendBuild(buf, true, paths[1:], raw, stringify)
+			buf, err = appendBuild(buf, true, paths[1:], raw, stringify, padded+n)
 			if err != nil {
 				return nil, err
 			}
 			buf = append(buf, ']')
 		} else {
 			buf = append(buf, '{')
-			buf, err = appendBuild(buf, false, paths[1:], raw, stringify)
+			buf, err = appendBuild(buf, false, paths[1:], raw, stringify, padded)
 			if err != nil {
 				return nil, err
 			}
@@ -251,7 +263,8 @@ loop:
 						if buf[i] == '"' {
 							i--
 							if i >= 0 && buf[i] == '\\' {
-								i--
+								// 本地修正: 上游此处多执行一次 i--, 键以转义引号开头时会越过真正的起始引号,
+								// 误删前一个键或留下非法 JSON. 交给循环的 i-- 回到反斜杠之前即可.
 								continue
 							}
 							for ; i >= 0; i-- {
@@ -386,7 +399,7 @@ func appendRawPaths(buf []byte, jstr string, paths []pathResult, raw string,
 		if comma {
 			buf = append(buf, ',')
 		}
-		buf, err = appendBuild(buf, false, paths, raw, stringify)
+		buf, err = appendBuild(buf, false, paths, raw, stringify, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -414,7 +427,7 @@ func appendRawPaths(buf []byte, jstr string, paths []pathResult, raw string,
 				buf = append(buf, ',')
 			}
 
-			buf, err = appendBuild(buf, true, paths, raw, stringify)
+			buf, err = appendBuild(buf, true, paths, raw, stringify, 0)
 			if err != nil {
 				return nil, err
 			}
@@ -430,6 +443,7 @@ func appendRawPaths(buf []byte, jstr string, paths []pathResult, raw string,
 			buf = append(buf, ress[i].Raw...)
 		}
 		// 按索引追加时需补齐中间的 null, 超过 maxpad 即拒绝, 避免超大索引放大内存.
+		// 一次调用中扩容已有数组最多发生一次, 其后的层级都由 appendBuild 新建, 累计预算从这里传下去.
 		grow := n - len(ress)
 		if grow > maxpad {
 			return nil, makePadError(paths[0].part, len(ress))
@@ -442,7 +456,7 @@ func appendRawPaths(buf []byte, jstr string, paths []pathResult, raw string,
 				buf = append(buf, ',')
 			}
 		}
-		buf, err = appendBuild(buf, true, paths, raw, stringify)
+		buf, err = appendBuild(buf, true, paths, raw, stringify, max(grow, 0))
 		if err != nil {
 			return nil, err
 		}
@@ -571,27 +585,26 @@ func set(jstr, path, raw string,
 			if stringify {
 				sz += 2
 			}
-			if inplace && sz <= len(jstr) {
-				if !stringify || !mustMarshalString(raw) {
-					jsonh := *(*stringHeader)(unsafe.Pointer(&jstr))
-					jsonbh := sliceHeader{
-						data: jsonh.data, len: jsonh.len, cap: jsonh.len,
-					}
-					jbytes := *(*[]byte)(unsafe.Pointer(&jsonbh))
-					if stringify {
-						jbytes[res.Index] = '"'
-						copy(jbytes[res.Index+1:], []byte(raw))
-						jbytes[res.Index+1+len(raw)] = '"'
-						copy(jbytes[res.Index+1+len(raw)+1:],
-							jbytes[res.Index+len(res.Raw):])
-					} else {
-						copy(jbytes[res.Index:], []byte(raw))
-						copy(jbytes[res.Index+len(raw):],
-							jbytes[res.Index+len(res.Raw):])
-					}
-					return jbytes[:sz], nil
+			// 本地修正: 上游在字符串需要转义时直接返回原文且不报错, 修改被静默丢弃.
+			// 需要转义时长度无法按原样预估, 改走下方分配路径.
+			if inplace && sz <= len(jstr) && (!stringify || !mustMarshalString(raw)) {
+				jsonh := *(*stringHeader)(unsafe.Pointer(&jstr))
+				jsonbh := sliceHeader{
+					data: jsonh.data, len: jsonh.len, cap: jsonh.len,
 				}
-				return []byte(jstr), nil
+				jbytes := *(*[]byte)(unsafe.Pointer(&jsonbh))
+				if stringify {
+					jbytes[res.Index] = '"'
+					copy(jbytes[res.Index+1:], []byte(raw))
+					jbytes[res.Index+1+len(raw)] = '"'
+					copy(jbytes[res.Index+1+len(raw)+1:],
+						jbytes[res.Index+len(res.Raw):])
+				} else {
+					copy(jbytes[res.Index:], []byte(raw))
+					copy(jbytes[res.Index+len(raw):],
+						jbytes[res.Index+len(res.Raw):])
+				}
+				return jbytes[:sz], nil
 			}
 			buf := make([]byte, 0, sz)
 			buf = append(buf, jstr[:res.Index]...)
@@ -630,9 +643,15 @@ func set(jstr, path, raw string,
 	return njson, nil
 }
 
+// setComplexPath 处理含 # 查询等复杂路径: 按 gjson 返回的 Index/Indexes 在原文中替换结果.
+// 本地修正: # 后接修饰符, !静态值, 子选择器或嵌套 # 时, gjson 给出的偏移并不指向原文,
+// 上游直接按偏移切片会 panic 或拼出非法 JSON. 此处先逐个校验偏移和内容, 不可定位时视为无变化.
 func setComplexPath(jstr, path, raw string, stringify bool) ([]byte, error) {
 	res := gjson.Get(jstr, path)
 	if !res.Exists() || !(res.Index != 0 || len(res.Indexes) != 0) {
+		return []byte(jstr), errNoChange
+	}
+	if res.Index != 0 && !rawAt(jstr, res.Index, res.Raw) {
 		return []byte(jstr), errNoChange
 	}
 	if res.Index != 0 {
@@ -664,6 +683,13 @@ func setComplexPath(jstr, path, raw string, stringify bool) ([]byte, error) {
 		sort.SliceStable(vals, func(i, j int) bool {
 			return vals[i].index > vals[j].index
 		})
+		// 降序替换前确认每个偏移都指向对应原文且区间互不重叠, 任一不满足则整体不修改.
+		for i, val := range vals {
+			if !rawAt(jstr, val.index, val.res.Raw) ||
+				(i > 0 && val.index+len(val.res.Raw) > vals[i-1].index) {
+				return []byte(jstr), errNoChange
+			}
+		}
 		for _, val := range vals {
 			vres := val.res
 			index := val.index
@@ -678,6 +704,12 @@ func setComplexPath(jstr, path, raw string, stringify bool) ([]byte, error) {
 		}
 	}
 	return []byte(jstr), nil
+}
+
+// rawAt 报告 jstr 在 index 处是否恰好是 raw; index 为 0 表示 gjson 无法定位, 视为不匹配.
+func rawAt(jstr string, index int, raw string) bool {
+	return index > 0 && len(raw) > 0 && index+len(raw) <= len(jstr) &&
+		jstr[index:index+len(raw)] == raw
 }
 
 // SetOptions sets a json value for the specified path with options.

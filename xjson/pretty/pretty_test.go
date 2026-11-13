@@ -640,3 +640,176 @@ func TestSingleLineObjects(t *testing.T) {
 		t.Fatalf("invalid output")
 	}
 }
+
+// TestSingleLineTrialAbort 覆盖本地修正: 单行试排超出宽度即提前放弃, 输出须与上游 v1.3.0 逐字节一致.
+// 期望值由上游 v1.3.0 原版生成, 覆盖多层对象/数组嵌套、不同宽度与 SortKeys.
+func TestSingleLineTrialAbort(t *testing.T) {
+	cases := []struct {
+		in    string
+		width int
+		sort  bool
+		want  string
+	}{
+		{`{"zeta":{"b":[1,2,{"y":true,"x":null}],"a":"alpha"},"alpha":{"long_key_name_one":"value number one","long_key_name_two":{"inner_b":2,"inner_a":[{"k":"v"},{"k2":"v2"}]}},"m":[]}`, 30, false, `{
+  "zeta": {
+    "b": [
+      1,
+      2,
+      { "y": true, "x": null }
+    ],
+    "a": "alpha"
+  },
+  "alpha": {
+    "long_key_name_one": "value number one",
+    "long_key_name_two": {
+      "inner_b": 2,
+      "inner_a": [
+        { "k": "v" },
+        { "k2": "v2" }
+      ]
+    }
+  },
+  "m": []
+}
+`},
+		{`{"zeta":{"b":[1,2,{"y":true,"x":null}],"a":"alpha"},"alpha":{"long_key_name_one":"value number one","long_key_name_two":{"inner_b":2,"inner_a":[{"k":"v"},{"k2":"v2"}]}},"m":[]}`, 30, true, `{
+  "alpha": {
+    "long_key_name_one": "value number one",
+    "long_key_name_two": {
+      "inner_a": [
+        { "k": "v" },
+        { "k2": "v2" }
+      ],
+      "inner_b": 2
+    }
+  },
+  "m": [],
+  "zeta": {
+    "a": "alpha",
+    "b": [
+      1,
+      2,
+      { "x": null, "y": true }
+    ]
+  }
+}
+`},
+		{`{"zeta":{"b":[1,2,{"y":true,"x":null}],"a":"alpha"},"alpha":{"long_key_name_one":"value number one","long_key_name_two":{"inner_b":2,"inner_a":[{"k":"v"},{"k2":"v2"}]}},"m":[]}`, 80, false, `{
+  "zeta": { "b": [1, 2, { "y": true, "x": null }], "a": "alpha" },
+  "alpha": {
+    "long_key_name_one": "value number one",
+    "long_key_name_two": {
+      "inner_b": 2,
+      "inner_a": [{ "k": "v" }, { "k2": "v2" }]
+    }
+  },
+  "m": []
+}
+`},
+		{`{"zeta":{"b":[1,2,{"y":true,"x":null}],"a":"alpha"},"alpha":{"long_key_name_one":"value number one","long_key_name_two":{"inner_b":2,"inner_a":[{"k":"v"},{"k2":"v2"}]}},"m":[]}`, 80, true, `{
+  "alpha": {
+    "long_key_name_one": "value number one",
+    "long_key_name_two": {
+      "inner_a": [{ "k": "v" }, { "k2": "v2" }],
+      "inner_b": 2
+    }
+  },
+  "m": [],
+  "zeta": { "a": "alpha", "b": [1, 2, { "x": null, "y": true }] }
+}
+`},
+		{`[{"name":"svc-a","ports":[80,443],"env":{"MODE":"prod","LEVEL":"info"}},{"name":"svc-b","ports":[8080],"env":{}}]`, 30, false, `[
+  {
+    "name": "svc-a",
+    "ports": [80, 443],
+    "env": {
+      "MODE": "prod",
+      "LEVEL": "info"
+    }
+  },
+  {
+    "name": "svc-b",
+    "ports": [8080],
+    "env": { }
+  }
+]
+`},
+		{`[{"name":"svc-a","ports":[80,443],"env":{"MODE":"prod","LEVEL":"info"}},{"name":"svc-b","ports":[8080],"env":{}}]`, 30, true, `[
+  {
+    "env": {
+      "LEVEL": "info",
+      "MODE": "prod"
+    },
+    "name": "svc-a",
+    "ports": [80, 443]
+  },
+  {
+    "env": { },
+    "name": "svc-b",
+    "ports": [8080]
+  }
+]
+`},
+		{`[{"name":"svc-a","ports":[80,443],"env":{"MODE":"prod","LEVEL":"info"}},{"name":"svc-b","ports":[8080],"env":{}}]`, 80, false, `[
+  {
+    "name": "svc-a",
+    "ports": [80, 443],
+    "env": { "MODE": "prod", "LEVEL": "info" }
+  },
+  { "name": "svc-b", "ports": [8080], "env": { } }
+]
+`},
+		{`[{"name":"svc-a","ports":[80,443],"env":{"MODE":"prod","LEVEL":"info"}},{"name":"svc-b","ports":[8080],"env":{}}]`, 80, true, `[
+  {
+    "env": { "LEVEL": "info", "MODE": "prod" },
+    "name": "svc-a",
+    "ports": [80, 443]
+  },
+  { "env": { }, "name": "svc-b", "ports": [8080] }
+]
+`},
+	}
+	for _, c := range cases {
+		got := string(PrettyOptions([]byte(c.in), &Options{Width: c.width, Indent: "  ", SortKeys: c.sort}))
+		if got != c.want {
+			t.Fatalf("width=%d sort=%v\ngot:\n%s\nwant:\n%s", c.width, c.sort, got, c.want)
+		}
+	}
+}
+
+// nestedObjectJSON 生成 depth 层、每层 width 个键的嵌套对象, 叶子为短字符串.
+func nestedObjectJSON(depth, width int) []byte {
+	var b bytes.Buffer
+	var gen func(d int)
+	gen = func(d int) {
+		if d == 0 {
+			b.WriteString(`"leaf value"`)
+			return
+		}
+		b.WriteByte('{')
+		for i := range width {
+			if i > 0 {
+				b.WriteByte(',')
+			}
+			fmt.Fprintf(&b, `"key_%d_%d":`, width-i, d)
+			gen(d - 1)
+		}
+		b.WriteByte('}')
+	}
+	gen(depth)
+	return b.Bytes()
+}
+
+// BenchmarkPrettyNested 衡量多层嵌套对象的格式化开销, 用于观察单行试排失败后的回退成本.
+func BenchmarkPrettyNested(b *testing.B) {
+	doc := nestedObjectJSON(5, 5)
+	for _, sk := range []bool{false, true} {
+		b.Run(fmt.Sprintf("sort=%v", sk), func(b *testing.B) {
+			opts := &Options{Width: 80, Indent: "  ", SortKeys: sk}
+			b.ReportAllocs()
+			for b.Loop() {
+				PrettyOptions(doc, opts)
+			}
+		})
+	}
+}

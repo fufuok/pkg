@@ -6,13 +6,19 @@
 
 | 子包 | 上游 | 已同步版本 | 本地差异 |
 | --- | --- | --- | --- |
-| `gjson` | [tidwall/gjson](https://github.com/tidwall/gjson) | v1.20.2 | 非法 UTF-8 输出保持历史写法, 删除上游已失效的全局开关, 见 [gjson/README.md](gjson/README.md) |
-| `sjson` | [tidwall/sjson](https://github.com/tidwall/sjson) | v1.2.9 | 仅导入路径, 中文注释和格式 |
-| `pretty` | [tidwall/pretty](https://github.com/tidwall/pretty) | v1.3.0 | 仅中文注释和格式 |
+| `gjson` | [tidwall/gjson](https://github.com/tidwall/gjson) | v1.20.2 | 溢出、NaN、Valid 深度三处修正, 非法 UTF-8 输出保持历史写法, 见 [gjson/README.md](gjson/README.md) |
+| `sjson` | [tidwall/sjson](https://github.com/tidwall/sjson) | v1.2.9 | 补齐总预算、复杂路径偏移校验、转义引号键删除、原地替换转义四处修正, 见 [sjson/README.md](sjson/README.md) |
+| `pretty` | [tidwall/pretty](https://github.com/tidwall/pretty) | v1.3.0 | 单行试排超宽即中止 (性能修正, 输出不变), 见 [pretty/README.md](pretty/README.md) |
 | `match` | [tidwall/match](https://github.com/tidwall/match) | v1.2.0 | 仅中文注释和声明位置 |
 | `jsongen` | 无 | 本地实现 | 自行实现和维护, 不参考也不同步任何上游 |
 
 `jsongen` 的接口、性能取舍和边界以本仓库源码及测试为准, 上游同步时直接跳过.
+
+## 对上游的修正与已知问题
+
+- gjson、sjson、pretty 对上游的修正和暂不修改的已知问题分别见 [gjson/README.md](gjson/README.md)、[sjson/README.md](sjson/README.md)、[pretty/README.md](pretty/README.md), 同步上游时不得覆盖这些修正.
+- match: 模式以单个反斜杠结尾时行为不一致: 字符串 `\` 能匹配模式 `*\`, 却不能匹配模式 `\`. 上游同样存在, 暂不修改.
+- jsongen: `PutFloat`/`AppendFloat` 写 NaN/±Inf 会得到非法 JSON; `PutMap`/`PutArray` 传 nil 时 `Size`/`Serialize` panic; 空 `RawBytes` 写出 `[1,]`. 调用方需自行避免.
 
 ## 2026-11 同步带来的行为变化
 
@@ -30,12 +36,12 @@
 | gjson | `AddModifier` 可与查询并发调用; 内置修饰符 (如 `@pretty`) 不可再被覆盖 | 运行期注册自定义修饰符时不再触发 map 并发读写崩溃 |
 | gjson | 删除 `DisableEscapeHTML`、`DisableModifiers`, 改用 `SetEscapeHTML` 和编译参数, 见 [gjson/README.md](gjson/README.md) | 运行期切换转义不再有数据竞争; 旧变量的使用方编译即报错, 升级时迁移 |
 | sjson | 写入 NaN/±Inf 时结果为带引号的字符串 `"NaN"`, 同时返回错误, 此前静默写出非法 JSON | 浮点指标写回 JSON 时保证结果合法 |
-| sjson | 按下标补齐数组最多 100000 个 null, 超出返回错误; 超出 int 范围的下标按对象键处理 | 路径来自外部输入时防止超大下标耗尽内存 |
+| sjson | 按下标补齐数组最多 100000 个 null, 超出返回错误 (上游按每层计, 本地按单次调用累计); 超出 int 范围的下标按对象键处理 | 路径来自外部输入时防止超大下标耗尽内存; 对同一文档反复 Set 的累计增长仍需调用方限制 |
 | sjson | 空路径表示空字符串键 `""`, 此前返回 `path cannot be empty` 错误 | 操作空键 |
 | sjson | 删除对象中的 `-1` 键按键名删除, `-1` 只在数组上表示最后一个元素 | 修正误删 |
 
 ## 同步方法
 
 1. 用 `go mod download -json github.com/tidwall/<pkg>@<version>` 取得新旧版本源码, 逐版本对比差异.
-2. 只合入功能改动, 保留本地导入路径、中文注释和各子包 README 记录的本地差异.
+2. 只合入功能改动, 保留本地导入路径、中文注释和各子包 README 记录的修正.
 3. 迁移上游新增测试, 为本地差异补回归测试, 并更新本文件的版本表.

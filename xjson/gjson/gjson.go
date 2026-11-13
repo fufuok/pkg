@@ -24,6 +24,10 @@ import (
 	"github.com/fufuok/pkg/xjson/pretty"
 )
 
+// maxNestingDepth 是 Valid 允许的最大对象/数组嵌套层数, 与 encoding/json 一致.
+// 本地修正: 上游无深度上限, 递归校验约 600 万层 "[" 即耗尽 1GB 栈, 进程直接退出且无法 recover.
+const maxNestingDepth = 10000
+
 var (
 	// disableEscapeHTML 由 SetEscapeHTML 写入, 运行期可并发读写.
 	disableEscapeHTML atomic.Bool
@@ -174,7 +178,11 @@ func (t Result) Int() int64 {
 }
 
 // f2u 将 float64 饱和转换为 uint64: 超上限取最大值, 负数取 0.
+// NaN 返回 0 (本地补充), 避免 uint64(NaN) 在不同 CPU 架构上得到不同结果.
 func f2u(f float64) uint64 {
+	if math.IsNaN(f) {
+		return 0
+	}
 	if f >= math.MaxUint64 {
 		return math.MaxUint64
 	} else if f < 0 {
@@ -185,7 +193,11 @@ func f2u(f float64) uint64 {
 }
 
 // f2i 将 float64 饱和转换为 int64: 超出范围时取对应端点值.
+// NaN 返回 0 (本地补充), 避免 int64(NaN) 在不同 CPU 架构上得到不同结果.
 func f2i(f float64) int64 {
+	if math.IsNaN(f) {
+		return 0
+	}
 	if f >= math.MaxInt64 {
 		return math.MaxInt64
 	} else if f < math.MinInt64 {
@@ -2540,7 +2552,7 @@ func validpayload(data []byte, i int) (outi int, ok bool) {
 	for ; i < len(data); i++ {
 		switch data[i] {
 		default:
-			i, ok = validany(data, i)
+			i, ok = validany(data, i, 0)
 			if !ok {
 				return i, false
 			}
@@ -2560,7 +2572,8 @@ func validpayload(data []byte, i int) (outi int, ok bool) {
 	return i, false
 }
 
-func validany(data []byte, i int) (outi int, ok bool) {
+// validany 校验任意 JSON 值; depth 为当前所在容器层数, 进入对象/数组前检查 maxNestingDepth.
+func validany(data []byte, i, depth int) (outi int, ok bool) {
 	for ; i < len(data); i++ {
 		switch data[i] {
 		default:
@@ -2568,9 +2581,15 @@ func validany(data []byte, i int) (outi int, ok bool) {
 		case ' ', '\t', '\n', '\r':
 			continue
 		case '{':
-			return validobject(data, i+1)
+			if depth >= maxNestingDepth {
+				return i, false
+			}
+			return validobject(data, i+1, depth+1)
 		case '[':
-			return validarray(data, i+1)
+			if depth >= maxNestingDepth {
+				return i, false
+			}
+			return validarray(data, i+1, depth+1)
 		case '"':
 			return validstring(data, i+1)
 		case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
@@ -2586,7 +2605,7 @@ func validany(data []byte, i int) (outi int, ok bool) {
 	return i, false
 }
 
-func validobject(data []byte, i int) (outi int, ok bool) {
+func validobject(data []byte, i, depth int) (outi int, ok bool) {
 	for ; i < len(data); i++ {
 		switch data[i] {
 		default:
@@ -2603,7 +2622,7 @@ func validobject(data []byte, i int) (outi int, ok bool) {
 			if i, ok = validcolon(data, i); !ok {
 				return i, false
 			}
-			if i, ok = validany(data, i); !ok {
+			if i, ok = validany(data, i, depth); !ok {
 				return i, false
 			}
 			if i, ok = validcomma(data, i, '}'); !ok {
@@ -2659,12 +2678,12 @@ func validcomma(data []byte, i int, end byte) (outi int, ok bool) {
 	return i, false
 }
 
-func validarray(data []byte, i int) (outi int, ok bool) {
+func validarray(data []byte, i, depth int) (outi int, ok bool) {
 	for ; i < len(data); i++ {
 		switch data[i] {
 		default:
 			for ; i < len(data); i++ {
-				if i, ok = validany(data, i); !ok {
+				if i, ok = validany(data, i, depth); !ok {
 					return i, false
 				}
 				if i, ok = validcomma(data, i, ']'); !ok {
@@ -2842,6 +2861,8 @@ func ValidBytes(json []byte) bool {
 
 // parseUint 解析纯十进制数字串, 空串或含非数字字符时返回 false.
 // 数值超过 uint64 上限时饱和为最大值并返回 true.
+// 上游以 next < n 判断溢出, 会漏掉乘 10 回绕后仍大于旧值的情况 (如 25000000000000000000),
+// 本地改为乘加前比较上限, 保证所有溢出都被识别.
 func parseUint(s string) (uint64, bool) {
 	var i int
 	if i == len(s) {
@@ -2852,11 +2873,11 @@ func parseUint(s string) (uint64, bool) {
 		if s[i] < '0' || s[i] > '9' {
 			return 0, false
 		}
-		next := n*10 + uint64(s[i]-'0')
-		if next < n {
+		d := uint64(s[i] - '0')
+		if n > math.MaxUint64/10 || (n == math.MaxUint64/10 && d > math.MaxUint64%10) {
 			goto overflow
 		}
-		n = next
+		n = n*10 + d
 	}
 	return n, true
 overflow:
@@ -2894,10 +2915,11 @@ func parseInt(s string) (int64, bool) {
 
 // safeInt validates a given JSON number
 // ensures it lies within the minimum and maximum representable JSON numbers
+// NaN 视为不安全 (本地补充), 交由 f2i/f2u 统一归零, 避免 int64(NaN) 随 CPU 架构变化.
 func safeInt(f float64) (n int64, ok bool) {
 	// https://tc39.es/ecma262/#sec-number.min_safe_integer
 	// https://tc39.es/ecma262/#sec-number.max_safe_integer
-	if f < -9007199254740991 || f > 9007199254740991 {
+	if math.IsNaN(f) || f < -9007199254740991 || f > 9007199254740991 {
 		return 0, false
 	}
 	return int64(f), true

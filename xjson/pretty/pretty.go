@@ -264,6 +264,8 @@ func appendPrettyObject(buf, json []byte, i int, open, close byte, pretty bool,
 			}
 		}
 	}
+	// start 记录本容器在 buf 中的起点, 单行试排 (max != -1) 时据此判断是否已超出可用宽度.
+	start := len(buf)
 	buf = append(buf, open)
 	i++
 	var pairs []pair
@@ -337,7 +339,9 @@ func appendPrettyObject(buf, json []byte, i int, open, close byte, pretty bool,
 			}
 			buf, i, nl, ok = appendPrettyAny(buf, json, i, pretty, width,
 				prefix, indent, sortkeys, tabs+1, nl, max)
-			if max != -1 && !ok {
+			// 本地修正: 上游试排单行时会完整渲染整个子树后才比较宽度, 放不下时整段丢弃,
+			// 嵌套越深重复越多. 已超出可用宽度即提前放弃, 结果本就会被丢弃, 输出不变.
+			if max != -1 && (!ok || len(buf)-start > max) {
 				return buf, i, nl, false
 			}
 			if open == '{' && sortkeys {

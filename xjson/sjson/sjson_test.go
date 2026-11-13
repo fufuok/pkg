@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/rand"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -508,5 +509,111 @@ func TestUpstreamBoundaries(t *testing.T) {
 	// 空路径写入空字符串键.
 	if got, err := Set(`{"a":1}`, "", 2); got != `{"a":1,"":2}` || err != nil {
 		t.Fatalf("set empty key = (%s, %v)", got, err)
+	}
+}
+
+// TestComplexPathUnlocatable 覆盖本地修正: # 后接计算值时 gjson 偏移不指向原文, 不得 panic 或拼出非法 JSON.
+func TestComplexPathUnlocatable(t *testing.T) {
+	for _, c := range [][2]string{
+		{`[1]`, "#.!true"},
+		{`{"a":[{"b":1}]}`, "a.#.@pretty"},
+		{`{"a":[[1,2],[3,4]]}`, "a.#.#"},
+		{`[[null,[]]]`, "#.@reverse"},
+	} {
+		got, err := Set(c[0], c[1], "Z")
+		if err != nil || got != c[0] {
+			t.Fatalf("Set(%s, %q) = (%s, %v), want unchanged", c[0], c[1], got, err)
+		}
+	}
+	// DataRouter query2JSON 形态: 外部查询键逐个作为路径写入同一正文.
+	var body []byte
+	for _, k := range []string{"0", "#.!true", "#.@this"} {
+		body, _ = SetBytes(body, k, "1")
+	}
+	if string(body) != `["1"]` {
+		t.Fatalf("query keys = %s", body)
+	}
+	// 可定位的复杂路径保持原有行为.
+	for _, c := range [][3]string{
+		{`{"a":[{"b":1},{"b":2}]}`, "a.#.b", `{"a":[{"b":9},{"b":9}]}`},
+		{`{"a":[{"b":1},{"b":2}]}`, "a.#(b==2).b", `{"a":[{"b":1},{"b":9}]}`},
+		{`{"a":[{"b":1},{"b":2}]}`, "a.#(b>0)#.b", `{"a":[{"b":9},{"b":9}]}`},
+	} {
+		if got, err := Set(c[0], c[1], 9); got != c[2] || err != nil {
+			t.Fatalf("Set(%s, %q) = (%s, %v), want %s", c[0], c[1], got, err, c[2])
+		}
+	}
+}
+
+// TestDeleteKeyLeadingEscapedQuote 覆盖本地修正: 键以转义引号开头时只删除该键.
+func TestDeleteKeyLeadingEscapedQuote(t *testing.T) {
+	q := string(rune(92)) + `"`
+	for _, c := range [][2]string{
+		{`{"x":1,"` + q + `":2}`, `{"x":1}`},
+		{`{"` + q + `":1,"y":2}`, `{"y":2}`},
+		{`{"a":1,"` + q + `a":2,"b":3}`, `{"a":1,"b":3}`},
+	} {
+		path := q
+		if strings.Contains(c[0], q+"a") {
+			path = q + "a"
+		}
+		if got, err := Delete(c[0], path); got != c[1] || err != nil {
+			t.Fatalf("Delete(%s, %s) = (%s, %v), want %s", c[0], path, got, err, c[1])
+		}
+	}
+}
+
+// TestOptimisticInPlaceEscape 覆盖本地修正: 原地替换遇到需要转义的字符串时仍须写入.
+func TestOptimisticInPlaceEscape(t *testing.T) {
+	opts := &Options{Optimistic: true, ReplaceInPlace: true}
+	for _, v := range []string{"é", `a"b`, "x\ny", "中文"} {
+		in := []byte(`{"a":"xxxxxxxxxxxxxxxx","b":1}`)
+		got, err := SetBytesOptions(in, "a", v, opts)
+		if err != nil || gjson.GetBytes(got, "a").String() != v || gjson.GetBytes(got, "b").Int() != 1 {
+			t.Fatalf("SetBytesOptions(%q) = (%s, %v)", v, got, err)
+		}
+	}
+	// 无需转义时仍走原地路径.
+	in := []byte(`{"a":"xxxxxxxxxxxxxxxx","b":1}`)
+	got, err := SetBytesOptions(in, "a", "ok", opts)
+	if err != nil || string(got) != `{"a":"ok","b":1}` || &got[0] != &in[0] {
+		t.Fatalf("in-place ascii = (%s, %v)", got, err)
+	}
+}
+
+// TestPadTotalBudget 覆盖本地修正: maxpad 限制单次调用的累计补齐, 多层路径不能逐层放大.
+func TestPadTotalBudget(t *testing.T) {
+	// 701 字节路径逐层补齐 100000 个 null: 上游生成约 50MB, 本地拒绝且不修改输入.
+	path := "a" + strings.Repeat(".100000", 100)
+	got, err := Set(`{"x":1}`, path, 1)
+	if got != `{"x":1}` || err == nil || !strings.Contains(err.Error(), "total padding") {
+		t.Fatalf("multi-level pad = (%d bytes, %v)", len(got), err)
+	}
+	if b, err := SetBytes(nil, path, 1); err == nil || len(b) != 0 {
+		t.Fatalf("multi-level pad on empty = (%d bytes, %v)", len(b), err)
+	}
+
+	// 新建多层数组: 累计恰好 maxpad 允许, 多一个即拒绝.
+	half := strconv.Itoa(maxpad / 2)
+	if _, err := Set(``, "a."+half+"."+half, 1); err != nil {
+		t.Fatalf("total exactly maxpad: %v", err)
+	}
+	if _, err := Set(``, "a."+half+"."+strconv.Itoa(maxpad/2+1), 1); err == nil {
+		t.Fatal("total over maxpad must fail")
+	}
+
+	// 扩容已有数组后再新建下层数组: 两段补齐合计计入同一预算.
+	// [1,2,3] 写下标 60003 需补 60000 个 null, 下层再补 40000 个, 合计恰好 maxpad.
+	if _, err := Set(`[1,2,3]`, "60003.40000", 1); err != nil {
+		t.Fatalf("grow plus build within budget: %v", err)
+	}
+	got, err = Set(`[1,2,3]`, "60003.40001", 1)
+	if got != `[1,2,3]` || err == nil {
+		t.Fatalf("grow plus build over budget = (%d bytes, %v)", len(got), err)
+	}
+
+	// 单层超限仍返回上游原有错误信息.
+	if _, err := Set(``, "a."+strconv.Itoa(maxpad+1), 1); err == nil || strings.Contains(err.Error(), "total padding") {
+		t.Fatalf("single level error = %v", err)
 	}
 }
