@@ -538,6 +538,10 @@ func TestComplexPathUnlocatable(t *testing.T) {
 		{`{"a":[{"b":1},{"b":2}]}`, "a.#.b", `{"a":[{"b":9},{"b":9}]}`},
 		{`{"a":[{"b":1},{"b":2}]}`, "a.#(b==2).b", `{"a":[{"b":1},{"b":9}]}`},
 		{`{"a":[{"b":1},{"b":2}]}`, "a.#(b>0)#.b", `{"a":[{"b":9},{"b":9}]}`},
+		// JSON Lines 查询命中首行时偏移为 0, 仍应写入 (与上游一致).
+		{"{\"a\":1}\n{\"a\":2}", "..#(a==1)#", "9\n{\"a\":2}"},
+		{"1\n2", "..#(==1)#", "9\n2"},
+		{"{\"a\":1}\n{\"a\":2}", "..#.a", "{\"a\":9}\n{\"a\":9}"},
 	} {
 		if got, err := Set(c[0], c[1], 9); got != c[2] || err != nil {
 			t.Fatalf("Set(%s, %q) = (%s, %v), want %s", c[0], c[1], got, err, c[2])
@@ -615,5 +619,124 @@ func TestPadTotalBudget(t *testing.T) {
 	// 单层超限仍返回上游原有错误信息.
 	if _, err := Set(``, "a."+strconv.Itoa(maxpad+1), 1); err == nil || strings.Contains(err.Error(), "total padding") {
 		t.Fatalf("single level error = %v", err)
+	}
+
+	// 上层已补齐后, 下层单层超限也按单层报错; 下标为 math.MaxInt 时累计值不得溢出成负数.
+	maxInt := strconv.Itoa(math.MaxInt)
+	want := "cannot pad array for key '" + maxInt + "', has 0 elements, limit is 100000"
+	for _, c := range []struct{ json, path string }{
+		{``, "a.1." + maxInt},
+		{``, "a.1." + strconv.Itoa(maxpad+1)},
+		{`{"a":[1,2,3]}`, "a.5." + maxInt},
+	} {
+		got, err := Set(c.json, c.path, 1)
+		if got != c.json || err == nil {
+			t.Fatalf("Set(%q, %q) = (%q, %v)", c.json, c.path, got, err)
+		}
+		if strings.Contains(err.Error(), "total padding") || strings.Contains(err.Error(), "-") {
+			t.Fatalf("Set(%q, %q) error = %v", c.json, c.path, err)
+		}
+		if strings.HasSuffix(c.path, maxInt) && err.Error() != want {
+			t.Fatalf("Set(%q, %q) error = %q, want %q", c.json, c.path, err, want)
+		}
+	}
+}
+
+// TestComplexPathMisplaced 覆盖本地修正: gjson 偏移不指向原文而内容碰巧相同时, 不得写到别处.
+func TestComplexPathMisplaced(t *testing.T) {
+	// 均应原样返回且无错误: 管道后的 Indexes 相对子值, # 后接静态值时偏移指向父元素,
+	// 数字前缀 ("1" 落在 "11111" 上), 以及静态值内容等于整个文档 (偏移 0).
+	for _, c := range [][2]string{
+		{`{"xy":1,"a":[{"b":1}]}`, "a|#.b"},
+		{`{"x":11111,"a":[{"b":1}]}`, "a|#.b"},
+		{`[12,13]`, "#(>10)#.!1"},
+		{`[1]`, "#.![1]"},
+		{`[{"a":1}]`, "#.{a}"},
+		{`[[1]]`, "#.[0]"},
+		{`[1,2]`, "#.@this"},
+		{`{"a":[{"b":1}]}`, `a.#(b=="|").b`},
+		// 无匹配时 gjson 返回计算出的 "[]", 偏移 0 且内容恰好等于整个文档.
+		{`[]`, "..#(a==1)#"},
+		{`[]`, "#(a==1)#"},
+		{"[]\n[]", "..#(a==1)#"},
+		// 嵌套多结果只记录外层元素偏移, 会把整个外层元素替换掉.
+		{`{"m":[[],[]]}`, "m.#.#(x==1)#"},
+		{`[[1,2]]`, "#(#>0)#.#(>0)#"},
+		{`[1,2]`, "..#.#(>0)#"},
+		{`{"a":[{"b":[{"c":1}]}]}`, "a.#.b.#.c"},
+		// 查询体与 gjson 解析不一致的构造路径: 转义的 "#(", 段中的 "#(", "]" 闭合, 对象上的 "#(" 不是查询.
+		{`{"xy":1,"#(":[{"b":1}]}`, `\#(|#.b`},
+		{`{"xy":1,"a#(":[{"b":1}]}`, "a#(|#.b"},
+		{`{"xy":1,"a":[[{"b":1}]]}`, "a.#(#>0]#|0|#.b"},
+		{`{"xyzwv":1,"a":{"#(b==\"":[{"c\")":1}]}}`, `a.#(b=="|#.c")`},
+		// 查询值含 '|' 时无法区分查询与管道, 保守拒绝.
+		{`{"a":[{"b":"x|y"},{"b":"z"}]}`, `a.#(b=="x|y")#.b`},
+	} {
+		if got, err := Set(c[0], c[1], 9); got != c[0] || err != nil {
+			t.Fatalf("Set(%s, %q) = (%s, %v), want unchanged", c[0], c[1], got, err)
+		}
+	}
+	// 按 DataRouter query2JSON 的方式逐个写入外部查询键, 后一个键不得改写前一个键的值.
+	var body []byte
+	for _, kv := range [][2]string{{"xy", "1"}, {"a.0.b", "1"}, {"a|#.b", "hacked"}, {"0", "1"}, {`#.!["1"]`, "x"}} {
+		body, _ = SetBytes(body, kv[0], kv[1])
+	}
+	if string(body) != `{"xy":"1","a":[{"b":"1"}],"0":"1"}` {
+		t.Fatalf("query2JSON style = %s", body)
+	}
+	// 偏移可信的路径照常写入; 段中间的 '@'/'!' 及未注册修饰符名是普通键名.
+	for _, c := range [][3]string{
+		{`{"a":[{"b":1},{"b":2}]}`, "a.#.b", `{"a":[{"b":9},{"b":9}]}`},
+		{`{"a":[{"b":1},{"b":2}]}`, "a.#(b==2).b", `{"a":[{"b":1},{"b":9}]}`},
+		{`{"a":[{"b":1},{"b":2}]}`, `a.#(b>1)#.b`, `{"a":[{"b":1},{"b":9}]}`},
+		{`{"a":[{"b":"x"},{"b":"z"}]}`, `a.#(b=="x")#.b`, `{"a":[{"b":9},{"b":"z"}]}`},
+		{`{"a":[{"n":["fb"],"f":1},{"n":["x"],"f":2}]}`, `a.#(n.#(=="fb"))#.f`, `{"a":[{"n":["fb"],"f":9},{"n":["x"],"f":2}]}`},
+		{`{"a":[{"@ts":1},{"@ts":2}]}`, "a.#.@ts", `{"a":[{"@ts":9},{"@ts":9}]}`},
+		{`[{"!x":1},{"!x":2}]`, "#.!x", `[{"!x":9},{"!x":9}]`},
+		// 单匹配查询后再取多结果: gjson 已补上匹配元素的偏移 (上游写到第 1 个元素或字符串内部).
+		{`{"a":[1,1,1,1,1,1,1,{"b":1,"c":[1]}]}`, "a.#(b==1).c.#(==1)#", `{"a":[1,1,1,1,1,1,1,{"b":1,"c":[9]}]}`},
+		{`{"x":"aaaaa,1,b","a":[{"b":1,"c":[1]}]}`, "a.#(b==1).c.#(>0)#", `{"x":"aaaaa,1,b","a":[{"b":1,"c":[9]}]}`},
+		{`{"a":[{"b":1,"c":[{"d":1}]},{"b":2,"c":[{"d":1}]}]}`, "a.#(b==2).c.#.d", `{"a":[{"b":1,"c":[{"d":1}]},{"b":2,"c":[{"d":9}]}]}`},
+		{
+			"{\"id\":1,\"t\":[{\"v\":\"x\"}]}\n{\"id\":3,\"t\":[{\"v\":\"x\"}]}", "..#(id==3).t.#.v",
+			"{\"id\":1,\"t\":[{\"v\":\"x\"}]}\n{\"id\":3,\"t\":[{\"v\":9}]}",
+		},
+		{`{"@timestamp":1}`, "@timestamp", `{"@timestamp":9}`},
+		{`{"a":{"b@c!":1}}`, "a.b@c!", `{"a":{"b@c!":9}}`},
+		// JSON Lines: 首行偏移为 0 也可写入, 单结果与多结果一致.
+		{"{\"a\":1}\n{\"a\":2}", "..#(a==1)", "9\n{\"a\":2}"},
+		{"{\"a\":1}\n{\"a\":2}", "..#(a==2)", "{\"a\":1}\n9"},
+		{"{\"a\":1}\n{\"a\":2}", "..#.a", "{\"a\":9}\n{\"a\":9}"},
+	} {
+		if got, err := Set(c[0], c[1], 9); got != c[2] || err != nil {
+			t.Fatalf("Set(%s, %q) = (%s, %v), want %s", c[0], c[1], got, err, c[2])
+		}
+	}
+}
+
+// TestAtouiNoAlloc 覆盖本地修正: 超过 8 字节的非数字键名不调用 ParseUint, 不分配.
+func TestAtouiNoAlloc(t *testing.T) {
+	r := pathResult{part: "q_utm_source"}
+	if n := testing.AllocsPerRun(100, func() { _, _ = atoui(r) }); n != 0 {
+		t.Fatalf("atoui allocs = %v", n)
+	}
+	for _, c := range []struct {
+		part string
+		n    int
+		ok   bool
+	}{
+		{"", 0, true},
+		{"0", 0, true},
+		{"123456789", 123456789, true},
+		{"12345678a", 0, false},
+		{strconv.Itoa(math.MaxInt), math.MaxInt, true},
+		{strconv.FormatUint(uint64(math.MaxInt)+1, 10), 0, false},
+		{"18446744073709551616", 0, false},
+		{"-1", 0, false},
+	} {
+		n, ok := atoui(pathResult{part: c.part})
+		if ok != c.ok || (ok && n != c.n) {
+			t.Fatalf("atoui(%q) = (%d, %v), want (%d, %v)", c.part, n, ok, c.n, c.ok)
+		}
 	}
 }

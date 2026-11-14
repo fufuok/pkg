@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"unsafe"
 
 	"github.com/fufuok/pkg/xjson/gjson"
@@ -167,10 +168,12 @@ func appendBuild(buf []byte, array bool, paths []pathResult, raw string,
 		n, numeric := atoui(paths[1])
 		if numeric || (!paths[1].force && paths[1].part == "-1") {
 			buf = append(buf, '[')
+			// 先判本层: 单层超限沿用上游错误信息, 且 n 可达 math.MaxInt, 此时 padded+n 会溢出成负数.
+			// 本层未超限时 n <= maxpad 且 padded <= maxpad, 累计值不会溢出.
+			if n > maxpad {
+				return nil, makePadError(paths[1].part, 0)
+			}
 			if n > maxpad-padded {
-				if padded == 0 {
-					return nil, makePadError(paths[1].part, 0)
-				}
 				return nil, makeTotalPadError(paths[1].part, padded+n)
 			}
 			buf = appendRepeat(buf, "null,", n)
@@ -203,14 +206,18 @@ func atoui(r pathResult) (n int, ok bool) {
 	if r.force {
 		return 0, false
 	}
+	// 先确认全为数字: 上游对超过 8 字节的片段直接调用 ParseUint, "q_utm_source" 这类普通键名
+	// 每次都会生成一个错误对象 (2 次分配). 空片段沿用上游语义, 视为 0.
+	for i := 0; i < len(r.part); i++ {
+		if r.part[i] < '0' || r.part[i] > '9' {
+			return 0, false
+		}
+	}
 	if len(r.part) > 8 {
 		n, err := strconv.ParseUint(r.part, 10, 64)
 		return int(n), err == nil && n <= math.MaxInt
 	}
 	for i := 0; i < len(r.part); i++ {
-		if r.part[i] < '0' || r.part[i] > '9' {
-			return 0, false
-		}
 		n = n*10 + int(r.part[i]-'0')
 	}
 	return n, true
@@ -644,34 +651,37 @@ func set(jstr, path, raw string,
 }
 
 // setComplexPath 处理含 # 查询等复杂路径: 按 gjson 返回的 Index/Indexes 在原文中替换结果.
-// 本地修正: # 后接修饰符, !静态值, 子选择器或嵌套 # 时, gjson 给出的偏移并不指向原文,
-// 上游直接按偏移切片会 panic 或拼出非法 JSON. 此处先逐个校验偏移和内容, 不可定位时视为无变化.
+//
+// 本地修正: gjson 的偏移并不总指向原文. 管道 '|' 之后的 Indexes 相对的是子值, # 之后接静态值,
+// 修饰符或子选择器时 Indexes 等于父元素偏移. 上游直接按偏移切片, 会 panic, 拼出非法 JSON,
+// 或在内容恰好相同时改写别的字段 (如对 {"xy":1,"a":[{"b":1}]} 写 "a|#.b" 会改掉 "xy").
+// 因此:
+//   - 多结果 (Indexes) 只在 complexOffsetsTrusted 认定偏移可信时才写入;
+//   - 每个写入点都须通过 valueAt: 内容一致, 且处在 JSON 值的位置上, 不是数字前缀或键名;
+//   - 偏移 0 只对可信的 JSON Lines 路径 (以 ".." 开头) 放行, 其首行本就从 0 开始;
+//     其他路径的 0 表示 gjson 无法定位, 如静态值 "#.![1]" 的内容恰好等于整个文档 "[1]".
+//
+// 先校验全部写入点再修改, 任一不满足即视为无变化, 与路径不存在时一致, 不会返回改了一半的结果.
 func setComplexPath(jstr, path, raw string, stringify bool) ([]byte, error) {
 	res := gjson.Get(jstr, path)
-	if !res.Exists() || !(res.Index != 0 || len(res.Indexes) != 0) {
+	if !res.Exists() {
 		return []byte(jstr), errNoChange
 	}
-	if res.Index != 0 && !rawAt(jstr, res.Index, res.Raw) {
-		return []byte(jstr), errNoChange
+	lines := len(path) >= 2 && path[0] == '.' && path[1] == '.'
+	trusted := complexOffsetsTrusted(path)
+	zeroOK := lines && trusted
+	type val struct {
+		index int
+		raw   string
 	}
-	if res.Index != 0 {
-		njson := []byte(jstr[:res.Index])
-		if stringify {
-			njson = appendStringify(njson, raw)
-		} else {
-			njson = append(njson, raw...)
-		}
-		njson = append(njson, jstr[res.Index+len(res.Raw):]...)
-		jstr = string(njson)
-	}
+	var vals []val
 	if len(res.Indexes) > 0 {
-		type val struct {
-			index int
-			res   gjson.Result
+		if !trusted {
+			return []byte(jstr), errNoChange
 		}
-		vals := make([]val, 0, len(res.Indexes))
+		vals = make([]val, 0, len(res.Indexes))
 		res.ForEach(func(_, vres gjson.Result) bool {
-			vals = append(vals, val{res: vres})
+			vals = append(vals, val{raw: vres.Raw})
 			return true
 		})
 		if len(res.Indexes) != len(vals) {
@@ -683,33 +693,171 @@ func setComplexPath(jstr, path, raw string, stringify bool) ([]byte, error) {
 		sort.SliceStable(vals, func(i, j int) bool {
 			return vals[i].index > vals[j].index
 		})
-		// 降序替换前确认每个偏移都指向对应原文且区间互不重叠, 任一不满足则整体不修改.
-		for i, val := range vals {
-			if !rawAt(jstr, val.index, val.res.Raw) ||
-				(i > 0 && val.index+len(val.res.Raw) > vals[i-1].index) {
-				return []byte(jstr), errNoChange
-			}
+	} else {
+		// 单结果的 Index 由 gjson 按指针计算, 非 0 即为原文中的真实位置. 0 既可能是首行, 也可能是
+		// 无法定位的计算结果 (如无匹配时的 "[]" 恰好等于文档 "[]"), 只有 Raw 与原文共享起始内存时才是首行.
+		if res.Index == 0 && !(zeroOK && len(res.Raw) > 0 &&
+			unsafe.StringData(res.Raw) == unsafe.StringData(jstr)) {
+			return []byte(jstr), errNoChange
 		}
-		for _, val := range vals {
-			vres := val.res
-			index := val.index
-			njson := []byte(jstr[:index])
-			if stringify {
-				njson = appendStringify(njson, raw)
-			} else {
-				njson = append(njson, raw...)
-			}
-			njson = append(njson, jstr[index+len(vres.Raw):]...)
-			jstr = string(njson)
+		vals = []val{{index: res.Index, raw: res.Raw}}
+	}
+	// vals 已按偏移降序: 逐个确认是原文中的完整值且区间互不重叠, 再从后往前替换, 前面的偏移不受影响.
+	for i, v := range vals {
+		if !valueAt(jstr, v.index, v.raw, lines, zeroOK) ||
+			(i > 0 && v.index+len(v.raw) > vals[i-1].index) {
+			return []byte(jstr), errNoChange
 		}
+	}
+	for _, v := range vals {
+		njson := []byte(jstr[:v.index])
+		if stringify {
+			njson = appendStringify(njson, raw)
+		} else {
+			njson = append(njson, raw...)
+		}
+		njson = append(njson, jstr[v.index+len(v.raw):]...)
+		jstr = string(njson)
 	}
 	return []byte(jstr), nil
 }
 
-// rawAt 报告 jstr 在 index 处是否恰好是 raw; index 为 0 表示 gjson 无法定位, 视为不匹配.
-func rawAt(jstr string, index int, raw string) bool {
-	return index > 0 && len(raw) > 0 && index+len(raw) <= len(jstr) &&
-		jstr[index:index+len(raw)] == raw
+// complexOffsetsTrusted 报告复杂路径的多结果偏移 (Indexes) 能否用于定位原文. 以下情形不可信:
+//   - 任何未转义的 '|'. 管道之后的 Indexes 相对的是子值. 查询值里的 '|' 也拒绝: 对象上的 "#(" 不是查询,
+//     gjson 会按普通路径把其中的 '|' 当作管道, 这里不区分数组与对象;
+//   - 路径段开头的子选择器 '{'/'[', 静态值 '!' (判定同 gjson execStatic), 已注册修饰符 '@name'
+//     (未注册的 "@timestamp" 是普通键名). 其后的 Indexes 等于父元素偏移;
+//   - 两个及以上多结果来源: 段首 '#' 后接 '.' 或在结尾, 以及 "#(...)#". 嵌套多结果只记录外层元素偏移.
+//
+// 扫描时不跳过查询体: 查询体内的段首语法同样检查, 多结果来源同样计数, 对数组 (查询) 和对象 (普通键)
+// 两种解释都不会漏判. 代价是查询值里含 '|' 或嵌套 "#." 等写法会被拒绝. 反斜杠转义的字符按字面量处理.
+// 判断偏保守: 误判为不可信只会让本次写入视为无变化, 不会写错位置.
+func complexOffsetsTrusted(path string) bool {
+	producers := 0
+	for i := 0; i < len(path); i++ {
+		c := path[i]
+		if c == '\\' {
+			i++
+			continue
+		}
+		if c == '|' {
+			return false
+		}
+		if i > 0 && path[i-1] != '.' {
+			// 以下语法只在路径段开头生效, 段中间的 '!', '@', '#' 等是键名的一部分
+			continue
+		}
+		switch c {
+		case '{', '[':
+			return false
+		case '!':
+			if isStaticPath(path[i:]) {
+				return false
+			}
+		case '@':
+			name := path[i+1:]
+			for j := 0; j < len(name); j++ {
+				if name[j] == '.' || name[j] == ':' {
+					name = name[:j]
+					break
+				}
+			}
+			if gjson.ModifierExists(name, nil) {
+				return false
+			}
+		case '#':
+			switch {
+			case i+1 == len(path) || path[i+1] == '.':
+				producers++
+			case path[i+1] == '(' || path[i+1] == '[':
+				end := queryEnd(path, i)
+				if end < 0 {
+					return false
+				}
+				if end < len(path) && path[end] == '#' {
+					producers++
+				}
+			}
+		}
+	}
+	return producers <= 1
+}
+
+// queryEnd 返回 path[i:] 处查询 "#(...)" 或 "#[...]" 闭合括号之后的位置, 未闭合时返回 -1.
+// 规则同 gjson parseQuery: 两种括号都计层数, 引号内和反斜杠转义的字符不计.
+func queryEnd(path string, i int) int {
+	depth := 1
+	for j := i + 2; j < len(path); j++ {
+		switch path[j] {
+		case '\\':
+			j++
+		case '(', '[':
+			depth++
+		case ')', ']':
+			if depth--; depth == 0 {
+				return j + 1
+			}
+		case '"':
+			for j++; j < len(path); j++ {
+				if path[j] == '\\' {
+					j++
+				} else if path[j] == '"' {
+					break
+				}
+			}
+		}
+	}
+	return -1
+}
+
+// isStaticPath 报告以 '!' 开头的路径段是否被 gjson 当作静态值, 判定同 gjson execStatic:
+// '!' 后接 '{', '[', '"', '+', '-' 或数字, 或段名为 true/false/null/nan/inf (不区分大小写).
+// 其他如 "!x" 是普通键名, 偏移可信.
+func isStaticPath(seg string) bool {
+	name := seg[1:]
+	if len(name) > 0 {
+		switch c := name[0]; {
+		case c == '{', c == '[', c == '"', c == '+', c == '-', c >= '0' && c <= '9':
+			return true
+		}
+	}
+	for j := 0; j < len(name); j++ {
+		if name[j] == '.' || name[j] == '|' {
+			name = name[:j]
+			break
+		}
+	}
+	for _, w := range [...]string{"true", "false", "null", "nan", "inf"} {
+		if strings.EqualFold(name, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// valueAt 报告 jstr[index:index+len(raw)] 是否就是原文中的一个完整 JSON 值:
+// 内容与 raw 一致, 前一个非空白字节是 '[', ',', ':' 或文档开头, 后一个非空白字节是 ',', ']', '}'
+// 或文档结尾. 这排除了数字前缀 ("1" 落在 "12" 上), 键名位置和拼接处等内容碰巧相同的偏移.
+// lines 为 JSON Lines 路径时, 中间隔着换行的相邻行也算边界; zeroOK 为 false 时拒绝偏移 0.
+func valueAt(jstr string, index int, raw string, lines, zeroOK bool) bool {
+	if index < 0 || (index == 0 && !zeroOK) || len(raw) == 0 ||
+		index+len(raw) > len(jstr) || jstr[index:index+len(raw)] != raw {
+		return false
+	}
+	nl := false
+	i := index - 1
+	for ; i >= 0 && jstr[i] <= ' '; i-- {
+		nl = nl || jstr[i] == '\n'
+	}
+	if i >= 0 && jstr[i] != '[' && jstr[i] != ',' && jstr[i] != ':' && !(lines && nl) {
+		return false
+	}
+	nl = false
+	i = index + len(raw)
+	for ; i < len(jstr) && jstr[i] <= ' '; i++ {
+		nl = nl || jstr[i] == '\n'
+	}
+	return i == len(jstr) || jstr[i] == ',' || jstr[i] == ']' || jstr[i] == '}' || (lines && nl)
 }
 
 // SetOptions sets a json value for the specified path with options.

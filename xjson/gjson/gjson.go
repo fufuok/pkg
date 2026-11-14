@@ -39,9 +39,12 @@ var (
 
 	// stockModifiers 是内置修饰符表, 由 init 填充后只读, 读取无需加锁.
 	stockModifiers map[string]func(json, arg string) string
-	// userModifiers 保存 AddModifier 注册的自定义修饰符, 读写均由 userModifiersLock 保护.
-	userModifiers     map[string]func(json, arg string) string
-	userModifiersLock sync.RWMutex
+	// userModifiers 指向 AddModifier 注册的自定义修饰符表, nil 表示尚未注册. 写时复制: 查询无锁读取,
+	// 注册时复制整表后原子替换. 本地修正: 上游用 RWMutex, 多核并发查询 "@timestamp" 这类以 '@' 开头的
+	// 普通键时, 每次查表都对同一缓存行做读锁计数, 16 核下比 v1.4.2 慢约 3 倍.
+	userModifiers atomic.Pointer[map[string]func(json, arg string) string]
+	// userModifiersLock 只串行化 AddModifier 的复制与替换, 查询路径不使用.
+	userModifiersLock sync.Mutex
 )
 
 // Type is Result type
@@ -155,10 +158,7 @@ func (t Result) Int() int64 {
 	case String:
 		n, ok := parseInt(t.Str)
 		if !ok {
-			f, err := strconv.ParseFloat(t.Str, 64)
-			if err == nil {
-				n = f2i(f)
-			}
+			n = f2i(parseFloatFallback(t.Str))
 		}
 		return n
 	case Number:
@@ -175,6 +175,75 @@ func (t Result) Int() int64 {
 		// fallback to a standard conversion
 		return f2i(t.Num)
 	}
+}
+
+// parseFloatFallback 供字符串类型的 Int()/Uint() 在整数解析失败后回退使用, 无法解析时返回 0.
+// 本地修正两点 (上游 v1.20.x 直接调用 ParseFloat 且只接受 err == nil):
+//   - 先用 mayParseFloat 排除不可能解析成功的串. ParseFloat 失败时返回的错误对象会复制整个输入,
+//     "", "N/A", "null" 这类常见非数值字段每次都会产生分配, 长文本字段按长度复制.
+//   - 超出 float64 范围时 ParseFloat 返回 ±Inf 和 ErrRange, 这里接受 ±Inf 交给 f2i/f2u 饱和,
+//     使字符串 "1e400" 与 Number 类型的 1e400 结果一致, 而不是得到 0.
+func parseFloatFallback(s string) float64 {
+	if !mayParseFloat(s) {
+		return 0
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		if ne, ok := err.(*strconv.NumError); !ok || ne.Err != strconv.ErrRange {
+			return 0
+		}
+	}
+	return f
+}
+
+// mayParseFloat 报告 s 是否可能被 strconv.ParseFloat 接受, 只做廉价的形状判断, 宁可放过不可误拒.
+// 下列每条都是 ParseFloat 接受的必要条件, 不满足即可断定解析失败:
+//   - 可选的 '+'/'-' 之后, 整体为不区分大小写的 inf/infinity/nan, 或以数字/'.' 开头;
+//   - 十进制只含数字, '_', 至多一个 '.', 以及 e/E; 0x 前缀的十六进制另可含 a-f 和 p/P;
+//   - 符号只出现在开头或紧跟指数标记 e/E/p/P 之后.
+//
+// 日期 "2026-11-14", 时间戳, IP "10.1.2.3", 版本号, UUID 等以数字开头的常见字段都在这里被排除.
+// 放过但实际解析失败的串 (如 "1e") 只损失性能, 结果仍为 0.
+func mayParseFloat(s string) bool {
+	if len(s) > 0 && (s[0] == '+' || s[0] == '-') {
+		s = s[1:]
+	}
+	if len(s) == 0 {
+		return false
+	}
+	switch c := s[0]; {
+	case c == 'i', c == 'I':
+		return strings.EqualFold(s, "inf") || strings.EqualFold(s, "infinity")
+	case c == 'n', c == 'N':
+		return strings.EqualFold(s, "nan")
+	case (c < '0' || c > '9') && c != '.':
+		return false
+	}
+	hex := len(s) > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')
+	i, dot := 0, false
+	if hex {
+		i = 2
+	}
+	for ; i < len(s); i++ {
+		switch c := s[i]; {
+		case c >= '0' && c <= '9', c == '_':
+		case c == '.':
+			if dot {
+				return false
+			}
+			dot = true
+		case c == '+', c == '-':
+			// s[0] 是数字或 '.', 此处 i >= 1.
+			if p := s[i-1]; p != 'e' && p != 'E' && p != 'p' && p != 'P' {
+				return false
+			}
+		case hex && (c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F' || c == 'p' || c == 'P'):
+		case !hex && (c == 'e' || c == 'E'):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // f2u 将 float64 饱和转换为 uint64: 超上限取最大值, 负数取 0.
@@ -217,10 +286,7 @@ func (t Result) Uint() uint64 {
 	case String:
 		n, ok := parseUint(t.Str)
 		if !ok {
-			f, err := strconv.ParseFloat(t.Str, 64)
-			if err == nil {
-				n = f2u(f)
-			}
+			n = f2u(parseFloatFallback(t.Str))
 		}
 		return n
 	case Number:
@@ -1582,7 +1648,8 @@ func parseArray(c *parseContext, i int, path string) (int, bool) {
 	rp := parseArrayPath(path)
 	if !rp.arrch {
 		n, ok := parseUint(rp.part)
-		if !ok {
+		// 超出 int 的下标不可能命中. 本地修正: 32 位平台上 int(n) 会截断, 如 4294967296 变成 0 而命中首个元素.
+		if !ok || n > math.MaxInt {
 			partidx = -1
 		} else {
 			partidx = int(n)
@@ -1637,6 +1704,12 @@ func parseArray(c *parseContext, i int, path string) (int, bool) {
 					queryIndexes = append(queryIndexes, res.Index+parentIndex)
 				}
 			} else {
+				// 本地修正: res 由 qval.Get 得到, 其 Indexes 相对 qval 而非 c.json. 上游只在 query.all 分支
+				// 加上 parentIndex, 单匹配后再取多结果 (如 "a.#(b==1).c.#.d") 时 Indexes 指向错误位置,
+				// Paths 随之出错, sjson 据此写入会改到别的元素. 单结果 Index 由末尾的 fillIndex 按指针重算, 无需处理.
+				for j := range res.Indexes {
+					res.Indexes[j] += parentIndex
+				}
 				c.value = res
 				return true
 			}
@@ -3041,32 +3114,40 @@ func init() {
 		"group":   modGroup,
 		"dig":     modDig,
 	}
-	userModifiers = map[string]func(json, arg string) string{}
 }
 
 // AddModifier binds a custom modifier command to the GJSON syntax.
 // Provide the name of the modifier without the '@' prefix.
 // 内置修饰符 (如 pretty/this/valid) 不可覆盖, 同名注册会被忽略.
 // 可与查询并发调用; 同名自定义修饰符以最后一次注册为准.
+// 每次注册都复制整张自定义表 (写时复制), 适合启动期或低频注册, 不宜在热路径反复调用.
 func AddModifier(name string, fn func(json, arg string) string) {
 	if stockModifiers[name] != nil {
-		// 内置表无锁只读, 不允许覆盖, 否则每次查询都需要加锁.
+		// 内置表无锁只读, 不允许覆盖, 否则每次查询都需要额外同步.
 		return
 	}
 	userModifiersLock.Lock()
-	userModifiers[name] = fn
-	userModifiersLock.Unlock()
+	defer userModifiersLock.Unlock()
+	// 已发布的表可能正被查询读取, 不能原地修改, 复制后整体替换.
+	m := make(map[string]func(json, arg string) string)
+	if old := userModifiers.Load(); old != nil {
+		for k, v := range *old {
+			m[k] = v
+		}
+	}
+	m[name] = fn
+	userModifiers.Store(&m)
 }
 
-// getUserModifier 在读锁下查找自定义修饰符, 不存在时返回 nil.
-// 标记 noinline 是为了让调用方 getModifier 保持可内联, 内置修饰符查找不经过锁.
+// getUserModifier 无锁查找自定义修饰符, 未注册任何自定义修饰符或不存在时返回 nil.
+// 标记 noinline 是为了让调用方 getModifier 保持可内联, 内置修饰符命中时不产生额外调用.
 //
 //go:noinline
 func getUserModifier(name string) func(json, arg string) string {
-	userModifiersLock.RLock()
-	fn := userModifiers[name]
-	userModifiersLock.RUnlock()
-	return fn
+	if m := userModifiers.Load(); m != nil {
+		return (*m)[name]
+	}
+	return nil
 }
 
 // getModifier 先查无锁的内置表, 未命中再查自定义表; 均不存在时返回 nil.

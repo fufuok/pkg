@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -2965,6 +2966,60 @@ func TestIntOverflowWrapMiss(t *testing.T) {
 	assert(t, Get(`[1,2,3]`, "2").Int() == 3)
 }
 
+// TestIssue404 迁移自上游 v1.20.3, 本地 parseUint 同样通过; 本仓库 math/rand 为 v1, 改用 Uint64.
+func TestIssue404(t *testing.T) {
+	assert(t, Parse("18446744073709551616").Uint() == 18446744073709551615)
+	assert(t, Parse("92233720368547758070").Uint() == 18446744073709551615)
+	assert(t, Parse("25000000000000000000").Uint() == 18446744073709551615)
+	assert(t, Parse("24134132286002593217").Int() == 9223372036854775807)
+	assert(t, Parse("-24134132286002593217").Int() == -9223372036854775808)
+	// test random numbers between 19-22 digits
+	for range 1000 {
+		n := (rand.Int() % 4) + 19
+		var s string
+		for len(s) < n {
+			s += fmt.Sprintf("%d", rand.Uint64())
+		}
+		s = s[:n]
+		s2 := fmt.Sprintf("%022s", s)
+		x := Parse(s).Uint()
+		s3 := fmt.Sprintf("%022s", fmt.Sprintf("%d", x))
+		if s2 > "0018446744073709551615" {
+			assert(t, s3 == "0018446744073709551615")
+		} else {
+			assert(t, s2 == s3)
+		}
+	}
+}
+
+// TestParseUintNotLexical 防止同步上游 v1.20.3 的 parseUint: 它对 20 字节输入按字典序与
+// "18446744073709551615" 比较且不校验数字, 时间戳等普通字符串的 Int()/Uint() 会得到类型最大值.
+func TestParseUintNotLexical(t *testing.T) {
+	for _, c := range []struct {
+		s    string
+		i    int64
+		u    uint64
+		isOK bool
+	}{
+		{"2026-11-14T08:00:00Z", 0, 0, false},
+		{"hello world 12345678", 0, 0, false},
+		{"2.000000000000000000", 2, 2, false},
+		{"9999999999999999999x", 0, 0, false},
+		{"00000000000000000001", 1, 1, true},
+		{"18446744073709551615", math.MaxInt64, math.MaxUint64, true},
+		{"18446744073709551616", math.MaxInt64, math.MaxUint64, true},
+	} {
+		u, ok := parseUint(c.s)
+		assert(t, ok == c.isOK)
+		if ok {
+			assert(t, u == c.u)
+		}
+		r := Parse(`"` + c.s + `"`)
+		assert(t, r.Int() == c.i)
+		assert(t, r.Uint() == c.u)
+	}
+}
+
 // TestIntStringFallback 覆盖上游 v1.19.1 字符串数值的浮点回退, 及本地 NaN 归零保护.
 func TestIntStringFallback(t *testing.T) {
 	assert(t, Parse(`"1.9"`).Int() == 1)
@@ -3063,4 +3118,148 @@ func TestValidNestingDepth(t *testing.T) {
 	assert(t, !ValidBytes([]byte(obj)))
 	// 上游实现在约 600 万层时耗尽 1GB 栈导致进程退出.
 	assert(t, !Valid(strings.Repeat("[", 6_000_000)))
+}
+
+// TestUserModifierCopyOnWrite 覆盖本地修正: 自定义修饰符表写时复制, 注册新修饰符不丢失已有的.
+func TestUserModifierCopyOnWrite(t *testing.T) {
+	AddModifier("cowA", func(string, string) string { return `"A"` })
+	AddModifier("cowB", func(string, string) string { return `"B"` })
+	assert(t, Get(`{}`, "@cowA").Str == "A")
+	assert(t, Get(`{}`, "@cowB").Str == "B")
+	AddModifier("cowA", func(string, string) string { return `"A2"` })
+	assert(t, Get(`{}`, "@cowA").Str == "A2")
+	assert(t, Get(`{}`, "@cowB").Str == "B")
+	// 未注册的 '@' 开头路径按普通键查找.
+	assert(t, Get(`{"@timestamp":"t"}`, "@timestamp").Str == "t")
+	assert(t, getUserModifier("timestamp") == nil)
+}
+
+// BenchmarkAtKeyParallel: 以 '@' 开头的普通键每次都会查修饰符表; 上游 RWMutex 在多核下争用,
+// 写时复制后与 v1.4.2 的无锁查表持平.
+func BenchmarkAtKeyParallel(b *testing.B) {
+	json := `{"@timestamp":"2026-11-14T08:00:00Z","brand":"xy"}`
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = Get(json, "@timestamp")
+		}
+	})
+}
+
+// TestIntStringNoAlloc 覆盖本地修正: 非数值字符串的 Int()/Uint() 不调用 ParseFloat, 不分配.
+func TestIntStringNoAlloc(t *testing.T) {
+	for _, s := range []string{`""`, `"N/A"`, `"null"`, `"abc"`, `"-"`, `"+"`, `"inf1"`, `"2026-11-14T08:00:00Z"`, `"2026-11-14"`, `"10.1.2.3"`, `"5.6.7.8"`, `"` + strings.Repeat("x", 4096) + `"`} {
+		r := Parse(s)
+		assert(t, r.Int() == 0 && r.Uint() == 0)
+		if n := testing.AllocsPerRun(100, func() { _, _ = r.Int(), r.Uint() }); n != 0 {
+			t.Fatalf("Int/Uint(%.10s) allocs = %v", s, n)
+		}
+	}
+}
+
+// TestIntStringRange 覆盖本地修正: 超出 float64 范围的数值字符串与 Number 类型同样饱和, 不再得 0.
+func TestIntStringRange(t *testing.T) {
+	assert(t, Parse(`"1e400"`).Int() == math.MaxInt64)
+	assert(t, Parse(`"-1e400"`).Int() == math.MinInt64)
+	assert(t, Parse(`"1e400"`).Uint() == math.MaxUint64)
+	assert(t, Parse(`"-1e400"`).Uint() == 0)
+	assert(t, Parse(`1e400`).Int() == math.MaxInt64)
+	assert(t, Parse(`"1e-400"`).Int() == 0)
+	// ParseFloat 可接受的其他写法 (与上游一致).
+	assert(t, Parse(`"Inf"`).Int() == math.MaxInt64)
+	assert(t, Parse(`"+1"`).Int() == 1)
+	assert(t, Parse(`"5."`).Int() == 5)
+	assert(t, Parse(`"0x1p4"`).Int() == 16)
+	assert(t, Parse(`"nan"`).Int() == 0)
+}
+
+// TestMayParseFloat: 凡是 ParseFloat 能解析 (含 ErrRange) 的串, mayParseFloat 都必须放行.
+// 随机串覆盖误拒, 结构化生成的合法字面量 (十进制, 指数, 十六进制, 下划线, 符号) 覆盖各分支.
+func TestMayParseFloat(t *testing.T) {
+	alpha := []byte("0123456789+-.eExXpP_aAbBcCdDfFiInNtTyY \x00")
+	words := []string{
+		"inf", "Inf", "INFINITY", "infinity", "nan", "NaN", "-inf", "+Infinity", "+nan", "-nan", "infin",
+		"0x1p4", "0X1P-4", "0x_1p4", "0x1.8p+1", "0xAbC.dEfp-3", "1_000", "1_000.5e1_0", "+.5", "-5.", "1E+5",
+	}
+	r := rand.New(rand.NewSource(1))
+	var accepted int
+	check := func(s string) {
+		_, err := strconv.ParseFloat(s, 64)
+		if err != nil && !errors.Is(err, strconv.ErrRange) {
+			return
+		}
+		accepted++
+		if !mayParseFloat(s) {
+			t.Fatalf("mayParseFloat(%q) = false, ParseFloat accepts it", s)
+		}
+	}
+	for _, w := range words {
+		check(w)
+	}
+	for range 3_000_000 {
+		b := make([]byte, 1+r.Intn(10))
+		for i := range b {
+			b[i] = alpha[r.Intn(len(alpha))]
+		}
+		check(string(b))
+	}
+	fmts := []byte("eEfgGxX")
+	for range 300_000 {
+		f := math.Float64frombits(r.Uint64())
+		if r.Intn(2) == 0 {
+			f = r.NormFloat64() * math.Pow(10, float64(r.Intn(40)-20))
+		}
+		s := strconv.FormatFloat(f, fmts[r.Intn(len(fmts))], r.Intn(20)-1, 64)
+		if r.Intn(4) == 0 && s[0] != '-' {
+			s = "+" + s
+		}
+		// 在两个相邻数字之间插入下划线, 只有 ParseFloat 接受时才计入.
+		if j := r.Intn(len(s)); r.Intn(3) == 0 && j > 0 && s[j-1] >= '0' && s[j-1] <= '9' && s[j] >= '0' && s[j] <= '9' {
+			s = s[:j] + "_" + s[j:]
+		}
+		check(s)
+	}
+	if accepted < 300_000 {
+		t.Fatalf("too few accepted samples: %d", accepted)
+	}
+	// 以数字开头的常见非数值字段必须在过滤阶段排除, 否则 ParseFloat 失败时会分配.
+	for _, s := range []string{
+		"2026-11-14T08:00:00Z", "2026-11-14", "10.1.2.3", "5.6.7.8", "550e8400-e29b-41d4-a716-446655440000",
+		"1a2b3c", "12:30", "100%", "1,000", "3.14abc", "0x", "0x-1", ".-1",
+	} {
+		if mayParseFloat(s) {
+			t.Fatalf("mayParseFloat(%q) = true, want false", s)
+		}
+	}
+}
+
+// TestHugeIndexNoWrap 覆盖本地修正: 超出 int 的数组下标不命中. 32 位平台需用 GOARCH=386 运行才能复现旧问题.
+func TestHugeIndexNoWrap(t *testing.T) {
+	for _, idx := range []string{"4294967296", "4294967297", "9223372036854775808", "18446744073709551615"} {
+		assert(t, !Get(`[10,20,30]`, idx).Exists())
+	}
+	assert(t, Get(`[10,20,30]`, "1").Int() == 20)
+}
+
+// TestQueryFirstMatchIndexes 覆盖本地修正: 单匹配查询后再取多结果时, Indexes 须加上匹配元素的偏移.
+// 上游返回相对匹配元素的偏移, Paths 得到 [a.3] 这类错误路径, sjson 据此会写到别的元素.
+func TestQueryFirstMatchIndexes(t *testing.T) {
+	for _, c := range []struct{ json, path, paths string }{
+		{`{"a":[1,1,1,1,1,1,1,{"b":1,"c":[1]}]}`, "a.#(b==1).c.#(==1)#", "[a.7.c.0]"},
+		{`{"a":[{"b":1,"c":[{"d":5}]},{"b":2,"c":[{"d":6},{"d":7}]}]}`, "a.#(b==2).c.#.d", "[a.1.c.0.d a.1.c.1.d]"},
+	} {
+		r := Get(c.json, c.path)
+		assert(t, fmt.Sprint(r.Paths(c.json)) == c.paths)
+		i := 0
+		r.ForEach(func(_, v Result) bool {
+			idx := r.Indexes[i]
+			assert(t, c.json[idx:idx+len(v.Raw)] == v.Raw)
+			i++
+			return true
+		})
+		assert(t, i == len(r.Indexes))
+	}
+	// JSON Lines: 第 2 行匹配后取多结果, 偏移落在第 2 行内.
+	lines := "{\"id\":1,\"t\":[{\"v\":\"x\"}]}\n{\"id\":3,\"t\":[{\"v\":\"x\"}]}"
+	r := Get(lines, "..#(id==3).t.#.v")
+	assert(t, len(r.Indexes) == 1 && r.Indexes[0] > strings.IndexByte(lines, '\n'))
 }
