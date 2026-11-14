@@ -6,7 +6,7 @@
 
 | 子包 | 上游 | 已同步版本 | 本地差异 |
 | --- | --- | --- | --- |
-| `gjson` | [tidwall/gjson](https://github.com/tidwall/gjson) | v1.20.3 | 溢出 (不采纳 v1.20.3 的 `parseUint`)、NaN、Valid 深度、32 位下标截断四处修正, 修饰符表写时复制与 `Int()` 字符串回退免分配两处性能修正, 非法 UTF-8 输出保持历史写法, 见 [gjson/README.md](gjson/README.md) |
+| `gjson` | [tidwall/gjson](https://github.com/tidwall/gjson) | v1.20.3 | 溢出 (不采纳 v1.20.3 的 `parseUint`)、NaN、Valid 深度、32 位下标截断四处修正, 修饰符表写时复制与 `Int()` 字符串回退免分配两处性能修正, 非法 UTF-8 输出保持历史写法, 本地扩展 `GetManyKeys`, 见 [gjson/README.md](gjson/README.md) |
 | `sjson` | [tidwall/sjson](https://github.com/tidwall/sjson) | v1.2.9 | 补齐总预算、复杂路径偏移校验、转义引号键删除、原地替换转义四处修正, `atoui` 免分配一处性能修正, 见 [sjson/README.md](sjson/README.md) |
 | `pretty` | [tidwall/pretty](https://github.com/tidwall/pretty) | v1.3.0 | 单行试排超宽即中止 (性能修正, 输出不变), 见 [pretty/README.md](pretty/README.md) |
 | `match` | [tidwall/match](https://github.com/tidwall/match) | v1.2.0 | 仅中文注释和声明位置 |
