@@ -642,54 +642,87 @@ func TestPadTotalBudget(t *testing.T) {
 	}
 }
 
-// TestComplexPathMisplaced 覆盖本地修正: gjson 偏移不指向原文而内容碰巧相同时, 不得写到别处.
+// TestComplexPathMisplaced 覆盖本地修正: 只写 gjson 结果在原文中的真实位置, 无法定位时不写, 内容碰巧相同也不得写到别处.
 func TestComplexPathMisplaced(t *testing.T) {
-	// 均应原样返回且无错误: 管道后的 Indexes 相对子值, # 后接静态值时偏移指向父元素,
-	// 数字前缀 ("1" 落在 "11111" 上), 以及静态值内容等于整个文档 (偏移 0).
+	// 均应原样返回且无错误: gjson 无法按内存同源定位的结果 (静态值, 子选择器, 修饰符拼出的新值, 嵌套多结果,
+	// 作用在计算值上的管道), 数字前缀 ("1" 落在 "11111" 上), 以及落在字符串字面量内部的偏移.
 	for _, c := range [][2]string{
-		{`{"xy":1,"a":[{"b":1}]}`, "a|#.b"},
-		{`{"x":11111,"a":[{"b":1}]}`, "a|#.b"},
 		{`[12,13]`, "#(>10)#.!1"},
 		{`[1]`, "#.![1]"},
 		{`[{"a":1}]`, "#.{a}"},
 		{`[[1]]`, "#.[0]"},
-		{`[1,2]`, "#.@this"},
 		{`{"a":[{"b":1}]}`, `a.#(b=="|").b`},
 		// 无匹配时 gjson 返回计算出的 "[]", 偏移 0 且内容恰好等于整个文档.
 		{`[]`, "..#(a==1)#"},
 		{`[]`, "#(a==1)#"},
 		{"[]\n[]", "..#(a==1)#"},
-		// 嵌套多结果只记录外层元素偏移, 会把整个外层元素替换掉.
+		// 嵌套多结果: 内层是新拼出的数组, 不给 Indexes (上游只记录外层元素偏移, 会把整个外层元素替换掉).
 		{`{"m":[[],[]]}`, "m.#.#(x==1)#"},
 		{`[[1,2]]`, "#(#>0)#.#(>0)#"},
 		{`[1,2]`, "..#.#(>0)#"},
 		{`{"a":[{"b":[{"c":1}]}]}`, "a.#.b.#.c"},
-		// 查询体与 gjson 解析不一致的构造路径: 转义的 "#(", 段中的 "#(", "]" 闭合, 对象上的 "#(" 不是查询.
-		{`{"xy":1,"#(":[{"b":1}]}`, `\#(|#.b`},
-		{`{"xy":1,"a#(":[{"b":1}]}`, "a#(|#.b"},
+		// 管道作用在多结果拼出的临时数组上: gjson 在 "#." 和查询之后用 splitPossiblePipe 切管道,
+		// 它不保护开头的 "#(" 且括号只按同类计数, 查询体里的 '|' 会被切开.
 		{`{"xy":1,"a":[[{"b":1}]]}`, "a.#(#>0]#|0|#.b"},
-		{`{"xyzwv":1,"a":{"#(b==\"":[{"c\")":1}]}}`, `a.#(b=="|#.c")`},
-		// 查询值含 '|' 时无法区分查询与管道, 保守拒绝.
-		{`{"a":[{"b":"x|y"},{"b":"z"}]}`, `a.#(b=="x|y")#.b`},
+		{`[{"":0,"v":1},[{"":0,"v":1}]]`, `#.#(b|#(v)#)`},
+		{`[{"":0,"v":1},[{"":0,"v":1}]]`, `#(0)#.#(b=="|#(v)#")`},
+		{`[5,[5,7]]`, `#.#(x|#(>0)#)`},
+		{`[5,{"k":[5,7]}]`, `#.k.#(x[)|#(>0)#)`},
+		// 偏移落在字符串内部: 字符串元素被继续当作 JSON 取值, 或顶层 Get 跳到字符串里的 '['.
+		{`[ 1,"[1]"]`, `#.0`},
+		{`{"a":["[1]"]}`, `a.#(=="[1]").0`},
+		{`"[1,2]"`, `#(==1)`},
 	} {
 		if got, err := Set(c[0], c[1], 9); got != c[0] || err != nil {
 			t.Fatalf("Set(%s, %q) = (%s, %v), want unchanged", c[0], c[1], got, err)
 		}
 	}
-	// 按 DataRouter query2JSON 的方式逐个写入外部查询键, 后一个键不得改写前一个键的值.
+	// 路径切片自文档本身时, 静态值取自路径内存, 不得被当作原文中的值.
+	doc := `{"k":"#.!1","a":[5]}`
+	if got, err := Set(doc, doc[6:10], 9); got != doc || err != nil {
+		t.Fatalf("path sliced from doc = (%s, %v)", got, err)
+	}
+	// 按 DataRouter query2JSON 的方式逐个写入外部查询键: 只改写路径真正指向的值, 不波及其他键.
 	var body []byte
 	for _, kv := range [][2]string{{"xy", "1"}, {"a.0.b", "1"}, {"a|#.b", "hacked"}, {"0", "1"}, {`#.!["1"]`, "x"}} {
 		body, _ = SetBytes(body, kv[0], kv[1])
 	}
-	if string(body) != `{"xy":"1","a":[{"b":"1"}],"0":"1"}` {
+	if string(body) != `{"xy":"1","a":[{"b":"hacked"}],"0":"1"}` {
 		t.Fatalf("query2JSON style = %s", body)
 	}
 	// 偏移可信的路径照常写入; 段中间的 '@'/'!' 及未注册修饰符名是普通键名.
 	for _, c := range [][3]string{
 		{`{"a":[{"b":1},{"b":2}]}`, "a.#.b", `{"a":[{"b":9},{"b":9}]}`},
+		// 上游偏移错位, 本地 gjson 按内存同源换算回原文后可正确写入: 管道右侧, 恒等修饰符, 对象上的 "#("
+		// (按普通键解析, 查询体中的 '|' 是管道), 转义的 "\." 之后, 查询之后的 "\|" (parseArrayPath 不处理转义).
+		{`{"xy":1,"a":[{"b":1}]}`, "a|#.b", `{"xy":1,"a":[{"b":9}]}`},
+		{`{"x":11111,"a":[{"b":1}]}`, "a|#.b", `{"x":11111,"a":[{"b":9}]}`},
+		{`[1,2]`, "#.@this", `[9,9]`},
+		{`{"xy":1,"#(":[{"b":1}]}`, `\#(|#.b`, `{"xy":1,"#(":[{"b":9}]}`},
+		{`{"xy":1,"a#(":[{"b":1}]}`, "a#(|#.b", `{"xy":1,"a#(":[{"b":9}]}`},
+		{`{"xyzwv":1,"a":{"#(b==\"":[{"c\")":1}]}}`, `a.#(b=="|#.c")`, `{"xyzwv":1,"a":{"#(b==\"":[{"c\")":9}]}}`},
+		{`{"xyzwv":1,"a":{"\u0023(b==\"":[{"c\")":1}]}}`, `a.#(b=="|#.c")`, `{"xyzwv":1,"a":{"\u0023(b==\"":[{"c\")":9}]}}`},
+		{`{"xyzwv":1,"a.#(b==\"":[{"c\")":1}]}`, `a\.#(b=="|#.c")`, `{"xyzwv":1,"a.#(b==\"":[{"c\")":9}]}`},
+		{`{"c":"#(x","a":[{"b":"x|y"},{"b":"z"}]}`, `a.#(b=="x|y")#.b`, `{"c":"#(x","a":[{"b":9},{"b":"z"}]}`},
+		{`[{"b":1},1,[{"b":1}]]`, `#(#>0)\|#.b`, `[{"b":1},1,[{"b":9}]]`},
 		{`{"a":[{"b":1},{"b":2}]}`, "a.#(b==2).b", `{"a":[{"b":1},{"b":9}]}`},
 		{`{"a":[{"b":1},{"b":2}]}`, `a.#(b>1)#.b`, `{"a":[{"b":1},{"b":9}]}`},
 		{`{"a":[{"b":"x"},{"b":"z"}]}`, `a.#(b=="x")#.b`, `{"a":[{"b":9},{"b":"z"}]}`},
+		// 文档不可能含 "#("/"#[" 开头的键时 ("#fff" 这类字符串不影响), 查询值里的 '|', "#.", ".!1", ".[x]",
+		// 修饰符名等只参与匹配, 与 v1.4.2 一致.
+		{`{"a":[{"b":"x|y"},{"b":"z"}]}`, `a.#(b=="x|y")#.b`, `{"a":[{"b":9},{"b":"z"}]}`},
+		{`{"c":"#fff","a":[{"b":"x|y"},{"b":"z"}]}`, `a.#(b=="x|y")#.b`, `{"c":"#fff","a":[{"b":9},{"b":"z"}]}`},
+		{`[{"s":"a|b","v":1}]`, `#(s=="a|b")#.v`, `[{"s":"a|b","v":9}]`},
+		{`[{"s":"a|b","v":1}]`, `#[s=="a|b"]#.v`, `[{"s":"a|b","v":9}]`},
+		{`[{"s":"x.#.y","v":1},{"s":"z","v":1}]`, `#(s=="x.#.y")#.v`, `[{"s":"x.#.y","v":9},{"s":"z","v":1}]`},
+		{`[{"s":"x.!1","v":1}]`, `#(s=="x.!1")#.v`, `[{"s":"x.!1","v":9}]`},
+		{`[{"s":"x.[y","v":1}]`, `#(s=="x.[y")#.v`, `[{"s":"x.[y","v":9}]`},
+		{`[{"s":"x.@this","v":1}]`, `#(s=="x.@this")#.v`, `[{"s":"x.@this","v":9}]`},
+		{`[{"s":"a|b","v":1}]`, `#(s%"a|*")#.v`, `[{"s":"a|b","v":9}]`},
+		{`{"x":[{"s":"a|b","v":[1,2]}]}`, `x.#(s=="a|b").v.#(>1)#`, `{"x":[{"s":"a|b","v":[1,9]}]}`},
+		// 剩余路径中前面带 '.' 的查询体受 splitPossiblePipe 保护, 其中的 '|' 照常写入.
+		{`[{"k":[{"s":"x|y","v":1}]},{"k":[{"s":"z","v":1}]}]`, `#.k.#(s=="x|y").v`, `[{"k":[{"s":"x|y","v":9}]},{"k":[{"s":"z","v":1}]}]`},
+		{`{"a":[{"b":1,"c":[{"s":"x|y","v":1}]}]}`, `a.#(b==1).c.#(s=="x|y")#.v`, `{"a":[{"b":1,"c":[{"s":"x|y","v":9}]}]}`},
 		{`{"a":[{"n":["fb"],"f":1},{"n":["x"],"f":2}]}`, `a.#(n.#(=="fb"))#.f`, `{"a":[{"n":["fb"],"f":9},{"n":["x"],"f":2}]}`},
 		{`{"a":[{"@ts":1},{"@ts":2}]}`, "a.#.@ts", `{"a":[{"@ts":9},{"@ts":9}]}`},
 		{`[{"!x":1},{"!x":2}]`, "#.!x", `[{"!x":9},{"!x":9}]`},
@@ -710,6 +743,78 @@ func TestComplexPathMisplaced(t *testing.T) {
 	} {
 		if got, err := Set(c[0], c[1], 9); got != c[2] || err != nil {
 			t.Fatalf("Set(%s, %q) = (%s, %v), want %s", c[0], c[1], got, err, c[2])
+		}
+	}
+}
+
+// TestComplexPathQueryLiteral 覆盖兼容回归: 查询值里的语法字符 ('|', '.', '#', '!', '[', '@' 等) 只参与匹配,
+// v1.4.2 能写入的多结果查询不得静默不写. 枚举字母表上长度 1~4 的全部查询值 (22620 个), 均须正确写入.
+func TestComplexPathQueryLiteral(t *testing.T) {
+	alphabet := []byte("ab|.#![]@():")
+	total := 0
+	for n := 1; n <= 4; n++ {
+		count := 1
+		for i := 0; i < n; i++ {
+			count *= len(alphabet)
+		}
+		for k := 0; k < count; k++ {
+			val := make([]byte, n)
+			for i, x := 0, k; i < n; i, x = i+1, x/len(alphabet) {
+				val[i] = alphabet[x%len(alphabet)]
+			}
+			doc := `[{"s":"` + string(val) + `","v":1},{"s":"-","v":1}]`
+			want := `[{"s":"` + string(val) + `","v":9},{"s":"-","v":1}]`
+			path := `#(s=="` + string(val) + `")#.v`
+			if got, err := Set(doc, path, 9); err != nil || got != want {
+				t.Fatalf("Set(%s, %q) = (%s, %v), want %s", doc, path, got, err, want)
+			}
+			total++
+		}
+	}
+	if total != 22620 {
+		t.Fatalf("total=%d", total)
+	}
+}
+
+// TestComplexPathStringValue 覆盖复杂路径一次构建结果: 多个写入点写入需要转义的字符串, 单结果和 JSON Lines 首行.
+func TestComplexPathStringValue(t *testing.T) {
+	for _, c := range [][4]string{
+		{`{"a":[{"b":1},{"b":22},{"b":333}]}`, "a.#.b", "中\"文", `{"a":[{"b":"中\"文"},{"b":"中\"文"},{"b":"中\"文"}]}`},
+		{`{"a":[{"b":1},{"b":22}]}`, "a.#(b==22).b", "x", `{"a":[{"b":1},{"b":"x"}]}`},
+		{"{\"a\":1}\n{\"a\":2}", "..#.a", "", "{\"a\":\"\"}\n{\"a\":\"\"}"},
+		{"{\"a\":1}\n{\"a\":2}", "..#(a==1)", "y", "\"y\"\n{\"a\":2}"},
+	} {
+		if got, err := Set(c[0], c[1], c[2]); got != c[3] || err != nil {
+			t.Fatalf("Set(%s, %q, %q) = (%s, %v), want %s", c[0], c[1], c[2], got, err, c[3])
+		}
+	}
+}
+
+// TestOptimisticInPlaceAliasedValue 覆盖本地修正: 原地替换时值与输入共享内存 (取自原值或其他字段的子切片),
+// 不得因先写引号覆盖值的首字节而输出非法 JSON.
+func TestOptimisticInPlaceAliasedValue(t *testing.T) {
+	opts := &Options{Optimistic: true, ReplaceInPlace: true}
+	for _, c := range []struct {
+		json     string
+		from, to int
+		want     string
+	}{
+		// 值是原值的前缀: 上游输出 {"a":""23","b":1}.
+		{`{"a":12345,"b":1}`, 5, 8, `{"a":"123","b":1}`},
+		// 值跨越原值起始位置: 取自原值前的空白和原值.
+		{`{"a": 12345,"b":1}`, 5, 8, `{"a": " 12","b":1}`},
+		// 值位于原值之后待移动的尾部.
+		{`{"a":1234567,"b":"xy"}`, 18, 20, `{"a":"xy","b":"xy"}`},
+		// 值在原值内部偏后.
+		{`{"a":"abcdefg","b":1}`, 8, 11, `{"a":"cde","b":1}`},
+	} {
+		in := []byte(c.json)
+		got, err := SetBytesOptions(in, "a", in[c.from:c.to], opts)
+		if err != nil || string(got) != c.want || !gjson.ValidBytes(got) {
+			t.Fatalf("SetBytesOptions(%s, %q) = (%s, %v), want %s", c.json, c.json[c.from:c.to], got, err, c.want)
+		}
+		if &got[0] != &in[0] {
+			t.Fatalf("SetBytesOptions(%s) not in place", c.json)
 		}
 	}
 }
@@ -738,5 +843,137 @@ func TestAtouiNoAlloc(t *testing.T) {
 		if ok != c.ok || (ok && n != c.n) {
 			t.Fatalf("atoui(%q) = (%d, %v), want (%d, %v)", c.part, n, ok, c.n, c.ok)
 		}
+	}
+}
+
+// TestSimplePathThroughString 覆盖本地修正: 简单路径的中间值或文档本身是字符串时, 不得写进或删改字符串内容.
+// 字符串与数字等标量一样按 "未找到" 处理: Set 替换为新建的对象或数组, Delete 不变.
+// 上游 gjson 顶层会跳到字符串里的第一个 '[' 或 '{', 输出 {"a":"["x",2]"} 这类非法 JSON,
+// Delete 则得到 {"a":"[2]"} 这种仍然合法但改了字符串文本的结果.
+func TestSimplePathThroughString(t *testing.T) {
+	opts := []*Options{nil, {Optimistic: true}, {Optimistic: true, ReplaceInPlace: true}}
+	for _, c := range [][3]string{
+		{`{"a":"[1,2]"}`, "a.0", `{"a":["x"]}`},
+		{`{"a":"[1,2]"}`, "a.1", `{"a":[null,"x"]}`},
+		{`{"a":"[[1]]"}`, "a.0.0", `{"a":[["x"]]}`},
+		{`{"a":"{\"b\":[1]}","c":1}`, "a.b.0", `{"a":{"b":["x"]},"c":1}`},
+		{`["x[1,2]y"]`, "0.1", `[[null,"x"]]`},
+		{`"[1,2]"`, "0", `["x"]`},
+		{` "[1,2]"`, "0", `["x"]`},
+		// 对照: 不含括号的字符串与数字向来如此.
+		{`{"a":"xy"}`, "a.0", `{"a":["x"]}`},
+		{`{"a":1}`, "a.0", `{"a":["x"]}`},
+		// 顶层是以字符串开头的非法片段时不算字符串, 保持上游跳到其中第一个 '{' 的处理, 不替换整个文档.
+		{`"k":{"a":1}`, "a", `"k":{"a":"x"}`},
+		{`"k" {"a":[1]}`, "a.0", `"k" {"a":["x"]}`},
+	} {
+		for _, o := range opts {
+			if got, err := SetOptions(c[0], c[1], "x", o); got != c[2] || err != nil {
+				t.Fatalf("SetOptions(%s, %q, %+v) = (%s, %v), want %s", c[0], c[1], o, got, err, c[2])
+			}
+			got, err := SetBytesOptions([]byte(c[0]), c[1], "x", o)
+			if string(got) != c[2] || err != nil {
+				t.Fatalf("SetBytesOptions(%s, %q, %+v) = (%s, %v), want %s", c[0], c[1], o, got, err, c[2])
+			}
+		}
+		want := strings.ReplaceAll(c[2], `"x"`, "9")
+		if got, err := SetRaw(c[0], c[1], "9"); got != want || err != nil {
+			t.Fatalf("SetRaw(%s, %q) = (%s, %v), want %s", c[0], c[1], got, err, want)
+		}
+	}
+	for _, c := range [][2]string{
+		{`{"a":"[1,2]"}`, "a.0"},
+		{`{"a":"[1,2]"}`, "a.-1"},
+		{`["x[1,2]y"]`, "0.1"},
+		{`{"a":"{\"b\":1}"}`, "a.b"},
+		{`"[1,2]"`, "0"},
+	} {
+		if got, err := Delete(c[0], c[1]); got != c[0] || err != nil {
+			t.Fatalf("Delete(%s, %q) = (%s, %v), want unchanged", c[0], c[1], got, err)
+		}
+		if got, err := DeleteBytes([]byte(c[0]), c[1]); string(got) != c[0] || err != nil {
+			t.Fatalf("DeleteBytes(%s, %q) = (%s, %v), want unchanged", c[0], c[1], got, err)
+		}
+	}
+}
+
+// TestOutsideStringsOracle 对照逐字节切换引号状态的参照实现 (字符串内遇反斜杠跳过下一字节),
+// 校验跳跃扫描的 outsideStrings, 输入含未闭合字符串, 连续反斜杠, 长普通字节段和文档末尾的写入点.
+func TestOutsideStringsOracle(t *testing.T) {
+	const bs = 92 // 反斜杠
+	ref := func(jstr string, vals []complexVal) bool {
+		in := false
+		i := 0
+		for _, v := range vals {
+			for ; i < v.index && i < len(jstr); i++ {
+				switch jstr[i] {
+				case '"':
+					in = !in
+				case bs:
+					if in {
+						i++
+					}
+				}
+			}
+			if in {
+				return false
+			}
+		}
+		return true
+	}
+	rng := rand.New(rand.NewSource(1))
+	buf := make([]byte, 0, 96)
+	for n := 0; n < 300000; n++ {
+		// 引号和反斜杠的密度逐例变化, 稀疏时出现超过 16 字节的普通字节段, 覆盖 IndexByte 跳跃分支.
+		pq, pb := 1+rng.Intn(30), rng.Intn(20)
+		buf = buf[:0]
+		l := rng.Intn(80)
+		for range l {
+			switch r := rng.Intn(100); {
+			case r < pq:
+				buf = append(buf, '"')
+			case r < pq+pb:
+				buf = append(buf, bs)
+			default:
+				buf = append(buf, 'a')
+			}
+		}
+		s := string(buf)
+		var vals []complexVal
+		for k, at := rng.Intn(4), 0; k > 0 && at <= l; k-- {
+			at += rng.Intn(l - at + 1)
+			vals = append(vals, complexVal{index: at})
+			at++
+		}
+		if got, want := outsideStrings(s, vals), ref(s, vals); got != want {
+			t.Fatalf("outsideStrings(%q, %v) = %v, want %v", s, vals, got, want)
+		}
+	}
+}
+
+// TestOutsideStringsLinear 守住扫描成本线性: 写入点之间是超过 16 字节且不含引号的长数字时,
+// IndexByte 未找到引号必须把游标推进到写入点. 否则游标每个写入点只前进 16 字节, 落后量逐个累积,
+// 10 万个 100 位数字约需重扫 400GB (数秒以上); 线性实现只扫约 10MB (毫秒级), 用宽松的时间上限判定.
+func TestOutsideStringsLinear(t *testing.T) {
+	n, elem := 100000, strings.Repeat("1234567890", 10)
+	var b strings.Builder
+	b.Grow(n * (len(elem) + 1))
+	vals := make([]complexVal, 0, n)
+	b.WriteByte('[')
+	for i := range n {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		vals = append(vals, complexVal{index: b.Len(), raw: elem})
+		b.WriteString(elem)
+	}
+	b.WriteByte(']')
+	doc := b.String()
+	start := time.Now()
+	if !outsideStrings(doc, vals) {
+		t.Fatal("outsideStrings = false, want true")
+	}
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("outsideStrings took %v for %d bytes and %d write points, scan is not linear", d, len(doc), n)
 	}
 }

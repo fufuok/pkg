@@ -458,7 +458,9 @@ func (t Result) Get(path string) Result {
 		for i := 0; i < len(r.Indexes); i++ {
 			r.Indexes[i] += t.Index
 		}
-	} else {
+	} else if _, ok := offsetIn(t.Raw, r.Raw); ok {
+		// 本地修正: 只有切片自 t.Raw 的结果才加上 t 的偏移. 修饰符, 静态值等计算结果不在原文中,
+		// Index 保持 0; 上游无条件相加, 把父值偏移安到计算结果上.
 		r.Index += t.Index
 	}
 	return r
@@ -1645,6 +1647,7 @@ func parseArray(c *parseContext, i int, path string) (int, bool) {
 	var partidx int
 	var multires []byte
 	var queryIndexes []int
+	queryUnlocated := false
 	rp := parseArrayPath(path)
 	if !rp.arrch {
 		n, ok := parseUint(rp.part)
@@ -1701,7 +1704,12 @@ func parseArray(c *parseContext, i int, path string) (int, bool) {
 						multires = append(multires, ',')
 					}
 					multires = append(multires, raw...)
-					queryIndexes = append(queryIndexes, res.Index+parentIndex)
+					// 本地修正: 同 "#." 分支, 偏移按内存同源取得, 任一元素无法定位则整体不给 Indexes.
+					if at, ok := offsetIn(c.json, res.Raw); ok && res.Indexes == nil {
+						queryIndexes = append(queryIndexes, at)
+					} else {
+						queryUnlocated = true
+					}
 				}
 			} else {
 				// 本地修正: res 由 qval.Get 得到, 其 Indexes 相对 qval 而非 c.json. 上游只在 query.all 分支
@@ -1864,6 +1872,7 @@ func parseArray(c *parseContext, i int, path string) (int, bool) {
 							c.piped = true
 						}
 						indexes := make([]int, 0, 64)
+						located := true
 						jsons := make([]byte, 0, 64)
 						jsons = append(jsons, '[')
 						for j, k := 0, 0; j < len(alog); j++ {
@@ -1889,7 +1898,13 @@ func parseArray(c *parseContext, i int, path string) (int, bool) {
 											raw = res.String()
 										}
 										jsons = append(jsons, []byte(raw)...)
-										indexes = append(indexes, res.Index)
+										// 本地修正: 偏移按内存同源取得, 见 offsetIn. 上游用 res.Index, 字符串元素的基准为 0
+										// (如 "#.0" 遇到 "[1]" 得到相对该元素的偏移), 计算结果和嵌套多结果则是父元素偏移.
+										if at, ok := offsetIn(c.json, res.Raw); ok && res.Indexes == nil {
+											indexes = append(indexes, at)
+										} else {
+											located = false
+										}
 										k++
 									}
 								}
@@ -1898,7 +1913,9 @@ func parseArray(c *parseContext, i int, path string) (int, bool) {
 						jsons = append(jsons, ']')
 						c.value.Type = JSON
 						c.value.Raw = string(jsons)
-						c.value.Indexes = indexes
+						if located {
+							c.value.Indexes = indexes
+						}
 						return i + 1, true
 					}
 					if rp.alogok {
@@ -1916,7 +1933,7 @@ func parseArray(c *parseContext, i int, path string) (int, bool) {
 						c.value = Result{
 							Raw:     string(append(multires, ']')),
 							Type:    JSON,
-							Indexes: queryIndexes,
+							Indexes: queryIndexesIf(queryIndexes, !queryUnlocated),
 						}
 					} else if rp.query.all {
 						c.value = Result{
@@ -2351,7 +2368,9 @@ func Get(json, path string) Result {
 					if len(path) > 0 {
 						res = res.Get(path[1:])
 					}
+					// 本地修正: 子选择器的结果是新拼出的值, 其后取得的 Indexes 相对该临时值, 不能用于定位原文.
 					res.Index = 0
+					res.Indexes = nil
 					return res
 				}
 			}
@@ -2377,8 +2396,24 @@ func Get(json, path string) Result {
 		}
 	}
 	if c.piped {
-		res := c.value.Get(c.pipe)
+		// 本地修正: 管道右侧在左侧结果上重新取值, 上游把 Index 清零却保留相对左侧结果的 Indexes,
+		// Paths 与 sjson 写入随之错位 (如 "a|#.b" 得到 xy). 左侧结果切片自原文时把偏移换算回原文,
+		// 否则 (修饰符, 多结果等计算值) 不给偏移.
+		res := Get(c.value.Raw, c.pipe)
+		base, ok := offsetIn(json, c.value.Raw)
+		if res.Indexes != nil {
+			if ok {
+				for i := range res.Indexes {
+					res.Indexes[i] += base
+				}
+			} else {
+				res.Indexes = nil
+			}
+		}
 		res.Index = 0
+		if at, ok := offsetIn(json, res.Raw); ok {
+			res.Index = at
+		}
 		return res
 	}
 	fillIndex(json, c)
@@ -3556,6 +3591,30 @@ func getBytes(json []byte, path string) Result {
 		}
 	}
 	return result
+}
+
+// offsetIn 报告 sub 是否完整切片自 json 的内存, 是则返回其起始偏移.
+// 本地修正的基础: 结果偏移只有按内存同源取得才可信. 修饰符, 静态值, 子选择器和多结果拼出的是新值,
+// 内容可能碰巧与原文某处相同, 按内容或累加父偏移都会指错位置. 落在字符串字面量内部的切片也算同源,
+// 由使用方 (如 sjson) 再判断是否可写.
+func offsetIn(json, sub string) (int, bool) {
+	if len(sub) == 0 || len(sub) > len(json) {
+		return 0, false
+	}
+	j := uintptr(unsafe.Pointer(unsafe.StringData(json)))
+	p := uintptr(unsafe.Pointer(unsafe.StringData(sub)))
+	if p < j || p-j > uintptr(len(json)-len(sub)) {
+		return 0, false
+	}
+	return int(p - j), true
+}
+
+// queryIndexesIf 在 ok 时返回 idx, 否则返回 nil, 供 "#(...)#" 结果在有元素无法定位时整体不给 Indexes.
+func queryIndexesIf(idx []int, ok bool) []int {
+	if ok {
+		return idx
+	}
+	return nil
 }
 
 // fillIndex finds the position of Raw data and assigns it to the Index field

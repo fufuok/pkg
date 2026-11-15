@@ -3263,3 +3263,62 @@ func TestQueryFirstMatchIndexes(t *testing.T) {
 	r := Get(lines, "..#(id==3).t.#.v")
 	assert(t, len(r.Indexes) == 1 && r.Indexes[0] > strings.IndexByte(lines, '\n'))
 }
+
+// TestAlogStringElementIndex 覆盖本地修正: "#." 遇到字符串元素并继续取其内容时, Indexes 须是文档中的真实偏移,
+// 而不是相对该元素 (上游得 2, 指向第一个元素 1).
+func TestAlogStringElementIndex(t *testing.T) {
+	json := `[ 1,"[1]",{"a":"[2]"}]`
+	r := Get(json, "#.0")
+	if len(r.Indexes) != 1 || r.Indexes[0] != 6 || json[6:7] != "1" {
+		t.Fatalf("Indexes = %v, raw = %s", r.Indexes, r.Raw)
+	}
+	r = Get(json, "#.a")
+	if len(r.Indexes) != 1 || json[r.Indexes[0]:r.Indexes[0]+5] != `"[2]"` {
+		t.Fatalf("object element Indexes = %v", r.Indexes)
+	}
+	// 数字元素经修饰符取值: 与对象/数组元素一样记录元素偏移, 上游为 [0 0].
+	r = Get(`[ 1, 22]`, "#.@this")
+	if len(r.Indexes) != 2 || r.Indexes[0] != 2 || r.Indexes[1] != 5 {
+		t.Fatalf("number element Indexes = %v", r.Indexes)
+	}
+}
+
+// TestIndexesProvenance 覆盖本地修正: Index/Indexes 只给按内存同源可定位的结果, 要么指向原文中的真实位置,
+// 要么为 0/nil. 上游在管道后给相对子值的偏移, 计算结果给父元素偏移, Paths 与 sjson 写入随之错位.
+func TestIndexesProvenance(t *testing.T) {
+	json := `{"xy":1,"a":[{"b":1}],"m":[[{"b":2}]]}`
+	// 管道右侧的多结果换算回原文, Paths 随之正确 (上游为 [6] 与 [xy]).
+	r := Get(json, "a|#.b")
+	if len(r.Indexes) != 1 || r.Indexes[0] != 18 || fmt.Sprint(r.Paths(json)) != "[a.0.b]" {
+		t.Fatalf("pipe Indexes = %v, Paths = %v", r.Indexes, r.Paths(json))
+	}
+	// 管道右侧的单结果给出真实位置 (上游为 0).
+	if r = Get(json, "a|0"); r.Index != 13 || r.Path(json) != "a.0" {
+		t.Fatalf("pipe Index = %d, Path = %q", r.Index, r.Path(json))
+	}
+	// 管道左侧是拼出的临时数组时, 右侧单结果相对临时数组的偏移不得外泄.
+	if r = Get(json, "m.#(#>0)#|0"); r.Index != 0 || r.Raw != `[{"b":2}]` {
+		t.Fatalf("computed pipe Index = %d, Raw = %s", r.Index, r.Raw)
+	}
+	// 管道作用在多结果拼出的临时数组上, 子选择器, 嵌套多结果, 查询后接修饰符: 无法定位, 不给 Indexes.
+	for _, path := range []string{"m.#(#>0)#|0|#.b", "{a}.a.#.b", "m.#.#.b", "a.#(b==1)#.@reverse"} {
+		if r = Get(json, path); r.Indexes != nil {
+			t.Fatalf("Get(%q).Indexes = %v, want nil", path, r.Indexes)
+		}
+	}
+	// 部分元素可定位时整体不给 Indexes, 否则与元素错位: @reverse 对数字原样返回 (同源), 对数组新拼 (不同源).
+	mixed := `[{"b":1,"c":5},{"b":1,"c":[1,2]}]`
+	for _, path := range []string{"#.c.@reverse", "#(b==1)#.c.@reverse"} {
+		if r = Get(mixed, path); r.Indexes != nil {
+			t.Fatalf("Get(mixed, %q).Indexes = %v, want nil", path, r.Indexes)
+		}
+	}
+	// Result.Get 的计算结果不再继承父值偏移 (上游为 a 的偏移 12).
+	if r = Get(json, "a").Get("@reverse"); r.Index != 0 {
+		t.Fatalf("computed Result.Get Index = %d", r.Index)
+	}
+	// 查询多结果与 "#." 的偏移指向元素本身.
+	if r = Get(json, "a.#(b==1)#"); len(r.Indexes) != 1 || json[r.Indexes[0]:r.Indexes[0]+7] != `{"b":1}` {
+		t.Fatalf("query Indexes = %v", r.Indexes)
+	}
+}

@@ -6,8 +6,8 @@
 
 | 子包 | 上游 | 已同步版本 | 本地差异 |
 | --- | --- | --- | --- |
-| `gjson` | [tidwall/gjson](https://github.com/tidwall/gjson) | v1.20.3 | 溢出 (不采纳 v1.20.3 的 `parseUint`)、NaN、Valid 深度、32 位下标截断四处修正, 修饰符表写时复制与 `Int()` 字符串回退免分配两处性能修正, 非法 UTF-8 输出保持历史写法, 本地扩展 `GetManyKeys`, 见 [gjson/README.md](gjson/README.md) |
-| `sjson` | [tidwall/sjson](https://github.com/tidwall/sjson) | v1.2.9 | 补齐总预算、复杂路径偏移校验、转义引号键删除、原地替换转义四处修正, `atoui` 免分配一处性能修正, 见 [sjson/README.md](sjson/README.md) |
+| `gjson` | [tidwall/gjson](https://github.com/tidwall/gjson) | v1.20.3 | 溢出 (不采纳 v1.20.3 的 `parseUint`)、NaN、Valid 深度、32 位下标截断、单匹配查询偏移、结果偏移按内存同源六处修正, 修饰符表写时复制与 `Int()` 字符串回退免分配两处性能修正, 非法 UTF-8 输出保持历史写法, 本地扩展 `GetManyKeys`, 见 [gjson/README.md](gjson/README.md) |
+| `sjson` | [tidwall/sjson](https://github.com/tidwall/sjson) | v1.2.9 | 补齐总预算、复杂路径偏移校验、简单路径穿过字符串、转义引号键删除、原地替换转义、原地替换值别名六处修正, `atoui` 免分配一处性能修正, 见 [sjson/README.md](sjson/README.md) |
 | `pretty` | [tidwall/pretty](https://github.com/tidwall/pretty) | v1.3.0 | 单行试排超宽即中止 (性能修正, 输出不变), 见 [pretty/README.md](pretty/README.md) |
 | `match` | [tidwall/match](https://github.com/tidwall/match) | v1.2.0 | 仅中文注释和声明位置 |
 | `jsongen` | 无 | 本地实现 | 自行实现和维护, 不参考也不同步任何上游 |
@@ -35,10 +35,12 @@
 | gjson | 新增 `Result.All/Keys/Values` 迭代器, 可配合 `for range` 使用 | 遍历对象或数组, 不生成中间切片 |
 | gjson | `AddModifier` 可与查询并发调用; 内置修饰符 (如 `@pretty`) 不可再被覆盖 | 运行期注册自定义修饰符时不再触发 map 并发读写崩溃 |
 | gjson | 删除 `DisableEscapeHTML`、`DisableModifiers`, 改用 `SetEscapeHTML` 和编译参数, 见 [gjson/README.md](gjson/README.md) | 运行期切换转义不再有数据竞争; 旧变量的使用方编译即报错, 升级时迁移 |
-| sjson | 写入 NaN/±Inf 时结果为带引号的字符串 `"NaN"`, 同时返回错误, 此前静默写出非法 JSON | 浮点指标写回 JSON 时保证结果合法 |
+| sjson | 写入 NaN/+Inf/-Inf 时结果为带引号的字符串 `"NaN"`/`"+Inf"`/`"-Inf"`, 同时返回错误, 此前静默写出非法 JSON | 浮点指标写回 JSON 时保证结果合法 |
 | sjson | 按下标补齐数组最多 100000 个 null, 超出返回错误 (上游按每层计, 本地按单次调用累计); 超出 int 范围的下标按对象键处理 | 路径来自外部输入时防止超大下标耗尽内存; 对同一文档反复 Set 的累计增长仍需调用方限制 |
 | sjson | 空路径表示空字符串键 `""`, 对数组则追加元素 (`Set("[1,2]", "", 9)` 得 `[1,2,9]`), 此前返回 `path cannot be empty` 错误 | 操作空键 |
-| sjson | 含 `#` 等的复杂路径只在偏移可定位到原文时写入. 管道 (含查询值里的 `\|`)、`#` 后的静态值/修饰符/子选择器、嵌套多结果等无法定位的写入不修改也不报错, 此前可能 panic、输出非法 JSON 或改写别的字段; JSON Lines 单结果查询 (如 `..#(a==1)`) 命中首行时也会写入, 此前只有非首行会写入 | 外部输入作路径时不再写坏正文; 依赖旧的错写结果的调用方需改用明确路径 |
+| gjson | 结果偏移只按内存同源给出: 管道右侧的 `Index`/`Indexes` 换算回原文 (此前 `Index` 为 0、`Indexes` 相对子值), 修饰符/静态值/子选择器/嵌套多结果等计算值 `Index` 为 0、`Indexes` 为 nil (此前为父元素偏移), `#.` 字符串等标量元素给真实偏移, `Path`/`Paths` 随之正确 | 只影响直接读取 `Index`/`Indexes`/`Path(s)` 的调用方; 读取值的方法不变 |
+| sjson | 含 `#` 等的复杂路径只写 gjson 结果在原文中的真实位置. 修饰符/静态值/子选择器拼出的新值、嵌套多结果、作用在这些值上的管道、落在字符串字面量内部的结果不写也不报错, 此前可能 panic、输出非法 JSON 或改写别的字段. 管道右侧 (如 `a\|#.b`)、`#.@this`、对象上的 `#(...)`、查询之后的 `\\|` 现在写到其指向的值 (此前不写或写错); JSON Lines 单结果查询 (如 `..#(a==1)`) 命中首行时也会写入, 此前只有非首行会写入. 子选择器之后的路径 (如 `{a}.a.#.b`) 此前只在拼出的文本恰与原文开头相同 (`a` 是首个键且无空白) 时碰巧写对, 否则写坏, 现在一律不写 | 外部输入作路径时不再写坏正文; 依赖旧的不写或错写结果的调用方需改用明确路径 |
+| sjson | 简单路径中间经过的值是字符串时不再写进字符串内容: `Set({"a":"[1,2]"}, "a.0", "x")` 得 `{"a":["x"]}` (此前为非法的 `{"a":"["x",2]"}`), `Delete` 保持不变 (此前改掉字符串文本); 与数字等标量的处理一致 | 外部输入作路径时不会经由字符串改坏正文 |
 | sjson | 删除对象中的 `-1` 键按键名删除, `-1` 只在数组上表示最后一个元素 | 修正误删 |
 
 ## 同步方法

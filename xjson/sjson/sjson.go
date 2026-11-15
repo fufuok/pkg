@@ -296,6 +296,33 @@ loop:
 
 var errNoChange = &errorType{"no change"}
 
+// isStringValue 报告 jstr 是否恰好是一个 JSON 字符串值 (前后可有空白; 未闭合也算, 其后全在字符串内).
+// 只用于决定是否继续向下取值: 字符串内容里的 '[' '{' 不是文档结构, 不能被当作容器.
+// 嵌套取值时 jstr 是字符串的 Raw, 必然满足; 顶层文档以字符串开头但其后还有内容 (如 "k":{...} 这类片段)
+// 时不算, 保持上游跳到其中第一个 '{' 或 '[' 的处理, 不把整个文档替换掉.
+func isStringValue(jstr string) bool {
+	i := 0
+	for i < len(jstr) && jstr[i] <= ' ' {
+		i++
+	}
+	if i == len(jstr) || jstr[i] != '"' {
+		return false
+	}
+	for i++; i < len(jstr); i++ {
+		if jstr[i] == '\\' {
+			i++
+		} else if jstr[i] == '"' {
+			break
+		}
+	}
+	for i++; i < len(jstr); i++ {
+		if jstr[i] > ' ' {
+			return false
+		}
+	}
+	return true
+}
+
 func appendRawPaths(buf []byte, jstr string, paths []pathResult, raw string,
 	stringify, del bool,
 ) ([]byte, error) {
@@ -313,7 +340,11 @@ func appendRawPaths(buf []byte, jstr string, paths []pathResult, raw string,
 			}
 		}
 	}
-	if !found {
+	// 本地修正: 当前值是字符串时不再向下取值. 上游把字符串的 Raw 交给 gjson, 而 gjson 顶层会跳到第一个
+	// '[' 或 '{', 于是 Set({"a":"[1,2]"}, "a.0", "x") 写进字符串内容得到 {"a":"["x",2]"},
+	// Delete 则改掉字符串文本却仍是合法 JSON. 字符串按 "未找到" 处理, 与数字等标量及不含括号的字符串一致:
+	// Set 替换为新建的对象或数组, Delete 不变. 数字, true/false/null 的 Raw 不含括号, 不受影响.
+	if !found && !isStringValue(jstr) {
 		res = gjson.Get(jstr, paths[0].gpart)
 	}
 	if res.Index > 0 {
@@ -585,7 +616,9 @@ func set(jstr, path, raw string,
 	stringify, del, optimistic, inplace bool,
 ) ([]byte, error) {
 	// 空路径表示空字符串键 "", 与 gjson 的寻址一致, 不再作为错误拒绝.
-	if !del && optimistic && isOptimisticPath(path) {
+	// 本地修正: 文档本身是字符串时不走乐观路径, 否则 gjson 跳进字符串内容, 原地写坏字符串 (见 appendRawPaths).
+	// 嵌套在对象或数组中的字符串 gjson 不会继续取值, 不受影响.
+	if !del && optimistic && isOptimisticPath(path) && !isStringValue(jstr) {
 		res := gjson.Get(jstr, path)
 		if res.Exists() && res.Index > 0 {
 			sz := len(jstr) - len(res.Raw) + len(raw)
@@ -601,8 +634,11 @@ func set(jstr, path, raw string,
 				}
 				jbytes := *(*[]byte)(unsafe.Pointer(&jsonbh))
 				if stringify {
-					jbytes[res.Index] = '"'
+					// 本地修正: 先复制值再写开引号. 值可能与输入共享内存 (如取自原值的子切片),
+					// 上游先写引号会覆盖值的首字节, 输出 {"a":""23"} 这类非法 JSON 且不报错.
+					// copy 按 memmove 处理重叠; 新值不长于原值, 写入范围不会触及其后待移动的尾部.
 					copy(jbytes[res.Index+1:], []byte(raw))
+					jbytes[res.Index] = '"'
 					jbytes[res.Index+1+len(raw)] = '"'
 					copy(jbytes[res.Index+1+len(raw)+1:],
 						jbytes[res.Index+len(res.Raw):])
@@ -652,14 +688,13 @@ func set(jstr, path, raw string,
 
 // setComplexPath 处理含 # 查询等复杂路径: 按 gjson 返回的 Index/Indexes 在原文中替换结果.
 //
-// 本地修正: gjson 的偏移并不总指向原文. 管道 '|' 之后的 Indexes 相对的是子值, # 之后接静态值,
-// 修饰符或子选择器时 Indexes 等于父元素偏移. 上游直接按偏移切片, 会 panic, 拼出非法 JSON,
-// 或在内容恰好相同时改写别的字段 (如对 {"xy":1,"a":[{"b":1}]} 写 "a|#.b" 会改掉 "xy").
-// 因此:
-//   - 多结果 (Indexes) 只在 complexOffsetsTrusted 认定偏移可信时才写入;
+// 本地修正: 上游直接按偏移切片, 而 gjson 上游的偏移并不总指向原文 (管道后相对子值, # 后接静态值,
+// 修饰符或子选择器时为父元素偏移), 会 panic, 拼出非法 JSON, 或在内容恰好相同时改写别的字段
+// (如对 {"xy":1,"a":[{"b":1}]} 写 "a|#.b" 会改掉 "xy"). 本地 gjson 已改为按内存同源给出偏移:
+// Indexes 要么每项都是元素在原文中的真实位置, 要么为 nil. 这里再做三层兜底:
 //   - 每个写入点都须通过 valueAt: 内容一致, 且处在 JSON 值的位置上, 不是数字前缀或键名;
-//   - 偏移 0 只对可信的 JSON Lines 路径 (以 ".." 开头) 放行, 其首行本就从 0 开始;
-//     其他路径的 0 表示 gjson 无法定位, 如静态值 "#.![1]" 的内容恰好等于整个文档 "[1]".
+//   - 写入点不在字符串字面量内部 (gjson 会深入字符串内容取值, 偏移真实但不是文档里的值);
+//   - 单结果偏移 0 只对 JSON Lines 路径 (以 ".." 开头) 且 Raw 与原文共享起始内存时放行.
 //
 // 先校验全部写入点再修改, 任一不满足即视为无变化, 与路径不存在时一致, 不会返回改了一半的结果.
 func setComplexPath(jstr, path, raw string, stringify bool) ([]byte, error) {
@@ -668,171 +703,141 @@ func setComplexPath(jstr, path, raw string, stringify bool) ([]byte, error) {
 		return []byte(jstr), errNoChange
 	}
 	lines := len(path) >= 2 && path[0] == '.' && path[1] == '.'
-	trusted := complexOffsetsTrusted(path)
-	zeroOK := lines && trusted
-	type val struct {
-		index int
-		raw   string
-	}
-	var vals []val
-	if len(res.Indexes) > 0 {
-		if !trusted {
-			return []byte(jstr), errNoChange
-		}
-		vals = make([]val, 0, len(res.Indexes))
-		res.ForEach(func(_, vres gjson.Result) bool {
-			vals = append(vals, val{raw: vres.Raw})
-			return true
-		})
-		if len(res.Indexes) != len(vals) {
-			return []byte(jstr), errNoChange
-		}
-		for i := 0; i < len(res.Indexes); i++ {
-			vals[i].index = res.Indexes[i]
-		}
-		sort.SliceStable(vals, func(i, j int) bool {
-			return vals[i].index > vals[j].index
-		})
-	} else {
+	if len(res.Indexes) == 0 {
 		// 单结果的 Index 由 gjson 按指针计算, 非 0 即为原文中的真实位置. 0 既可能是首行, 也可能是
 		// 无法定位的计算结果 (如无匹配时的 "[]" 恰好等于文档 "[]"), 只有 Raw 与原文共享起始内存时才是首行.
-		if res.Index == 0 && !(zeroOK && len(res.Raw) > 0 &&
-			unsafe.StringData(res.Raw) == unsafe.StringData(jstr)) {
+		zeroOK := false
+		if res.Index == 0 {
+			if !lines || len(res.Raw) == 0 ||
+				unsafe.StringData(res.Raw) != unsafe.StringData(jstr) {
+				return []byte(jstr), errNoChange
+			}
+			zeroOK = true
+		}
+		vals := []complexVal{{index: res.Index, raw: res.Raw}}
+		if !valueAt(jstr, res.Index, res.Raw, lines, zeroOK) || !outsideStrings(jstr, vals) {
 			return []byte(jstr), errNoChange
 		}
-		vals = []val{{index: res.Index, raw: res.Raw}}
+		return replaceValues(jstr, vals, raw, stringify), nil
 	}
-	// vals 已按偏移降序: 逐个确认是原文中的完整值且区间互不重叠, 再从后往前替换, 前面的偏移不受影响.
+	vals := make([]complexVal, 0, len(res.Indexes))
+	res.ForEach(func(_, vres gjson.Result) bool {
+		vals = append(vals, complexVal{raw: vres.Raw})
+		return true
+	})
+	if len(res.Indexes) != len(vals) {
+		return []byte(jstr), errNoChange
+	}
+	for i := 0; i < len(res.Indexes); i++ {
+		vals[i].index = res.Indexes[i]
+	}
+	sort.SliceStable(vals, func(i, j int) bool {
+		return vals[i].index < vals[j].index
+	})
+	// 按偏移升序逐个确认是原文中的完整值且区间互不重叠. 偏移 0 只可能是 JSON Lines 首行.
 	for i, v := range vals {
-		if !valueAt(jstr, v.index, v.raw, lines, zeroOK) ||
-			(i > 0 && v.index+len(v.raw) > vals[i-1].index) {
+		if !valueAt(jstr, v.index, v.raw, lines, lines) ||
+			(i > 0 && v.index < vals[i-1].index+len(vals[i-1].raw)) {
 			return []byte(jstr), errNoChange
 		}
 	}
-	for _, v := range vals {
-		njson := []byte(jstr[:v.index])
-		if stringify {
-			njson = appendStringify(njson, raw)
-		} else {
-			njson = append(njson, raw...)
-		}
-		njson = append(njson, jstr[v.index+len(v.raw):]...)
-		jstr = string(njson)
+	if !outsideStrings(jstr, vals) {
+		return []byte(jstr), errNoChange
 	}
-	return []byte(jstr), nil
+	return replaceValues(jstr, vals, raw, stringify), nil
 }
 
-// complexOffsetsTrusted 报告复杂路径的多结果偏移 (Indexes) 能否用于定位原文. 以下情形不可信:
-//   - 任何未转义的 '|'. 管道之后的 Indexes 相对的是子值. 查询值里的 '|' 也拒绝: 对象上的 "#(" 不是查询,
-//     gjson 会按普通路径把其中的 '|' 当作管道, 这里不区分数组与对象;
-//   - 路径段开头的子选择器 '{'/'[', 静态值 '!' (判定同 gjson execStatic), 已注册修饰符 '@name'
-//     (未注册的 "@timestamp" 是普通键名). 其后的 Indexes 等于父元素偏移;
-//   - 两个及以上多结果来源: 段首 '#' 后接 '.' 或在结尾, 以及 "#(...)#". 嵌套多结果只记录外层元素偏移.
+// outsideStrings 报告各写入点 (按偏移升序) 是否都不在 JSON 字符串字面量内部.
+// gjson 会深入字符串内容取值 (对字符串元素继续取值, 顶层 Get 跳到第一个 '[' 或 '{'), 偏移真实存在却落在
+// 字符串里, 如 {"a":["[1]"]} 的 "a.#(==\"[1]\").0" 指向 "[1]" 中的 1. valueAt 只看前后一个字节判断不出来,
+// 写入会拆开字符串产出非法 JSON. 从文档开头线性扫描到最后一个写入点, 合法 JSON 下判断准确.
 //
-// 扫描时不跳过查询体: 查询体内的段首语法同样检查, 多结果来源同样计数, 对数组 (查询) 和对象 (普通键)
-// 两种解释都不会漏判. 代价是查询值里含 '|' 或嵌套 "#." 等写法会被拒绝. 反斜杠转义的字符按字面量处理.
-// 判断偏保守: 误判为不可信只会让本次写入视为无变化, 不会写错位置.
-func complexOffsetsTrusted(path string) bool {
-	producers := 0
-	for i := 0; i < len(path); i++ {
-		c := path[i]
-		if c == '\\' {
-			i++
-			continue
-		}
-		if c == '|' {
-			return false
-		}
-		if i > 0 && path[i-1] != '.' {
-			// 以下语法只在路径段开头生效, 段中间的 '!', '@', '#' 等是键名的一部分
-			continue
-		}
-		switch c {
-		case '{', '[':
-			return false
-		case '!':
-			if isStaticPath(path[i:]) {
+// 普通字节尽量交给 IndexByte (SIMD) 跳过, 结果与逐字节切换状态 (字符串内遇反斜杠跳过下一字节) 完全相同:
+//   - 字符串外逐字节找开引号, 值之间的间隔通常只有一两个字节; 连续 16 个字节都不是引号时 (大数组的数字,
+//     缩进空白) 直接跳到下一个引号.
+//   - 进入字符串后跳到下一个引号: 其前一字节不是反斜杠即为闭引号, 长文本整段跳过; 否则 (如字符串里嵌着
+//     转义的 JSON) 从字符串开头逐字节确定闭引号. 最坏只比逐字节多一次 IndexByte, 总成本线性.
+func outsideStrings(jstr string, vals []complexVal) bool {
+	i := 0 // 扫描位置, 始终处在字符串外
+	for _, v := range vals {
+		end := min(v.index, len(jstr))
+		run := 0 // 字符串外连续的非引号字节数
+		for i < end {
+			if jstr[i] != '"' {
+				i++
+				if run++; run == 16 {
+					q := strings.IndexByte(jstr[i:end], '"')
+					if q < 0 {
+						// 到写入点前都没有引号, 整段都在字符串外: 游标必须推进到 end,
+						// 否则下一个写入点会从这里重新扫描, 多写入点时退化为二次复杂度.
+						i = end
+						break
+					}
+					i += q
+				}
+				continue
+			}
+			run = 0
+			j := i + 1
+			e := strings.IndexByte(jstr[j:], '"')
+			if e < 0 {
+				// 字符串直到文档末尾都未闭合, 写入点在其内部.
 				return false
 			}
-		case '@':
-			name := path[i+1:]
-			for j := 0; j < len(name); j++ {
-				if name[j] == '.' || name[j] == ':' {
-					name = name[:j]
-					break
+			j += e
+			if jstr[j-1] == '\\' {
+				// 引号可能被转义: 从字符串开头逐字节确定真正的闭引号.
+				for j = i + 1; ; j++ {
+					if j >= len(jstr) {
+						return false
+					}
+					if c := jstr[j]; c == '\\' {
+						j++
+					} else if c == '"' {
+						break
+					}
 				}
 			}
-			if gjson.ModifierExists(name, nil) {
+			if j >= end {
+				// 闭引号在写入点处或之后: 写入点落在这个字符串里.
 				return false
 			}
-		case '#':
-			switch {
-			case i+1 == len(path) || path[i+1] == '.':
-				producers++
-			case path[i+1] == '(' || path[i+1] == '[':
-				end := queryEnd(path, i)
-				if end < 0 {
-					return false
-				}
-				if end < len(path) && path[end] == '#' {
-					producers++
-				}
-			}
+			i = j + 1
 		}
 	}
-	return producers <= 1
+	return true
 }
 
-// queryEnd 返回 path[i:] 处查询 "#(...)" 或 "#[...]" 闭合括号之后的位置, 未闭合时返回 -1.
-// 规则同 gjson parseQuery: 两种括号都计层数, 引号内和反斜杠转义的字符不计.
-func queryEnd(path string, i int) int {
-	depth := 1
-	for j := i + 2; j < len(path); j++ {
-		switch path[j] {
-		case '\\':
-			j++
-		case '(', '[':
-			depth++
-		case ')', ']':
-			if depth--; depth == 0 {
-				return j + 1
-			}
-		case '"':
-			for j++; j < len(path); j++ {
-				if path[j] == '\\' {
-					j++
-				} else if path[j] == '"' {
-					break
-				}
-			}
-		}
-	}
-	return -1
+// complexVal 是复杂路径的一个写入点: 原文偏移和该处原值.
+type complexVal struct {
+	index int
+	raw   string
 }
 
-// isStaticPath 报告以 '!' 开头的路径段是否被 gjson 当作静态值, 判定同 gjson execStatic:
-// '!' 后接 '{', '[', '"', '+', '-' 或数字, 或段名为 true/false/null/nan/inf (不区分大小写).
-// 其他如 "!x" 是普通键名, 偏移可信.
-func isStaticPath(seg string) bool {
-	name := seg[1:]
-	if len(name) > 0 {
-		switch c := name[0]; {
-		case c == '{', c == '[', c == '"', c == '+', c == '-', c >= '0' && c <= '9':
-			return true
-		}
+// replaceValues 把 jstr 中各写入点的原值替换为 raw (stringify 时写成 JSON 字符串), 一次分配构建结果.
+// vals 须已按偏移升序且区间互不重叠. 上游每个写入点都复制整个文档并在 string/[]byte 间往返转换.
+func replaceValues(jstr string, vals []complexVal, raw string, stringify bool) []byte {
+	vlen := len(raw)
+	if stringify {
+		// 只算引号; 需要转义时 appendStringify 自行扩容.
+		vlen += 2
 	}
-	for j := 0; j < len(name); j++ {
-		if name[j] == '.' || name[j] == '|' {
-			name = name[:j]
-			break
-		}
+	n := len(jstr)
+	for _, v := range vals {
+		n += vlen - len(v.raw)
 	}
-	for _, w := range [...]string{"true", "false", "null", "nan", "inf"} {
-		if strings.EqualFold(name, w) {
-			return true
+	buf := make([]byte, 0, n)
+	prev := 0
+	for _, v := range vals {
+		buf = append(buf, jstr[prev:v.index]...)
+		if stringify {
+			buf = appendStringify(buf, raw)
+		} else {
+			buf = append(buf, raw...)
 		}
+		prev = v.index + len(v.raw)
 	}
-	return false
+	return append(buf, jstr[prev:]...)
 }
 
 // valueAt 报告 jstr[index:index+len(raw)] 是否就是原文中的一个完整 JSON 值:
