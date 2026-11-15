@@ -11,6 +11,7 @@ import (
 
 	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
+	"github.com/fufuok/pkg/logger"
 )
 
 var (
@@ -86,7 +87,29 @@ func Start() {
 }
 
 // Stop 取消安装器的本地等待后退出业务, 不等待或强杀已运行的包管理命令.
+// 关闭业务前先停止 watcher 的后续周期并等待在途的配置重载与 Runtime 结束 (上限 stopWaitTimeout, 超时告警后继续),
+// 避免 Runtime 使用已关闭的资源; 在 Pipeline.Runtime 内同步调用 Stop 时不等待自身所在周期, 该周期其余 Runtime 跳过.
+// 启动后多次或并发调用时, 业务清理只执行一次, 其余调用等待清理完成后返回. 之后 scheduler 退出并取消远端拉取任务.
+// 未经 Start 启动 scheduler 时保持原行为: 每次调用都逆序执行 Pipeline.Stop.
 func Stop() {
 	debInstall.stop()
+	g := currentGate.Load()
+	if g == nil {
+		stopPipeline()
+		return
+	}
+	self, _ := utils.GoroutineID()
+	if !g.requestStop(self, stopWaitTimeout) {
+		logger.Warn().Dur("timeout", stopWaitTimeout).Msg("Stop timed out waiting for runtime pipeline")
+	}
+	first, wait := g.claimCleanup(self)
+	if !first {
+		// 已有 Stop 负责清理: 等它完成后返回 (清理内部重入时 wait 为 nil, 直接返回).
+		if wait != nil {
+			<-wait
+		}
+		return
+	}
+	defer g.finishCleanup()
 	stopPipeline()
 }

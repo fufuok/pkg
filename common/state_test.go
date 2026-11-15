@@ -36,6 +36,7 @@ func preserveCommonPackageState(t *testing.T) {
 	oldLogAlarmOnConf := logAlarmOnConf.Load()
 	oldDisabledLogger := disabledLogger
 	oldLogChan := LogChan
+	oldLogSenderDone := logSenderDone
 	oldReqUpload := ReqUpload
 	oldReqDownload := ReqDownload
 	oldReqDebug := reqDebug.Load()
@@ -73,6 +74,7 @@ func preserveCommonPackageState(t *testing.T) {
 	logFileConf = logFileWriterConf{}
 	logAlarmOnConf.Store(false)
 	LogChan = nil
+	logSenderDone = nil
 	ReqUpload = nil
 	ReqDownload = nil
 	reqDebug.Store(false)
@@ -103,6 +105,7 @@ func preserveCommonPackageState(t *testing.T) {
 		logAlarmOnConf.Store(oldLogAlarmOnConf)
 		disabledLogger = oldDisabledLogger
 		LogChan = oldLogChan
+		logSenderDone = oldLogSenderDone
 		ReqUpload = oldReqUpload
 		ReqDownload = oldReqDownload
 		reqDebug.Store(oldReqDebug)

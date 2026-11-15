@@ -7,7 +7,6 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/logger/sampler"
 	"github.com/fufuok/pkg/web/fiber/response"
@@ -24,7 +23,8 @@ func UseWhitelistCache(capacity, lifetime uint32) error {
 	return swapIPCache(&whitelistCache, capacity, lifetime)
 }
 
-// PurgeWhitelistCache 配置项变化时需要清空缓存, 由应用端在 Runtime() 调用
+// PurgeWhitelistCache 清空白名单缓存. 名单热更新后旧结果已按规则快照自动失效, 不再必须调用;
+// 可在 Runtime() 中调用以尽早释放旧快照的缓存条目.
 func PurgeWhitelistCache() {
 	if c := whitelistCache.Load(); c != nil {
 		c.lru.Purge()
@@ -71,17 +71,8 @@ func WhitelistChecker(c fiber.Ctx) bool {
 		return true
 	}
 	clientIP := tproxy.GetClientIP(c)
-	cache := whitelistCache.Load()
-	if cache != nil {
-		if ok, loaded := cache.lru.Get(clientIP); loaded {
-			return ok
-		}
-	}
-	_, ok := common.LookupIPNetsString(clientIP, wl)
-	if cache != nil {
-		cache.lru.Add(clientIP, ok)
-	}
-	return ok
+	// 缓存结果绑定名单快照, 热更新后旧结果 (含在途请求迟到的回填) 不会再放行或漏拦.
+	return lookupIPList(whitelistCache.Load(), wl, clientIP)
 }
 
 func responseForbidden(c fiber.Ctx, msg string, asAPI bool) error {

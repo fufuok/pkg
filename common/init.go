@@ -2,6 +2,7 @@ package common
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/fufuok/pkg/myip"
 
@@ -9,6 +10,11 @@ import (
 )
 
 var (
+	// stopDrainTimeout 是 Stop 等待日志 sender 排空并提交末批的时长上限, 避免 sender 异常时拖住停机.
+	// sender 只做内存拼批和非阻塞提交, 正常毫秒级完成; 取 2 秒以适配常见 5 秒的 systemd 停止期限.
+	// 包内测试可缩短, 不支持并发改写.
+	stopDrainTimeout = 2 * time.Second
+
 	// InternalIPv4 服务器 IP
 	InternalIPv4 string
 	ExternalIPv4 string
@@ -53,9 +59,25 @@ func (m *M) Runtime() error {
 	return nil
 }
 
-// Stop 程序退出时运行
+// Stop 程序退出时运行: 关闭日志队列后先等待 sender 排空并把末批提交给协程池, 再释放协程池.
+// 默认池 (MultiPool) 的 Release 会等待在途任务, 末批 HTTP 发送因此在 Stop 返回前完成.
+// sender 等待以 stopDrainTimeout 为上限, 超时只记录告警并继续停机, 不返回错误
+// (返回错误会被 master 视为致命并直接退出进程).
+// 边界: 只有 EOF 末批限时 logTailPostTimeout; 此前已提交的满批/定时批次和 PostLog 按客户端超时与重试
+// 由 Release 等待 (与 v1.4.2 相同), 日志接口挂起不响应时本函数可能超过部署的停止期限.
+// 本模块在 stopPipeline 中倒数第二个停止, 业务 Pipeline 此时已完成清理.
 func (m *M) Stop() error {
 	close(LogChan.In)
+	if done := logSenderDone; done != nil {
+		// 必须先于释放协程池: 否则 sender 的末批提交会被已关闭的池拒绝而丢弃.
+		timer := time.NewTimer(stopDrainTimeout)
+		select {
+		case <-done:
+		case <-timer.C:
+			Log().Warn().Dur("timeout", stopDrainTimeout).Msg("Log sender drain timed out")
+		}
+		timer.Stop()
+	}
 	poolRelease()
 	return nil
 }

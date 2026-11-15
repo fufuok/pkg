@@ -74,6 +74,9 @@ func HeadLines(filename string, num int) ([]string, error) {
 // n >= 0: at most n lines
 // n < 0: whole file
 // Ref: gopsutil
+//
+// 无末尾换行的最后一行与普通行一样受 offset/n 约束 (offset 超过总行数时返回空).
+// 只有 EOF 视为正常结束; 其他读取错误 (如目标是目录) 连同已读到的行一起返回, 不伪装成成功.
 func ReadLinesOffsetN(filename string, offset uint, n int) ([]string, error) {
 	f, err := os.Open(filename)
 	if err != nil {
@@ -87,16 +90,21 @@ func ReadLinesOffsetN(filename string, offset uint, n int) ([]string, error) {
 	r := bufio.NewReader(f)
 	for i := 0; i < n+int(offset) || n < 0; i++ {
 		line, err := r.ReadString('\n')
-		if err != nil {
-			if err == io.EOF && len(line) > 0 {
-				ret = append(ret, strings.Trim(line, "\n"))
-			}
+		if err != nil && !errors.Is(err, io.EOF) {
+			return ret, fmt.Errorf("failed to read lines: %w", err)
+		}
+		// EOF 且没有剩余文本: 文件已读完.
+		if err != nil && len(line) == 0 {
 			break
 		}
-		if i < int(offset) {
-			continue
+		// 完整行和 EOF 前的末行统一按 offset 跳过, 末行不能绕过 offset 检查.
+		if i >= int(offset) {
+			ret = append(ret, strings.Trim(line, "\n"))
 		}
-		ret = append(ret, strings.Trim(line, "\n"))
+		if err != nil {
+			// EOF 前的末行已处理完毕.
+			break
+		}
 	}
 	return ret, nil
 }
@@ -308,7 +316,11 @@ func ZipDir(srcDir, zipFilePath string) (err error) {
 	return err
 }
 
-// UnzipDir 解压 zip 到目录
+// UnzipDir 解压 zip 到目录.
+// 目标目录不存在时自动创建. 所有写入经 os.Root 约束在 dstDir 内: 条目名含 ".." 直接拒绝,
+// 目标树中已有的符号链接可以指向树内, 但指向树外 (或为绝对路径链接) 时返回错误, 不会写出目标目录.
+// 文件条目的父目录按需创建, 合法 ZIP 缺少显式目录条目或文件条目先于目录条目时同样可以解压.
+// 遇到错误立即返回, 此前已解压的条目保留.
 func UnzipDir(zipFile, dstDir string) error {
 	reader, err := zip.OpenReader(zipFile)
 	if err != nil {
@@ -318,12 +330,25 @@ func UnzipDir(zipFile, dstDir string) error {
 		_ = reader.Close()
 	}()
 
+	// 原实现遇到目录条目时 MkdirAll 会顺带建出 dstDir, 这里统一预先创建以保持兼容.
+	if err := os.MkdirAll(dstDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create directory: %w", err)
+	}
+	root, err := os.OpenRoot(dstDir)
+	if err != nil {
+		return fmt.Errorf("failed to open destination directory: %w", err)
+	}
+	defer func() {
+		_ = root.Close()
+	}()
+
 	for _, file := range reader.File {
 		if strings.Contains(file.Name, "..") {
 			return fmt.Errorf("illegal file path in zip: %v", file.Name)
 		}
 
-		fullPath := filepath.Join(dstDir, file.Name)
+		// 与原 filepath.Join(dstDir, name) 的相对部分一致: 清理多余分隔符, 去掉前导 "/" 并转为本地分隔符.
+		name := filepath.Join(".", file.Name)
 
 		if file.FileInfo().IsDir() {
 			directoryMode := file.Mode().Perm()
@@ -332,15 +357,49 @@ func UnzipDir(zipFile, dstDir string) error {
 			if directoryMode == 0 || directoryMode&0o111 == 0 {
 				directoryMode = 0o755
 			}
-			if err := os.MkdirAll(fullPath, directoryMode); err != nil {
+			if err := root.MkdirAll(name, directoryMode); err != nil {
 				return fmt.Errorf("failed to create directory: %w", err)
 			}
 			continue
 		}
 
-		if err := UnzipFile(file, fullPath); err != nil {
+		if err := unzipFileInRoot(root, file, name); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// unzipFileInRoot 把单个文件条目写到 root 内的相对路径 name, 缺失的父目录按 0o755 创建.
+// 父目录和文件均经 root 解析, 路径中任何指向 root 之外的符号链接都会使操作失败.
+func unzipFileInRoot(root *os.Root, zipFile *zip.File, name string) error {
+	if dir := filepath.Dir(name); dir != "." {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("failed to create directory: %w", err)
+		}
+	}
+
+	src, err := zipFile.Open()
+	if err != nil {
+		return fmt.Errorf("failed to open zip file: %w", err)
+	}
+	defer func() {
+		_ = src.Close()
+	}()
+
+	// os.Root.OpenFile 只接受权限位, 带 setuid/setgid/sticky 或类型位 (如 zip -y 的符号链接条目) 的模式会被拒绝;
+	// 旧实现经 os.OpenFile 时类型位被忽略, 符号链接条目写成内容为链接目标的普通文件. 这里只取权限位保持可解压,
+	// 不再保留特殊权限位 (解压不可信归档时也不应写出 setuid 文件).
+	dst, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, zipFile.Mode().Perm())
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer func() {
+		_ = dst.Close()
+	}()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("failed to copy file: %w", err)
 	}
 	return nil
 }

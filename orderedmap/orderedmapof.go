@@ -2,8 +2,12 @@ package orderedmap
 
 import (
 	"bytes"
+	"encoding"
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"sort"
+	"strconv"
 )
 
 type PairOf[K comparable, V any] struct {
@@ -112,6 +116,8 @@ func (o *OrderedMapOf[K, V]) Sort(lessFunc func(a *PairOf[K, V], b *PairOf[K, V]
 	}
 }
 
+// MarshalJSON 按插入 (或排序后) 的键顺序输出 JSON 对象, 键按 encoding/json 的 map 键规则转为字符串 (见 writeKeyOf).
+// 键类型无法表示为 JSON 字符串时返回错误, 不输出非法对象.
 func (o *OrderedMapOf[K, V]) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteByte('{')
@@ -122,7 +128,7 @@ func (o *OrderedMapOf[K, V]) MarshalJSON() ([]byte, error) {
 			buf.WriteByte(',')
 		}
 		// add key
-		if err := encoder.Encode(k); err != nil {
+		if err := writeKeyOf(&buf, encoder, k); err != nil {
 			return nil, err
 		}
 		buf.WriteByte(':')
@@ -133,4 +139,53 @@ func (o *OrderedMapOf[K, V]) MarshalJSON() ([]byte, error) {
 	}
 	buf.WriteByte('}')
 	return buf.Bytes(), nil
+}
+
+// writeKeyOf 把 k 编码为 JSON 对象键 (带引号的字符串) 追加到 buf, encoder 须写入 buf 且已设置 escapeHTML.
+// 先走旧版编码路径 (encoder.Encode(k)), 成功且结果是 JSON 字符串即采用, 旧版已合法的输出逐字节不变
+// (含 MarshalJSON 返回字符串的键, 这一点与 encoding/json 忽略键的 MarshalJSON 不同, 为兼容保留).
+// 旧路径出错 (如非法 json.Number) 或结果不是 JSON 字符串 (如数字) 时, 按 encoding/json 的 map 键规则回退:
+//   - 底层为字符串的类型: 取其字符串值;
+//   - 实现 encoding.TextMarshaler: 取 MarshalText 结果, nil 指针为空串;
+//   - 整数/无符号整数类型 (含底层为整数的自定义类型): 十进制字符串;
+//   - 其他类型 (bool, 浮点, 普通结构体, nil 接口等) 返回错误, encoding/json 对这类 map 键同样报错.
+//
+// K 为接口类型时按动态值判断. 旧版直接编码键, 整数键会生成 {42:"v"} 这类非法对象且不报错.
+func writeKeyOf[K comparable](buf *bytes.Buffer, encoder *json.Encoder, k K) error {
+	kv := any(k)
+	// 最常见的 string 键直接编码, 不走反射; 复用已装箱的 kv, 避免再次装箱分配.
+	if _, ok := kv.(string); ok {
+		return encoder.Encode(kv)
+	}
+	start := buf.Len()
+	// Encoder 只在编码成功后整体写出, 出错时 buf 不含残留; 成功但不是字符串时撤销本次输出.
+	if err := encoder.Encode(kv); err == nil {
+		if b := buf.Bytes(); len(b) > start && b[start] == '"' {
+			return nil
+		}
+		buf.Truncate(start)
+	}
+
+	rv := reflect.ValueOf(kv)
+	if rv.Kind() == reflect.String {
+		return encoder.Encode(rv.String())
+	}
+	if tm, ok := kv.(encoding.TextMarshaler); ok {
+		if rv.Kind() == reflect.Pointer && rv.IsNil() {
+			return encoder.Encode("")
+		}
+		text, err := tm.MarshalText()
+		if err != nil {
+			return fmt.Errorf("orderedmap: marshal text key of type %T: %w", kv, err)
+		}
+		return encoder.Encode(string(text))
+	}
+	switch {
+	case rv.CanInt():
+		return encoder.Encode(strconv.FormatInt(rv.Int(), 10))
+	case rv.CanUint():
+		return encoder.Encode(strconv.FormatUint(rv.Uint(), 10))
+	default:
+		return fmt.Errorf("orderedmap: unsupported key type %T, key must marshal to a JSON string", kv)
+	}
 }

@@ -55,6 +55,10 @@ type Roller struct {
 	maker  FilenameMaker
 	logger Logger
 
+	// pending 是上次打开失败的滚动目标, 打开成功或 maker 给出其他新名之前每次刷新都会重试.
+	// TimeBasedFilename 这类 maker 生成新名后即记住时间标识, 之后对旧名只返回旧名, 不另存就无法重试.
+	pending string
+
 	file      *os.File
 	writer    *bufio.Writer
 	rebuild   bool
@@ -79,7 +83,7 @@ func NewRoller(filename string, opt *Options) (*Roller, error) {
 		firstOpen: true,
 	}
 	r.setup(opt)
-	if err := r.openNewFile(); err != nil {
+	if err := r.openNewFile(filename); err != nil {
 		return nil, err
 	}
 	r.stop = make(chan struct{}, 1)
@@ -138,6 +142,8 @@ func (r *Roller) flushTimer() {
 	}
 }
 
+// flush 有缓冲数据时刷盘, 并按 maker 生成的文件名决定是否滚动.
+// 缓冲为空时不检查滚动. 滚动目标打开失败会继续写旧文件, 之后每次刷新都重试并记录错误, 直到成功或目标变化.
 func (r *Roller) flush() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -148,12 +154,18 @@ func (r *Roller) flush() {
 		r.logger.Errorf("Failed to write file: %v", err)
 	}
 	name := r.maker.MakeFilename(r.name)
+	if name == r.name && r.pending != "" {
+		// maker 已记住新时间标识而返回当前名: 继续重试上次未能打开的目标.
+		name = r.pending
+	}
 	if r.name != name {
-		// 滚动文件
-		r.name = name
-		if err := r.openNewFile(); err != nil {
+		// 滚动文件: 打开成功后才更新 r.name; 失败时继续写旧文件并记下目标, 下次刷新重试.
+		if err := r.openNewFile(name); err != nil {
+			r.pending = name
 			r.logger.Errorf("Unable to create new file: %v", err)
+			return
 		}
+		r.pending = ""
 	}
 }
 
@@ -169,19 +181,21 @@ func (r *Roller) WriteString(s string) (int, error) {
 	return r.writer.WriteString(s)
 }
 
-// openNewFile 打开当前目标文件.
+// openNewFile 打开目标文件 name, 成功后才把它发布为当前文件名 r.name.
+// 失败时 r.name, file 和 writer 保持原样, 调用方可继续写旧文件并稍后重试同一目标.
 // Rebuild 只在实例启动后的滚动中删除目标; 首次打开必须追加, 避免同日重启丢掉当天日志.
 // 目标尚不存在时的 Remove 失败是预期情况, 不记错误.
-func (r *Roller) openNewFile() error {
+func (r *Roller) openNewFile(name string) error {
 	if r.rebuild && !r.firstOpen {
-		if err := os.Remove(r.name); err != nil && !os.IsNotExist(err) {
-			r.logger.Errorf("rebuild file: %s, err: %v", r.name, err)
+		if err := os.Remove(name); err != nil && !os.IsNotExist(err) {
+			r.logger.Errorf("rebuild file: %s, err: %v", name, err)
 		}
 	}
-	file, err := os.OpenFile(r.name, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	file, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
+	r.name = name
 	if r.file != nil {
 		_ = r.file.Close()
 	}

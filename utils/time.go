@@ -253,9 +253,11 @@ func EndOfNextMonth(t time.Time) time.Time {
 	return BeginOfMonth(BeginOfMonth(t).AddDate(0, 0, 62)).Add(-time.Nanosecond)
 }
 
-// GetMonthDays 当月天数
+// GetMonthDays 当月天数 (按 t 所在时区的日历年月计算).
+// 按日历取月份天数, 不用相邻月初的经过时长除以 24: 夏令时时区进入夏令时的月份只有 N 天减 1 小时,
+// 截断后会少算一天 (如 America/New_York 的 3 月得到 30).
 func GetMonthDays(t time.Time) int {
-	return int(BeginOfNextMonth(t).Sub(BeginOfMonth(t)).Hours() / 24)
+	return DaysInMonth(t.Year(), t.Month())
 }
 
 // BeginOfYear 本年第一天 0 点

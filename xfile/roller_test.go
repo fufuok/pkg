@@ -348,3 +348,36 @@ func (l *recordingXFileLogger) contains(value string) bool {
 	}
 	return false
 }
+
+// TestRollerRetriesFailedRollover 验证滚动目标首次打开失败后不提前记住目标名:
+// 一次性生成新名的 maker (与 TimeBasedFilename 同样只在时间标识变化时返回新名) 下, 环境恢复后仍会重试并切换.
+func TestRollerRetriesFailedRollover(t *testing.T) {
+	root := t.TempDir()
+	oldFile := filepath.Join(root, "old.log")
+	nextFile := filepath.Join(root, "missing", "new.log")
+	logger := new(recordingXFileLogger)
+	maker := &scriptedFilenameMaker{next: nextFile}
+	roller, closeRoller := newXFileTestRoller(t, oldFile, &Options{
+		FilenameMaker: maker,
+		Logger:        logger,
+		FlushInterval: time.Hour,
+	})
+
+	_, err := roller.WriteString("first\n")
+	assert.Nil(t, err)
+	roller.flush()
+	assert.True(t, logger.contains("Unable to create new file:"))
+	assert.Equal(t, oldFile, roller.name)
+
+	assert.Nil(t, os.Mkdir(filepath.Dir(nextFile), 0o755))
+	_, err = roller.WriteString("second\n")
+	assert.Nil(t, err)
+	roller.flush()
+	assert.Equal(t, nextFile, roller.name)
+
+	_, err = roller.WriteString("third\n")
+	assert.Nil(t, err)
+	closeRoller()
+	assert.Equal(t, "first\nsecond\n", readXFileTestFile(t, oldFile))
+	assert.Equal(t, "third\n", readXFileTestFile(t, nextFile))
+}

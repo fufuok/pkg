@@ -87,7 +87,8 @@ func (w Watcher) Stop() {
 	}
 }
 
-func initWatcher() {
+// initWatcher 建立主程序和配置文件的监控基线, 并启动受 g 约束的 watcher.
+func initWatcher(g *reloadGate) {
 	mainFile = utils.Executable(true)
 	if mainFile == "" {
 		log.Fatalln("Failed to initialize Watcher: missing executable", "\nbye.")
@@ -113,11 +114,12 @@ func initWatcher() {
 		logger.Warn().Strs("keys", keys).Msg("Watching")
 	}
 
-	go startWatcher()
+	go startWatcher(g)
 }
 
-// 监听程序二进制变化(重启)和配置文件(热加载)
-func startWatcher() {
+// startWatcher 监听程序二进制变化(重启)和配置文件(热加载), 直到 g 停机.
+// 每个检查周期都在 g 的 begin/end 之间执行, Stop 据此等待在途的 LoadConfig 和 Runtime 结束后再关闭业务.
+func startWatcher(g *reloadGate) {
 	cfg := config.Config().SYSConf
 	interval := cfg.WatcherIntervalDuration
 	logger.Warn().Int("count", watchers.Size()+2).Str("interval", interval.String()).Msg("Watching")
@@ -126,43 +128,72 @@ func startWatcher() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		if c := mainWatcher(); c {
-			continue
+	// watcher 始终在本 goroutine 执行周期, ID 只取一次, 供 Stop 识别 Runtime 内的重入调用.
+	owner, _ := utils.GoroutineID()
+	for {
+		select {
+		case <-g.quit:
+			return
+		case <-ticker.C:
 		}
-
-		appWatcher()
-
-		if c := configWatcher(); c {
-			continue
+		// 停机后不再开始新周期.
+		if !g.begin(owner) {
+			return
 		}
-
-		// 第一时间加载新配置
-		runtimeConfigPipeline()
-		cfg = config.Config().SYSConf
-
-		if c := checkUpgradeOrRestart(cfg); c {
-			continue
-		}
-
-		runtimePipeline()
-		ConfigLoadTime = common.GTimeNow()
-
-		// 更新配置文件监控周期
-		if interval != cfg.WatcherIntervalDuration {
-			interval = cfg.WatcherIntervalDuration
-			ticker.Reset(interval)
-			logger.Warn().Str("interval", interval.String()).Msg("Main watcher interval updated")
-		}
-
-		// 最终的配置列表和 MD5
-		_, confFiles := MD5ConfigFiles()
-		logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> Reload config <<<<<<<")
-		logger.Warn().Strs("configs", confFiles).Msg("Watching")
-		logger.Warn().RawJSON("data", json.MustJSON(config.Config().NodeConf.NodeInfo)).Msg("Node info updated")
-		logger.Warn().Int("count", watchers.Size()+2).Str("interval", interval.String()).Msg("Watching")
-		reloadChan <- true
+		func() {
+			defer g.end()
+			watchOnce(g, ticker, &interval)
+		}()
 	}
+}
+
+// watchOnce 执行一次检查周期: 二进制变化, 应用监控器, 配置变化及重载后的 Runtime.
+// 二进制变化需重启, 配置未变化或加载失败, 配置要求重启, 以及周期内已请求停机时提前结束本周期.
+// interval 随新配置的监控周期更新并重置 ticker.
+func watchOnce(g *reloadGate, ticker *time.Ticker, interval *time.Duration) {
+	if c := mainWatcher(); c {
+		return
+	}
+
+	appWatcher()
+
+	if c := configWatcher(); c {
+		return
+	}
+
+	// 第一时间加载新配置
+	runtimeConfigPipeline()
+	if g.stopping() {
+		// Runtime 内重入 Stop 或外部 Stop 正在等待: 不再重启或继续重载.
+		return
+	}
+	cfg := config.Config().SYSConf
+
+	if c := checkUpgradeOrRestart(cfg); c {
+		return
+	}
+
+	runtimePipeline()
+	if g.stopping() {
+		return
+	}
+	ConfigLoadTime = common.GTimeNow()
+
+	// 更新配置文件监控周期
+	if *interval != cfg.WatcherIntervalDuration {
+		*interval = cfg.WatcherIntervalDuration
+		ticker.Reset(*interval)
+		logger.Warn().Str("interval", interval.String()).Msg("Main watcher interval updated")
+	}
+
+	// 最终的配置列表和 MD5
+	_, confFiles := MD5ConfigFiles()
+	logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> Reload config <<<<<<<")
+	logger.Warn().Strs("configs", confFiles).Msg("Watching")
+	logger.Warn().RawJSON("data", json.MustJSON(config.Config().NodeConf.NodeInfo)).Msg("Node info updated")
+	logger.Warn().Int("count", watchers.Size()+2).Str("interval", interval.String()).Msg("Watching")
+	// 最后一次停机检查之后仍有文件 MD5 与日志 I/O; 期间 Stop 等待超时会使 scheduler 先退出, 发送须可随 quit 放弃.
+	notifyScheduler(reloadChan)
 }
 
 func mainWatcher() (needContinue bool) {
@@ -215,7 +246,7 @@ func checkUpgradeOrRestart(cfg config.SYSConf) (needContinue bool) {
 	// 重启程序指令
 	if cfg.RestartMain {
 		logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> Restart main(config) <<<<<<<")
-		restartChan <- true
+		notifyScheduler(restartChan)
 		return true
 	}
 	return

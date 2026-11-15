@@ -58,13 +58,14 @@ func Commaf(v float64) string {
 	return buf.String()
 }
 
-// BigCommaf big.Float 千分位分隔字符串
+// BigCommaf big.Float 千分位分隔字符串, 负数带前导 "-"; 只读入参, 不修改调用方的数值.
 // Ref: dustin/go-humanize
 func BigCommaf(v *big.Float) string {
 	buf := &bytes.Buffer{}
 	if v.Sign() < 0 {
 		buf.Write([]byte{'-'})
-		v.Abs(v)
+		// 在副本上取绝对值, 不修改调用方的数值 (上游实现会就地 Abs 抹掉入参的负号); 副本沿用原精度, 文本不变.
+		v = new(big.Float).Abs(v)
 	}
 
 	comma := []byte{','}

@@ -272,3 +272,159 @@ func writeXFileTestZipEntry(t *testing.T, filename, entryName, content string) {
 	fileClosed = true
 	assert.Nil(t, err)
 }
+
+// TestReadLinesOffsetBeyondTrailingLine 验证无末尾换行的最后一行同样受 offset/n 约束,
+// 且除 EOF 外的读取错误 (如读取目录) 必须返回, 不能伪装成空结果.
+func TestReadLinesOffsetBeyondTrailingLine(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "lines.txt")
+	writeXFileTestFile(t, filename, "first\nlast")
+
+	lines, err := ReadLinesOffsetN(filename, 3, 1)
+	assert.Nil(t, err)
+	assert.Equal(t, 0, len(lines))
+
+	lines, err = ReadLinesOffsetN(filename, 2, -1)
+	assert.Nil(t, err)
+	assert.Equal(t, 0, len(lines))
+
+	lines, err = ReadLinesOffsetN(filename, 1, 1)
+	assert.Nil(t, err)
+	assert.Equal(t, []string{"last"}, lines)
+
+	lines, err = ReadLinesOffsetN(filename, 1, -1)
+	assert.Nil(t, err)
+	assert.Equal(t, []string{"last"}, lines)
+
+	lines, err = ReadLinesOffsetN(filename, 0, 1)
+	assert.Nil(t, err)
+	assert.Equal(t, []string{"first"}, lines)
+
+	_, err = ReadLines(root)
+	assert.NotNil(t, err)
+}
+
+// TestUnzipDirImplicitParents 验证没有显式目录条目, 或文件条目先于目录条目的合法 ZIP 能正常解压,
+// 目标目录不存在时同样自动创建.
+func TestUnzipDirImplicitParents(t *testing.T) {
+	root := t.TempDir()
+	archive := filepath.Join(root, "implicit.zip")
+	writeXFileTestZipEntries(t, archive, []xfileTestZipEntry{
+		{name: "nested/deep/value.txt", content: "value"},
+		{name: "late/file.txt", content: "late"},
+		{name: "late/"},
+		{name: "top.txt", content: "top"},
+	})
+	dst := filepath.Join(root, "missing", "output")
+	assert.Nil(t, UnzipDir(archive, dst))
+	assert.Equal(t, "value", readXFileTestFile(t, filepath.Join(dst, "nested", "deep", "value.txt")))
+	assert.Equal(t, "late", readXFileTestFile(t, filepath.Join(dst, "late", "file.txt")))
+	assert.Equal(t, "top", readXFileTestFile(t, filepath.Join(dst, "top.txt")))
+	assert.True(t, IsDir(filepath.Join(dst, "late")))
+}
+
+// TestUnzipDirSymlinkBoundary 验证目标树中已有的符号链接不能把写入带出目标目录,
+// 同时指向目标目录内部的相对链接仍可正常使用.
+func TestUnzipDirSymlinkBoundary(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(root, "outside")
+	assert.Nil(t, os.Mkdir(outside, 0o755))
+	writeXFileTestFile(t, filepath.Join(outside, "target.txt"), "original")
+
+	t.Run("directory link escapes", func(t *testing.T) {
+		dst := filepath.Join(root, "dir-escape")
+		assert.Nil(t, os.Mkdir(dst, 0o755))
+		if err := os.Symlink(outside, filepath.Join(dst, "redirect")); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		archive := filepath.Join(root, "dir-escape.zip")
+		writeXFileTestZipEntry(t, archive, "redirect/escaped.txt", "escaped")
+		assert.NotNil(t, UnzipDir(archive, dst))
+		assert.False(t, IsExist(filepath.Join(outside, "escaped.txt")))
+	})
+
+	t.Run("file link escapes", func(t *testing.T) {
+		dst := filepath.Join(root, "file-escape")
+		assert.Nil(t, os.Mkdir(dst, 0o755))
+		if err := os.Symlink(filepath.Join(outside, "target.txt"), filepath.Join(dst, "link.txt")); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		archive := filepath.Join(root, "file-escape.zip")
+		writeXFileTestZipEntry(t, archive, "link.txt", "overwritten")
+		assert.NotNil(t, UnzipDir(archive, dst))
+		assert.Equal(t, "original", readXFileTestFile(t, filepath.Join(outside, "target.txt")))
+	})
+
+	t.Run("relative link inside root", func(t *testing.T) {
+		dst := filepath.Join(root, "inside")
+		assert.Nil(t, os.MkdirAll(filepath.Join(dst, "real"), 0o755))
+		if err := os.Symlink("real", filepath.Join(dst, "alias")); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		archive := filepath.Join(root, "inside.zip")
+		writeXFileTestZipEntry(t, archive, "alias/kept.txt", "kept")
+		assert.Nil(t, UnzipDir(archive, dst))
+		assert.Equal(t, "kept", readXFileTestFile(t, filepath.Join(dst, "real", "kept.txt")))
+	})
+}
+
+// xfileTestZipEntry 描述测试 ZIP 的单个条目; 名称以 / 结尾表示目录条目.
+type xfileTestZipEntry struct {
+	name    string
+	content string
+}
+
+// writeXFileTestZipEntries 按给定顺序写入多个条目, 用于构造无目录条目或乱序条目的合法 ZIP.
+func writeXFileTestZipEntries(t *testing.T, filename string, entries []xfileTestZipEntry) {
+	t.Helper()
+	file, err := os.Create(filename)
+	assert.Nil(t, err)
+	writer := zip.NewWriter(file)
+	for _, e := range entries {
+		w, err := writer.Create(e.name)
+		assert.Nil(t, err)
+		if !strings.HasSuffix(e.name, "/") {
+			_, err = w.Write([]byte(e.content))
+			assert.Nil(t, err)
+		}
+	}
+	assert.Nil(t, writer.Close())
+	assert.Nil(t, file.Close())
+}
+
+// TestUnzipDirSpecialModeEntries 验证带 setuid/sticky 权限位或符号链接类型位 (zip -y) 的条目仍可解压:
+// 与旧实现一致, 符号链接条目写成内容为链接目标的普通文件; 只保留权限位, 不写出特殊权限位.
+func TestUnzipDirSpecialModeEntries(t *testing.T) {
+	root := t.TempDir()
+	archive := filepath.Join(root, "modes.zip")
+	file, err := os.Create(archive)
+	assert.Nil(t, err)
+	writer := zip.NewWriter(file)
+	for _, e := range []struct {
+		name, content string
+		mode          os.FileMode
+	}{
+		{"bin/tool", "#!/bin/sh\n", 0o755 | os.ModeSetuid | os.ModeSticky},
+		{"link", "bin/tool", 0o777 | os.ModeSymlink},
+	} {
+		h := &zip.FileHeader{Name: e.name, Method: zip.Deflate}
+		h.SetMode(e.mode)
+		w, err := writer.CreateHeader(h)
+		assert.Nil(t, err)
+		_, err = w.Write([]byte(e.content))
+		assert.Nil(t, err)
+	}
+	assert.Nil(t, writer.Close())
+	assert.Nil(t, file.Close())
+
+	dst := filepath.Join(root, "out")
+	assert.Nil(t, UnzipDir(archive, dst))
+	assert.Equal(t, "#!/bin/sh\n", readXFileTestFile(t, filepath.Join(dst, "bin", "tool")))
+	info, err := os.Lstat(filepath.Join(dst, "link"))
+	assert.Nil(t, err)
+	assert.True(t, info.Mode().IsRegular())
+	assert.Equal(t, "bin/tool", readXFileTestFile(t, filepath.Join(dst, "link")))
+	info, err = os.Stat(filepath.Join(dst, "bin", "tool"))
+	assert.Nil(t, err)
+	assert.Equal(t, os.FileMode(0), info.Mode()&(os.ModeSetuid|os.ModeSticky))
+}

@@ -154,3 +154,26 @@ func TestParseInts(t *testing.T) {
 		assert.Equal(t, v.ok, err == nil)
 	}
 }
+
+// TestBigCommaKeepsInput 验证 BigComma 只读入参: 输出千分位文本的同时, 调用方的数值和符号保持不变.
+func TestBigCommaKeepsInput(t *testing.T) {
+	for _, v := range []struct {
+		in       string
+		expected string
+	}{
+		{"0", "0"},
+		{"7", "7"},
+		{"999", "999"},
+		{"-10", "-10"},
+		{"-999", "-999"},
+		{"1000", "1,000"},
+		{"123456789", "123,456,789"},
+		{"-123456789", "-123,456,789"},
+		{"-1000000000000000000000", "-1,000,000,000,000,000,000,000"},
+	} {
+		b, ok := new(big.Int).SetString(v.in, 10)
+		assert.True(t, ok, v.in)
+		assert.Equal(t, v.expected, BigComma(b), v.in)
+		assert.Equal(t, v.in, b.String(), "input modified: "+v.in)
+	}
+}

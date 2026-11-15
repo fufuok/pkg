@@ -43,7 +43,7 @@ func TestGinIPCacheReuseAndConcurrentReload(t *testing.T) {
 	if first == nil {
 		t.Fatal("expected initialized whitelist cache")
 	}
-	first.lru.Add("10.1.2.3", true)
+	first.lru.Add("10.1.2.3", ipVerdict{ok: true})
 	if err := UseWhitelistCache(128, 60); err != nil {
 		t.Fatal(err)
 	}
@@ -193,4 +193,72 @@ func TestGinConcurrentLoadConfigAndIPChecker(t *testing.T) {
 		}
 	}
 	wg.Wait()
+}
+
+// TestGinIPCacheBoundToRuleSnapshot 验证名单缓存绑定规则快照: 热更新不调用 Purge 也立即生效,
+// 更新前读旧快照的在途请求在 Purge 之后迟到回填, 也不会让已撤销的白名单继续放行或新增黑名单漏拦.
+func TestGinIPCacheBoundToRuleSnapshot(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	resetGinIPTestState(t)
+	mustNet := func(s string) *net.IPNet {
+		_, n, err := net.ParseCIDR(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	oldRules := map[*net.IPNet]int64{mustNet("10.0.0.0/8"): 1}
+	newRules := map[*net.IPNet]int64{mustNet("192.0.2.0/24"): 1}
+	if err := UseWhitelistCache(128, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := UseBlacklistCache(128, 0); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	c.Request.RemoteAddr = "10.1.2.3:12345"
+
+	// 白名单: 旧规则放行并写入缓存; 换成新规则后不 Purge 也必须拒绝.
+	config.Whitelist = oldRules
+	if !WhitelistChecker(c) {
+		t.Fatal("old whitelist should allow 10.1.2.3")
+	}
+	config.Whitelist = newRules
+	if WhitelistChecker(c) {
+		t.Fatal("cached verdict of old whitelist must not survive rule reload")
+	}
+	// 在途请求按旧快照算完, 在发布新规则并 Purge 之后才回填.
+	PurgeWhitelistCache()
+	if !lookupIPList(whitelistCache.Load(), oldRules, "10.1.2.3") {
+		t.Fatal("late request computed with old rules should still see its own verdict")
+	}
+	if WhitelistChecker(c) {
+		t.Fatal("late backfill from old whitelist snapshot revived revoked access")
+	}
+
+	// 黑名单: 旧规则不拦, 新规则拦截, 迟到回填的 "不在黑名单" 不得生效.
+	config.Blacklist = newRules
+	if BlacklistChecker(c) {
+		t.Fatal("old blacklist should not block 10.1.2.3")
+	}
+	blockRules := map[*net.IPNet]int64{mustNet("10.1.0.0/16"): 1}
+	config.Blacklist = blockRules
+	PurgeBlacklistCache()
+	_ = lookupIPList(blacklistCache.Load(), newRules, "10.1.2.3")
+	if !BlacklistChecker(c) {
+		t.Fatal("late backfill from old blacklist snapshot let a newly blocked IP pass")
+	}
+
+	// 同一快照下命中缓存零分配.
+	cache := whitelistCache.Load()
+	_ = lookupIPList(cache, newRules, "10.1.2.3")
+	if allocs := testing.AllocsPerRun(100, func() {
+		if lookupIPList(cache, newRules, "10.1.2.3") {
+			t.Fatal("unexpected allow")
+		}
+	}); allocs != 0 {
+		t.Fatalf("cached lookup allocs = %v, want 0", allocs)
+	}
 }

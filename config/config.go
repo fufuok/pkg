@@ -564,7 +564,8 @@ func parseWhitelistConfig(cfg *MainConf) (map[*net.IPNet]int64, error) {
 	}
 
 	// 读取白名单 IP 文件, 追加到 IP 列表
-	if ips, e := xfile.ReadLines(cfg.WhitelistConf.Path); e == nil && len(ips) > 0 {
+	// 读到一半出错时 ReadLines 返回已读行和错误; 沿用旧行为加载已读部分, 不因中途 I/O 错误整文件丢弃 (对白名单会变成放行全部).
+	if ips, _ := xfile.ReadLines(cfg.WhitelistConf.Path); len(ips) > 0 {
 		cfg.Whitelist = append(cfg.Whitelist, ips...)
 	}
 
@@ -581,7 +582,8 @@ func parseBlacklistConfig(cfg *MainConf) (map[*net.IPNet]int64, error) {
 	}
 
 	// 读取黑名单 IP 文件, 追加到 IP 列表
-	if ips, e := xfile.ReadLines(cfg.BlacklistConf.Path); e == nil && len(ips) > 0 {
+	// 读到一半出错时 ReadLines 返回已读行和错误; 沿用旧行为加载已读部分, 不因中途 I/O 错误整文件丢弃 (对白名单会变成放行全部).
+	if ips, _ := xfile.ReadLines(cfg.BlacklistConf.Path); len(ips) > 0 {
 		cfg.Blacklist = append(cfg.Blacklist, ips...)
 	}
 

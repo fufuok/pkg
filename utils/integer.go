@@ -122,14 +122,15 @@ func Commau(v uint64) string {
 	return sign + strings.Join(parts[j:], ",")
 }
 
-// BigComma big.Int 千分位分隔字符串
+// BigComma big.Int 千分位分隔字符串, 负数带前导 "-".
+// 只读入参: 取绝对值和逐组除法都在副本上进行, 调用方的数值和符号保持不变 (上游实现会就地 Abs/DivMod 破坏入参).
 // Ref: dustin/go-humanize
 func BigComma(b *big.Int) string {
 	sign := ""
 	if b.Sign() < 0 {
 		sign = "-"
-		b.Abs(b)
 	}
+	b = new(big.Int).Abs(b)
 
 	athousand := big.NewInt(1000)
 	c := (&big.Int{}).Set(b)

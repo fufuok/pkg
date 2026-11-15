@@ -171,3 +171,21 @@ func BenchmarkBigCommaf(b *testing.B) {
 		BigCommaf(big.NewFloat(1234567890.83584))
 	}
 }
+
+// TestBigCommafKeepsInput 验证 BigCommaf 只读入参: 负数格式化后调用方的数值仍为负, 正数和零同样不变.
+func TestBigCommafKeepsInput(t *testing.T) {
+	for _, v := range []struct {
+		in       float64
+		expected string
+	}{
+		{0, "0"},
+		{999.5, "999.5"},
+		{-1234.5, "-1,234.5"},
+		{-123456789, "-123,456,789"},
+	} {
+		f := big.NewFloat(v.in)
+		assert.Equal(t, v.expected, BigCommaf(f))
+		got, _ := f.Float64()
+		assert.Equal(t, v.in, got, "input modified")
+	}
+}

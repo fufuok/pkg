@@ -6,7 +6,6 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/fufuok/pkg/common"
 	"github.com/fufuok/pkg/config"
 	"github.com/fufuok/pkg/web/fiber/tproxy"
 )
@@ -19,7 +18,8 @@ func UseBlacklistCache(capacity, lifetime uint32) error {
 	return swapIPCache(&blacklistCache, capacity, lifetime)
 }
 
-// PurgeBlacklistCache 配置项变化时需要清空缓存, 由应用端在 Runtime() 调用
+// PurgeBlacklistCache 清空黑名单缓存. 名单热更新后旧结果已按规则快照自动失效, 不再必须调用;
+// 可在 Runtime() 中调用以尽早释放旧快照的缓存条目.
 func PurgeBlacklistCache() {
 	if c := blacklistCache.Load(); c != nil {
 		c.lru.Purge()
@@ -44,15 +44,6 @@ func BlacklistChecker(c fiber.Ctx) bool {
 		return false
 	}
 	clientIP := tproxy.GetClientIP(c)
-	cache := blacklistCache.Load()
-	if cache != nil {
-		if ok, loaded := cache.lru.Get(clientIP); loaded {
-			return ok
-		}
-	}
-	_, ok := common.LookupIPNetsString(clientIP, bl)
-	if cache != nil {
-		cache.lru.Add(clientIP, ok)
-	}
-	return ok
+	// 缓存结果绑定名单快照, 热更新后旧结果 (含在途请求迟到的回填) 不会再放行或漏拦.
+	return lookupIPList(blacklistCache.Load(), bl, clientIP)
 }

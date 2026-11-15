@@ -38,6 +38,8 @@ func preserveMasterPackageState(t *testing.T) {
 	remotePipelines = nil
 	mu.Unlock()
 
+	oldGate := currentGate.Load()
+	currentGate.Store(nil)
 	oldRestartChan := restartChan
 	oldReloadChan := reloadChan
 	oldPipelineRuntimeErrorEvent := pipelineRuntimeErrorEvent
@@ -95,6 +97,7 @@ func preserveMasterPackageState(t *testing.T) {
 		mainPipelines = oldMainPipelines
 		remotePipelines = oldRemotePipelines
 		mu.Unlock()
+		currentGate.Store(oldGate)
 		restartChan = oldRestartChan
 		reloadChan = oldReloadChan
 		pipelineRuntimeErrorEvent = oldPipelineRuntimeErrorEvent

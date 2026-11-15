@@ -67,12 +67,12 @@ func handleBinaryChange(action binaryChangeAction) (needContinue bool) {
 			Msg("Binary changed, sending SIGTERM")
 		if err := binaryChangeSignal(); err != nil {
 			logger.Error().Err(err).Msg("Failed to send SIGTERM, fallback to restart")
-			restartChan <- true
+			notifyScheduler(restartChan)
 		}
 		return true
 	default:
 		logger.Warn().Str("deb_version", config.DebVersion).Msg(">>>>>>> Restart main <<<<<<<")
-		restartChan <- true
+		notifyScheduler(restartChan)
 		return true
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	_ "time/tzdata" // 内嵌 IANA 时区库, 夏令时用例不依赖系统时区文件 (Windows 同样可跑)
 
 	"github.com/fufuok/pkg/assert"
 )
@@ -105,4 +106,24 @@ func TestInitChinaLocation(t *testing.T) {
 
 	tm := time.Date(1, 1, 1, 0, 0, 0, 0, loc)
 	assert.Equal(t, "0001-01-01T00:00:00+08:00", tm.Format(time.RFC3339))
+}
+
+// TestGetMonthDaysDST 验证夏令时时区的月份天数按日历计算: 进入夏令时的月份只有 30 天 23 小时,
+// 退出夏令时的月份多 1 小时, 都不能由经过时长除以 24 推导.
+func TestGetMonthDaysDST(t *testing.T) {
+	for _, name := range []string{"America/New_York", "Europe/London", "Australia/Sydney", "UTC"} {
+		loc, err := time.LoadLocation(name)
+		assert.Nil(t, err, name)
+		for _, year := range []int{2024, 2026} {
+			for m := time.January; m <= time.December; m++ {
+				// 月中任意时刻 (含月末最后一刻) 都应得到同一天数.
+				for _, day := range []int{1, 15} {
+					tm := time.Date(year, m, day, 12, 0, 0, 0, loc)
+					assert.Equal(t, DaysInMonth(year, m), GetMonthDays(tm), name+" "+tm.Format(time.RFC3339))
+				}
+				end := EndOfMonth(time.Date(year, m, 1, 0, 0, 0, 0, loc))
+				assert.Equal(t, DaysInMonth(year, m), GetMonthDays(end), name+" "+end.Format(time.RFC3339Nano))
+			}
+		}
+	}
 }
