@@ -49,40 +49,136 @@ func PrettyOptions(json []byte, opts *Options) []byte {
 
 // Ugly removes insignificant space characters from the input json byte slice
 // and returns the compacted result.
+//
+// 返回值总是新分配的独立副本, 即使输入本来就没有可删除的空白也不会与 json 共用底层数组.
 func Ugly(json []byte) []byte {
+	n := uglyPrefixLen(json)
 	buf := make([]byte, 0, len(json))
-	return ugly(buf, json)
+	// 前缀无需压缩, 整段复制后再从第一个可删除字节继续.
+	buf = append(buf, json[:n]...)
+	return uglyTail(buf[:len(json)], json, n, n)
 }
 
 // UglyInPlace removes insignificant space characters from the input json
 // byte slice and returns the compacted result. This method reuses the
 // input json buffer to avoid allocations. Do not use the original bytes
 // slice upon return.
-func UglyInPlace(json []byte) []byte { return ugly(json, json) }
+//
+// 输入没有可删除的空白时直接返回 json 本身, 不写内存.
+func UglyInPlace(json []byte) []byte {
+	n := uglyPrefixLen(json)
+	// 前缀已在原位, 从第一个可删除字节开始原地压紧.
+	return uglyTail(json, json, n, n)
+}
 
-// ugly 压缩 JSON 空白, 支持 dst 与 src 共用底层数组; 字符串内的内容保持不变.
-func ugly(dst, src []byte) []byte {
-	dst = dst[:0]
-	for i := 0; i < len(src); i++ {
-		if src[i] > ' ' {
-			dst = append(dst, src[i])
-			if src[i] == '"' {
-				for i = i + 1; i < len(src); i++ {
-					dst = append(dst, src[i])
-					if src[i] == '"' {
-						// 原地压缩已覆盖部分 src, 转义状态必须从刚写入的 dst 读取.
-						j := len(dst) - 2
-						for ; dst[j] == '\\'; j-- {
-						}
-						if (j-(len(dst)-1))%2 != 0 {
-							break
-						}
-					}
-				}
+// uglyPrefixLen 只读扫描 src, 返回字符串外第一个可删除字节 (<= ' ') 的下标; 没有时返回 len(src).
+// 字符串外的空白之外, 其余字节在压缩前后位置不变, 因此该下标之前的内容可原样保留.
+// 字符串直到末尾都未闭合时, 剩余内容全部属于字符串, 同样返回 len(src).
+// 热路径全部内联在一个循环里: 短字符串若调用独立的扫描函数, 调用开销会超过节省的写入.
+func uglyPrefixLen(src []byte) int {
+	n := len(src)
+outer:
+	for i := 0; i < n; {
+		c := src[i]
+		i++
+		if c <= ' ' {
+			return i - 1
+		}
+		if c != '"' {
+			continue
+		}
+		// 字符串前 16 字节逐字节扫描, 反斜杠连同其后字节一起跳过 (等价于按引号前反斜杠奇偶判定).
+		for lim := min(i+16, n); i < lim; {
+			c = src[i]
+			i++
+			if c == '"' {
+				continue outer
+			}
+			if c == '\\' {
+				i++
 			}
 		}
+		// 长字符串: IndexByte 跳到下一个引号, 再按其前连续反斜杠的奇偶判定是否闭合.
+		// 只用 IndexByte 时, 大量短字符串的调用开销反而比逐字节慢.
+		for i < n {
+			q := bytes.IndexByte(src[i:], '"')
+			if q < 0 {
+				break
+			}
+			i += q + 1
+			if !uglyQuoteEscaped(src, i-1) {
+				continue outer
+			}
+		}
+		// 未闭合字符串 (含末尾孤立反斜杠使 i 越过 n): 余下全部属于字符串.
+		return n
 	}
-	return dst
+	return n
+}
+
+// uglyTail 从 src[i] 起继续压缩, 要求 out[:w] 已是 src[:i] 的压缩结果且 src[i] 位于字符串外.
+// out 长度须为 len(src), 可与 src 共用底层数组且起点相同 (原地压缩); 此时 w <= i 恒成立,
+// 写入位置不会超过读取位置, 尚未读取的 src 字节不会被覆盖. 返回 out[:最终写入长度].
+func uglyTail(out, src []byte, w, i int) []byte {
+	n := len(src)
+outer:
+	for i < n {
+		c := src[i]
+		i++
+		if c <= ' ' {
+			// 字符串外的空白和控制字符全部删除; 先判空白, 缩进密集的输入每字节只走一次分支.
+			continue
+		}
+		out[w] = c
+		w++
+		if c != '"' {
+			continue
+		}
+		// 字符串前 16 字节逐字节复制, 反斜杠连同其后字节一起复制, 不把被转义的引号当作闭合.
+		for lim := min(i+16, n); i < lim; {
+			c = src[i]
+			i++
+			out[w] = c
+			w++
+			if c == '"' {
+				continue outer
+			}
+			if c == '\\' && i < n {
+				out[w] = src[i]
+				w++
+				i++
+			}
+		}
+		// 长字符串: 整段复制到下一个引号 (copy 按 memmove 处理原地重叠), 再在 out 上回溯反斜杠判定是否闭合.
+		// 原地压缩时 src 中本字符串已复制过的部分可能已被覆盖, 只有 out 中的副本可靠;
+		// 回溯最远停在 out 中的开引号上.
+		for i < n {
+			q := bytes.IndexByte(src[i:], '"')
+			if q < 0 {
+				break
+			}
+			w += copy(out[w:], src[i:i+q+1])
+			i += q + 1
+			if !uglyQuoteEscaped(out, w-1) {
+				continue outer
+			}
+		}
+		// 未闭合字符串: 剩余内容原样保留.
+		w += copy(out[w:], src[i:])
+		break
+	}
+	return out[:w]
+}
+
+// uglyQuoteEscaped 判断字符串内 src[q] 处的引号是否被转义, 即紧邻其前的连续反斜杠为奇数个.
+// 回溯最远停在开引号上 (开引号不是反斜杠), 因此不会越过字符串起点, 也无需额外下界.
+// 每段反斜杠只属于一个引号, 总回溯量与输入长度呈线性.
+func uglyQuoteEscaped(src []byte, q int) bool {
+	j := q - 1
+	for src[j] == '\\' {
+		j--
+	}
+	return (q-1-j)&1 == 1
 }
 
 func isNaNOrInf(src []byte) bool {

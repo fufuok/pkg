@@ -813,3 +813,209 @@ func BenchmarkPrettyNested(b *testing.B) {
 		})
 	}
 }
+
+// uglyReference 是只读快进优化前的逐字节实现, 仅作差分测试的参照, 不得随生产实现修改.
+func uglyReference(dst, src []byte) []byte {
+	dst = dst[:0]
+	for i := 0; i < len(src); i++ {
+		if src[i] > ' ' {
+			dst = append(dst, src[i])
+			if src[i] == '"' {
+				for i = i + 1; i < len(src); i++ {
+					dst = append(dst, src[i])
+					if src[i] == '"' {
+						j := len(dst) - 2
+						for ; dst[j] == '\\'; j-- {
+						}
+						if (j-(len(dst)-1))%2 != 0 {
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+	return dst
+}
+
+// checkUglyAgainstReference 对同一输入核对 Ugly 和 UglyInPlace 与参照实现逐字节一致, 并检查两者的所有权契约:
+// Ugly 不改输入且返回独立副本, 容量等于输入长度; UglyInPlace 复用输入底层数组, 容量不变.
+func checkUglyAgainstReference(t *testing.T, in []byte) {
+	t.Helper()
+	want := uglyReference(make([]byte, 0, len(in)), in)
+	orig := string(in)
+
+	got := Ugly(in)
+	if string(got) != string(want) {
+		t.Fatalf("Ugly(%q) = %q, want %q", orig, got, want)
+	}
+	if string(in) != orig {
+		t.Fatalf("Ugly modified input %q to %q", orig, in)
+	}
+	if got == nil || cap(got) != len(in) {
+		t.Fatalf("Ugly(%q) cap = %d (nil=%v), want non-nil with cap %d", orig, cap(got), got == nil, len(in))
+	}
+	if len(got) > 0 {
+		// 改写返回值首字节, 输入不应随之变化, 证明两者不共用底层数组.
+		got[0] ^= 0xff
+		if string(in) != orig {
+			t.Fatalf("Ugly(%q) result aliases input", orig)
+		}
+		got[0] ^= 0xff
+	}
+
+	buf := []byte(orig)
+	gotIn := UglyInPlace(buf)
+	if string(gotIn) != string(want) {
+		t.Fatalf("UglyInPlace(%q) = %q, want %q", orig, gotIn, want)
+	}
+	if cap(gotIn) != cap(buf) || (len(gotIn) > 0 && &gotIn[0] != &buf[0]) {
+		t.Fatalf("UglyInPlace(%q) did not reuse input buffer", orig)
+	}
+	if len(gotIn) == len(buf) && string(buf) != orig {
+		t.Fatalf("UglyInPlace(%q) without removable bytes rewrote input to %q", orig, buf)
+	}
+}
+
+// TestUglyBoundaryCases 覆盖快进切换点, 16 字节逐字节扫描与 IndexByte 跳转的交界, 奇偶反斜杠和未闭合字符串.
+func TestUglyBoundaryCases(t *testing.T) {
+	long := strings.Repeat("x", 40)
+	cases := []string{
+		"", " ", "\x00", `"`, `""`, `"\`, `"\\`, `"\"`, `"\\"`, ` "\"`, ` "\\" `,
+		`{"a":1}`, ` {"a":1}`, `{"a":1} `, `{"a" :1}`, `{"a b":1}`, "{\"a\":\t1}",
+		`["\\", "a b"]`, `  ["\\\\", "a b"]`, ` ["\\\" x", "a b"]`,
+		`"` + long + `"`, `"` + long + `" `, ` "` + long + `" `,
+		`"` + long + `\"` + long + `" `, `"` + long + `\\"` + long + `" `,
+		`"` + long + `\\\"` + long + `" `, `"` + long + `\`, `"` + long + `\\`,
+		`"` + long + `\" `, `"` + long + `\\" `, ` "` + long + `\\\" x`,
+		`"` + strings.Repeat(`\`, 33) + `" , "a"`, `"` + strings.Repeat(`\`, 34) + `" , "a"`,
+		`{"k":"中文 value","v":"` + long + ` tail"}` + "\n",
+	}
+	// 引号恰好落在逐字节扫描上限前后的各个位置, 前置不同数量反斜杠.
+	for n := 12; n <= 20; n++ {
+		for bs := 0; bs <= 3; bs++ {
+			body := strings.Repeat("y", n) + strings.Repeat(`\`, bs)
+			cases = append(
+				cases,
+				`"`+body+`" , "z z"`,
+				` "`+body+`" , "z z"`,
+				`"`+body+`"`+`"`+long+`" `,
+			)
+		}
+	}
+	for _, c := range cases {
+		checkUglyAgainstReference(t, []byte(c))
+	}
+	// nil 输入与旧实现一致: Ugly 返回非 nil 空切片, UglyInPlace 原样返回 nil.
+	if got := Ugly(nil); got == nil || len(got) != 0 || cap(got) != 0 {
+		t.Fatalf("Ugly(nil) = %#v (cap %d), want non-nil empty slice", got, cap(got))
+	}
+	if got, want := UglyInPlace(nil), uglyReference(nil, nil); got != nil || want != nil {
+		t.Fatalf("UglyInPlace(nil) = %#v, reference %#v, want both nil", got, want)
+	}
+}
+
+// TestUglyMatchesReferenceRandom 用固定种子生成偏向引号, 反斜杠, 空白和长字符串的随机输入, 与参照实现差分.
+func TestUglyMatchesReferenceRandom(t *testing.T) {
+	alphabet := []byte("\"\"\"\\\\  \t\n\r\x00\x1f{}[]:,a1\x80\xe4")
+	rng := rand.New(rand.NewSource(20261116))
+	rounds := 300000
+	if testing.Short() {
+		rounds = 30000
+	}
+	buf := make([]byte, 0, 256)
+	for range rounds {
+		buf = buf[:0]
+		n := rng.Intn(96)
+		for len(buf) < n {
+			switch r := rng.Intn(20); {
+			case r == 0:
+				// 长于 16 字节的无引号片段, 驱动 IndexByte 跳转路径.
+				buf = append(buf, strings.Repeat("s", 10+rng.Intn(40))...)
+			case r == 1:
+				buf = append(buf, strings.Repeat(`\`, 1+rng.Intn(6))...)
+			default:
+				buf = append(buf, alphabet[rng.Intn(len(alphabet))])
+			}
+		}
+		checkUglyAgainstReference(t, buf)
+	}
+}
+
+// FuzzUgly 持续与参照实现差分; 普通 go test 只运行种子语料.
+func FuzzUgly(f *testing.F) {
+	for _, s := range []string{
+		"", `{"a":"b c"}`, ` {"a":1}`, `"` + strings.Repeat("x", 20) + `\" "`,
+		`"\\\\"  `, `"unterminated \`, string(example1), string(example3),
+	} {
+		f.Add([]byte(s))
+	}
+	f.Fuzz(func(t *testing.T, in []byte) {
+		checkUglyAgainstReference(t, in)
+	})
+}
+
+// uglyBenchShapes 构造约 1.5MiB 的五类批量正文和约 600 字节的单条上报, 覆盖快进收益最大到最小的形态.
+func uglyBenchShapes() []struct {
+	name string
+	data []byte
+} {
+	const record = `{"brand":"example","x_event_id":"http_error","uid":123456789,"ver":"5.6.7.8","os":"windows",` +
+		`"ip":"192.0.2.10","isp":"电信","province":"广东","city":"深圳","game":"some-game-name","node":"node-12",` +
+		`"rtt":35.5,"loss":0.01,"jitter":2,"ok":true,"msg":"line1\nline2 \"quoted\"","tags":["a","b","c"],` +
+		`"data":{"node_line_type":1,"brand":"example"},"ext":{"k1":"v1","k2":2,"k3":[1,2,3]},` +
+		`"ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)",` +
+		`"_ctime":"2026-11-14T08:00:00Z","tail":"end"}`
+	const size = 3 << 19
+	batch := func(item string) []byte {
+		var b bytes.Buffer
+		b.WriteByte('[')
+		for b.Len() < size {
+			if b.Len() > 1 {
+				b.WriteByte(',')
+			}
+			b.WriteString(item)
+		}
+		b.WriteByte(']')
+		return b.Bytes()
+	}
+	noSpace := strings.NewReplacer(" ", "_").Replace(record)
+	short := `{"a":"b","c":"d","e":"f","g":1,"h":"i","j":["k","l","m"],"n":{"o":"p"}}`
+	// 长字符串记录: 约 300 字节的消息和 URL, 观察收益随字符串长度增长的趋势.
+	long := `{"id":123456,"level":"error","msg":"` + strings.Repeat(`request failed: upstream \"api\" timeout after 3 retries; `, 5) +
+		`","url":"https://example.com/v1/items?` + strings.Repeat("key=value&", 20) + `end=1"}`
+	return []struct {
+		name string
+		data []byte
+	}{
+		{"batch-nospace", batch(noSpace)},
+		{"batch-strspace", batch(record)},
+		{"batch-shortstr", batch(short)},
+		{"batch-longstr", batch(long)},
+		{"batch-indented", Pretty(batch(record))},
+		{"record-compact", []byte(record)},
+		{"record-indented", Pretty([]byte(record))},
+	}
+}
+
+// BenchmarkUglyShapes 衡量各形态的 Ugly 和 UglyInPlace; 原地版本每轮先恢复输入, 计时包含这次复制.
+func BenchmarkUglyShapes(b *testing.B) {
+	for _, s := range uglyBenchShapes() {
+		b.Run(s.name+"/copy", func(b *testing.B) {
+			b.SetBytes(int64(len(s.data)))
+			b.ReportAllocs()
+			for b.Loop() {
+				Ugly(s.data)
+			}
+		})
+		b.Run(s.name+"/inplace", func(b *testing.B) {
+			work := make([]byte, len(s.data))
+			b.SetBytes(int64(len(s.data)))
+			b.ReportAllocs()
+			for b.Loop() {
+				copy(work, s.data)
+				UglyInPlace(work)
+			}
+		})
+	}
+}
